@@ -7,6 +7,9 @@ __pycache__/
 *.pyd
 .DS_Store
 Thumbs.db
+-prompts/
+.vscode/
+_el_cvebt_source_research/
 
 artifacts/cache/*
 artifacts/mirror/*
@@ -24,6 +27,7 @@ tmp/
 temp/
 *.tmp
 *.bak
+*.zip
 *.tar
 *.tar.gz
 *.db
