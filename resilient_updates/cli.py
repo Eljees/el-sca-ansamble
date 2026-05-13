@@ -71,7 +71,7 @@ def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int,
             }
             for item in attempts
             if not item.success
-        ] + validation_failures,
+        ],
         "activation_status": "healthcheck-only",
         "used_last_known_good": False,
         "timestamp_utc": _now_iso(),

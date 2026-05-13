@@ -65,3 +65,49 @@ def test_build_report_reads_provenance_from_evidence_dir(tmp_path: Path):
 
     assert "provenance" in text
     assert "grype.json" in text
+
+
+def test_build_report_uses_tool_specific_report_paths_when_report_names_collide(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    (reports / "reports" / "grype").mkdir(parents=True)
+    (reports / "reports" / "trivy").mkdir(parents=True)
+    (reports / "reports" / "cve-bin-tool").mkdir(parents=True)
+    (reports / "reports" / "grype" / "report.json").write_text(
+        json.dumps(
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "GHSA-grype", "severity": "HIGH"},
+                        "artifact": {"name": "grype-lib", "version": "1.0.0", "type": "go-module"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "reports" / "trivy" / "report.json").write_text(
+        json.dumps(
+            {
+                "Results": [
+                    {
+                        "Type": "library",
+                        "Vulnerabilities": [
+                            {"VulnerabilityID": "CVE-trivy", "Severity": "CRITICAL", "PkgName": "trivy-lib", "InstalledVersion": "2.0.0"}
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "reports" / "cve-bin-tool" / "report.json").write_text(
+        json.dumps([{"cve_number": "CVE-cvebt", "severity": "HIGH", "vendor": "vendor", "product": "component", "version": "3.0.0"}]),
+        encoding="utf-8",
+    )
+
+    output = build_report(reports, tmp_path / "report.md", None, "target", "CASE")
+    text = output.read_text(encoding="utf-8")
+
+    assert "GHSA-grype" in text
+    assert "CVE-trivy" in text
+    assert "CVE-cvebt" in text

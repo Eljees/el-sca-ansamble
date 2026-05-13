@@ -11,7 +11,7 @@ fi
 
 mkdir -p artifacts/reports artifacts/provenance artifacts/sbom artifacts/cache artifacts/mirror
 
-docker compose config >/dev/null
+docker compose --profile default --profile update --profile scan --profile test-failover --profile offline --profile report config >/dev/null
 $PYTHON_BIN -m resilient_updates.cli validate-config >/dev/null
 pytest -q
 

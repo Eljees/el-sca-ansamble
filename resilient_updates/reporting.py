@@ -142,6 +142,16 @@ def _collect_json(root: Path, names: list[str]) -> Any:
     return None
 
 
+def _collect_json_from_paths(root: Path, relative_paths: list[str], fallback_names: list[str] | None = None) -> Any:
+    for relative_path in relative_paths:
+        data = _read_json(root / relative_path)
+        if data is not None:
+            return data
+    if fallback_names:
+        return _collect_json(root, fallback_names)
+    return None
+
+
 def _get_nested(data: Any, keys: list[str], default: Any = None) -> Any:
     current = data
     for key in keys:
@@ -182,10 +192,14 @@ def build_report(
 ) -> Path:
     root = Path(reports_dir)
     output = Path(output_path)
-    syft = _collect_json(root, ["syft.json", "syft.syft.json"])
-    grype = _collect_json(root, ["grype_report.json", "report.json"])
-    trivy = _collect_json(root, ["trivy_report.json", "trivy.json"])
-    cve = _collect_json(root, ["cve-bin-tool_report.json", "cve_raw.json", "report.json"])
+    syft = _collect_json_from_paths(root, ["sbom/syft.json", "sbom/syft.syft.json"], ["syft.json", "syft.syft.json"])
+    grype = _collect_json_from_paths(root, ["reports/grype/grype_report.json", "reports/grype/report.json"], ["grype_report.json"])
+    trivy = _collect_json_from_paths(root, ["reports/trivy/trivy_report.json", "reports/trivy/trivy.json", "reports/trivy/report.json"], ["trivy_report.json", "trivy.json"])
+    cve = _collect_json_from_paths(
+        root,
+        ["reports/cve-bin-tool/cve-bin-tool_report.json", "reports/cve-bin-tool/cve_raw.json", "reports/cve-bin-tool/report.json"],
+        ["cve-bin-tool_report.json", "cve_raw.json"],
+    )
     status = _collect_json(root, ["status.json"]) or {}
     summary = _collect_json(root, ["summary.json"]) or {}
     run_manifest = _collect_json(root, ["run_manifest.json"]) or {}
