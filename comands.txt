@@ -1,0 +1,1 @@
+python .\triage.py --base-url http://10.2.108.62:3001 --login yurij.m.tumanov@soc.rt.ru --password "..." --issue-url http://10.2.108.62:3001/projects/llmt_elk_7/issue/17703 --apply

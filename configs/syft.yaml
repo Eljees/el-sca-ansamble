@@ -1,0 +1,5 @@
+default-from: registry
+output-formats:
+  - syft-json
+  - cyclonedx-json
+  - spdx-json

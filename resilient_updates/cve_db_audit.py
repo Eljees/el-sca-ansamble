@@ -1,0 +1,343 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import gzip
+import io
+import os
+from pathlib import Path
+import shutil
+import sqlite3
+from typing import Any
+import zipfile
+
+import requests
+
+from .artifact_store import ensure_directory
+from .atomic_publish import publish_directory
+from .config import parse_duration_hours
+from .provenance import write_provenance
+
+
+OBSERVABLE_CVE_SOURCES = {"NVD", "GAD", "REDHAT", "CURL", "OSV", "PURL2CPE", "EPSS", "RSD"}
+UNOBSERVABLE_CVE_SOURCES: set[str] = set()
+
+
+def _utc_from_mtime(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+
+
+def _age_hours(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    return round((datetime.now(timezone.utc) - modified).total_seconds() / 3600, 2)
+
+
+def _path_info(path: Path) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_dir": path.is_dir(),
+        "size": None if not path.exists() or path.is_dir() else path.stat().st_size,
+        "mtime_utc": _utc_from_mtime(path),
+        "age_hours": _age_hours(path),
+    }
+
+
+def _count_tree_files(path: Path) -> int:
+    if not path.exists() or not path.is_dir():
+        return 0
+    return sum(1 for item in path.rglob("*") if item.is_file())
+
+
+def _dir_info(path: Path) -> dict[str, Any]:
+    return {
+        **_path_info(path),
+        "file_count": _count_tree_files(path) if path.exists() and path.is_dir() else 0,
+    }
+
+
+def _query_table_count(cursor: sqlite3.Cursor, table_name: str) -> int:
+    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+    row = cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+def _query_group_counts(cursor: sqlite3.Cursor, table_name: str) -> dict[str, int]:
+    cursor.execute(f"SELECT data_source, COUNT(*) FROM {table_name} GROUP BY data_source")
+    return {str(name): int(count) for name, count in cursor.fetchall()}
+
+
+def _source_count(
+    source: str,
+    severity_counts: dict[str, int],
+    range_counts: dict[str, int],
+    purl2cpe_total: int,
+    dir_infos: dict[str, dict[str, Any]],
+) -> tuple[int | None, str]:
+    source_upper = source.upper()
+    if source_upper in {"NVD", "GAD", "REDHAT"}:
+        return severity_counts.get(source_upper, 0), "cve_severity"
+    if source_upper == "CURL":
+        return range_counts.get("Curl", 0), "cve_range"
+    if source_upper == "OSV":
+        return int(dir_infos["osv"]["file_count"]), "osv directory"
+    if source_upper == "EPSS":
+        return int(dir_infos["epss"]["file_count"]), "epss directory"
+    if source_upper == "PURL2CPE":
+        return purl2cpe_total, "purl2cpe table"
+    if source_upper == "RSD":
+        return int(dir_infos["rsd"]["file_count"]), "rsd directory"
+    return None, "not directly observable"
+
+
+def audit_cve_bin_tool_db(
+    db_root: str | Path,
+    required_sources: list[str],
+    min_entries: dict[str, int],
+    max_cache_age: str,
+    declared_sources: list[str] | None = None,
+) -> dict[str, Any]:
+    root = Path(db_root)
+    cve_db_path = root / "cve.db"
+    version_map_path = root / "version_map.db"
+    vuln_json_path = root / "vuln.json"
+    dir_infos = {
+        "epss": _dir_info(root / "epss"),
+        "gad": _dir_info(root / "gad"),
+        "osv": _dir_info(root / "osv"),
+        "purl2cpe": _dir_info(root / "purl2cpe"),
+        "redhat": _dir_info(root / "redhat"),
+        "rsd": _dir_info(root / "rsd"),
+    }
+    files = {
+        "cve.db": _path_info(cve_db_path),
+        "version_map.db": _path_info(version_map_path),
+        "vuln.json": _path_info(vuln_json_path),
+        **dir_infos,
+    }
+    result: dict[str, Any] = {
+        "db_root": str(root),
+        "required_sources": required_sources,
+        "declared_sources": declared_sources or [],
+        "max_cache_age": max_cache_age,
+        "files": files,
+        "counts": {
+            "cve_range_total": 0,
+            "cve_severity_total": 0,
+            "purl2cpe_total": 0,
+            "cve_range_by_source": {},
+            "cve_severity_by_source": {},
+        },
+        "source_status": {},
+        "failures": [],
+        "warnings": [],
+        "overall_status": "fail",
+    }
+    if not cve_db_path.exists():
+        result["failures"].append("missing cve.db")
+        return result
+
+    try:
+        with sqlite3.connect(cve_db_path) as connection:
+            cursor = connection.cursor()
+            result["counts"]["cve_range_total"] = _query_table_count(cursor, "cve_range")
+            result["counts"]["cve_severity_total"] = _query_table_count(cursor, "cve_severity")
+            result["counts"]["purl2cpe_total"] = _query_table_count(cursor, "purl2cpe")
+            result["counts"]["cve_range_by_source"] = _query_group_counts(cursor, "cve_range")
+            result["counts"]["cve_severity_by_source"] = _query_group_counts(cursor, "cve_severity")
+    except sqlite3.DatabaseError as exc:
+        result["failures"].append(f"sqlite error: {exc}")
+        return result
+
+    max_age_hours = parse_duration_hours(max_cache_age)
+    core_age_hours = files["cve.db"]["age_hours"]
+    if core_age_hours is not None and core_age_hours > max_age_hours:
+        result["failures"].append(
+            f"cve.db is stale: age_hours={core_age_hours} exceeds max_cache_age={max_age_hours}"
+        )
+
+    severity_counts = result["counts"]["cve_severity_by_source"]
+    range_counts = result["counts"]["cve_range_by_source"]
+    purl2cpe_total = int(result["counts"]["purl2cpe_total"])
+    declared = declared_sources or sorted(OBSERVABLE_CVE_SOURCES | UNOBSERVABLE_CVE_SOURCES)
+
+    for source in declared:
+        count, evidence = _source_count(source, severity_counts, range_counts, purl2cpe_total, dir_infos)
+        observable = source.upper() in OBSERVABLE_CVE_SOURCES
+        min_count = int(min_entries.get(source.upper(), min_entries.get(source, 1 if observable else 0)))
+        present = (count or 0) >= min_count if observable else None
+        status = "ok"
+        reason = None
+        if not observable:
+            status = "unobservable"
+            reason = "no stable on-disk count is available for this source"
+        elif count is None or count < min_count:
+            status = "failed"
+            reason = f"count {count or 0} is below min_entries {min_count}"
+            if source in required_sources:
+                result["failures"].append(f"{source} count {count or 0} is below minimum {min_count}")
+            else:
+                result["warnings"].append(f"{source} count {count or 0} is below minimum {min_count}")
+        result["source_status"][source] = {
+            "observable": observable,
+            "present": present,
+            "count": count,
+            "min_entries": min_count,
+            "status": status,
+            "evidence": evidence,
+            "reason": reason,
+        }
+
+    missing_required = [item for item in required_sources if result["source_status"].get(item, {}).get("status") != "ok"]
+    if missing_required:
+        result["failures"].append(f"required sources failed audit: {', '.join(missing_required)}")
+
+    result["overall_status"] = "pass" if not result["failures"] else "fail"
+    return result
+
+
+def activate_best_cve_bin_tool_db(
+    candidate_roots: list[str | Path],
+    active_root: str | Path,
+    previous_root: str | Path,
+    temp_root: str | Path,
+    provenance_path: str | Path,
+    required_sources: list[str],
+    min_entries: dict[str, int],
+    max_cache_age: str,
+    declared_sources: list[str] | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    audits: list[dict[str, Any]] = []
+    selected_root: Path | None = None
+    selected_audit: dict[str, Any] | None = None
+    for candidate in candidate_roots:
+        audit = audit_cve_bin_tool_db(candidate, required_sources, min_entries, max_cache_age, declared_sources)
+        audits.append(audit)
+        if audit["overall_status"] == "pass":
+            selected_root = Path(candidate)
+            selected_audit = audit
+            break
+
+    active_path = Path(active_root)
+    previous_path = Path(previous_root)
+    temp_parent = ensure_directory(temp_root)
+    payload: dict[str, Any] = {
+        "tool": "cve-bin-tool",
+        "artifact_type": "cve-bin-tool-db",
+        "selected_source": str(selected_root) if selected_root else None,
+        "attempted_sources": [item["db_root"] for item in audits],
+        "failures": [
+            {
+                "db_root": item["db_root"],
+                "overall_status": item["overall_status"],
+                "failures": item["failures"],
+            }
+            for item in audits
+            if item["overall_status"] != "pass"
+        ],
+        "used_last_known_good": False,
+        "activation_status": "failed",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    if not selected_root or not selected_audit:
+        lkg = audit_cve_bin_tool_db(active_path, required_sources, min_entries, max_cache_age, declared_sources)
+        payload["last_known_good_audit"] = lkg
+        if lkg["overall_status"] == "pass":
+            payload["used_last_known_good"] = True
+            payload["activation_status"] = "last-known-good"
+            write_provenance(Path(provenance_path), payload)
+            return False, payload
+        write_provenance(Path(provenance_path), payload)
+        return False, payload
+
+    if selected_root.resolve() == active_path.resolve():
+        payload["activation_status"] = "active-noop"
+        payload["selected_audit"] = selected_audit
+        write_provenance(Path(provenance_path), payload)
+        return True, payload
+
+    staging_dir = temp_parent / f"run-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    shutil.copytree(selected_root, staging_dir)
+    try:
+        publish_directory(staging_dir, active_path, previous_path)
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        if previous_path.exists():
+            shutil.rmtree(previous_path)
+        if active_path.exists():
+            shutil.copytree(active_path, previous_path)
+            shutil.rmtree(active_path)
+        try:
+            shutil.move(str(staging_dir), str(active_path))
+        except Exception:
+            if previous_path.exists() and not active_path.exists():
+                shutil.copytree(previous_path, active_path)
+            raise
+    payload["activation_status"] = "active"
+    payload["selected_audit"] = selected_audit
+    write_provenance(Path(provenance_path), payload)
+    return True, payload
+
+
+def seed_cve_bin_tool_aux_sources(
+    db_root: str | Path,
+    *,
+    seed_epss: bool,
+    seed_rsd: bool,
+    osv_ecosystems: list[str],
+    timeout: int = 120,
+) -> dict[str, Any]:
+    root = ensure_directory(db_root)
+    result: dict[str, Any] = {"db_root": str(root), "seeded": {}, "failures": []}
+
+    if seed_epss:
+        epss_dir = ensure_directory(root / "epss")
+        epss_target = epss_dir / "epss_scores-current.csv"
+        try:
+            response = requests.get("https://epss.cyentia.com/epss_scores-current.csv.gz", timeout=timeout)
+            response.raise_for_status()
+            epss_target.write_bytes(gzip.decompress(response.content))
+            result["seeded"]["EPSS"] = {"path": str(epss_target), "size": epss_target.stat().st_size}
+        except Exception as exc:
+            result["failures"].append(f"EPSS seed failed: {exc}")
+
+    if seed_rsd:
+        rsd_dir = ensure_directory(root / "rsd")
+        try:
+            response = requests.get(
+                "https://gitlab.com/vulnerabilities1/vulnerabities/-/archive/main/vulnerabities-main.zip",
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+                archive.extractall(rsd_dir)
+            result["seeded"]["RSD"] = {"path": str(rsd_dir), "file_count": _count_tree_files(rsd_dir)}
+        except Exception as exc:
+            result["failures"].append(f"RSD seed failed: {exc}")
+
+    if osv_ecosystems:
+        osv_dir = ensure_directory(root / "osv")
+        seeded_ecosystems: list[dict[str, Any]] = []
+        for ecosystem in osv_ecosystems:
+            try:
+                response = requests.get(
+                    f"https://osv-vulnerabilities.storage.googleapis.com/{ecosystem}/all.zip",
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+                    archive.extractall(osv_dir)
+                seeded_ecosystems.append({"ecosystem": ecosystem, "files_after_extract": _count_tree_files(osv_dir)})
+            except Exception as exc:
+                result["failures"].append(f"OSV seed failed for {ecosystem}: {exc}")
+        if seeded_ecosystems:
+            result["seeded"]["OSV"] = seeded_ecosystems
+
+    result["overall_status"] = "pass" if not result["failures"] else "warn"
+    return result

@@ -1,0 +1,181 @@
+trivy:
+  db_repositories:
+    - name: internal-trivy-db
+      url: "oci://registry.example.invalid/trivy-db"
+      priority: 10
+      enabled: true
+    - name: ghcr-trivy-db
+      url: "oci://ghcr.io/aquasecurity/trivy-db:2"
+      priority: 20
+      enabled: true
+    - name: public-ecr-trivy-db
+      url: "oci://public.ecr.aws/aquasecurity/trivy-db:2"
+      priority: 30
+      enabled: true
+  java_db_repositories:
+    - name: internal-trivy-java-db
+      url: "oci://registry.example.invalid/trivy-java-db"
+      priority: 10
+      enabled: true
+    - name: ghcr-trivy-java-db
+      url: "oci://ghcr.io/aquasecurity/trivy-java-db:1"
+      priority: 20
+      enabled: true
+  checks_bundle_repositories:
+    - name: internal-trivy-checks
+      url: "oci://registry.example.invalid/trivy-checks:0"
+      priority: 10
+      enabled: true
+    - name: ghcr-trivy-checks
+      url: "oci://ghcr.io/aquasecurity/trivy-checks:0"
+      priority: 20
+      enabled: true
+  vex_repositories:
+    - name: internal-vex-hub
+      url: "https://vex.example.invalid/api"
+      priority: 10
+      enabled: true
+  cache_dir: "artifacts/cache/trivy"
+  offline_policy:
+    skip_db_update: false
+    skip_java_db_update: false
+    skip_check_update: false
+    offline_scan: false
+  retry_backoff_policy:
+    retry_count: 2
+    timeout_seconds: 10
+    backoff_seconds: 2
+    retry_status_codes: [429, 500, 502, 503, 504]
+  source_health_policy:
+    enabled: true
+    healthcheck_timeout_seconds: 5
+    max_consecutive_failures: 3
+
+grype:
+  internal_update_url: "http://grype-static:8080/listing.json"
+  upstream_update_urls:
+    - name: internal-grype-mirror
+      url: "http://grype-static:8080/listing.json"
+      priority: 10
+      enabled: true
+    - name: anchore-public-db
+      url: "https://toolbox-data.anchore.io/grype/databases/listing.json"
+      priority: 20
+      enabled: true
+  validation:
+    validate_hash: true
+    validate_age: true
+    max_allowed_built_age: "72h"
+  timeout_policy:
+    update_available_timeout: 10
+    update_download_timeout: 30
+  last_known_good:
+    enabled: true
+    max_age: "168h"
+    fail_closed_if_missing: true
+  atomic_activation_policy:
+    temp_dir: "artifacts/internal/grype/tmp"
+    active_dir: "artifacts/internal/grype/active"
+    previous_dir: "artifacts/internal/grype/previous"
+    provenance_path: "artifacts/provenance/grype.json"
+
+cve_bin_tool:
+  nvd_modes: ["api", "api2", "json", "json-mirror", "json-nvd"]
+  data_sources:
+    - NVD
+    - OSV
+    - GAD
+    - REDHAT
+    - CURL
+    - EPSS
+    - PURL2CPE
+    - RSD
+  mirrors:
+    - name: primary-mirror
+      url: "https://mirror1.example.invalid/cve-bin-tool"
+      priority: 10
+      enabled: true
+    - name: secondary-mirror
+      url: "https://mirror2.example.invalid/cve-bin-tool"
+      priority: 20
+      enabled: true
+  export_import:
+    export_bundle_path: "artifacts/mirror/cve-bin-tool-export.json"
+    import_bundle_path: "artifacts/mirror/cve-bin-tool-export.json"
+  update_schedule:
+    default: "daily"
+    allowed: ["now", "daily", "never", "latest"]
+  offline_policy:
+    offline: false
+    import_first: true
+    use_last_known_good: true
+  source_health_policy:
+    enabled: true
+    source_timeout_seconds: 10
+    retry_count: 2
+  db_audit:
+    required_sources:
+      - NVD
+      - GAD
+      - REDHAT
+      - CURL
+      - PURL2CPE
+    min_entries:
+      NVD: 1000
+      GAD: 100
+      REDHAT: 100
+      CURL: 1
+      PURL2CPE: 1000
+    max_cache_age: "168h"
+    fail_closed_if_required_missing: true
+    activation_policy:
+      temp_dir: "artifacts/internal/cve-bin-tool/tmp"
+      active_dir: "artifacts/internal/cve-bin-tool/active"
+      previous_dir: "artifacts/internal/cve-bin-tool/previous"
+      provenance_path: "artifacts/provenance/cve-bin-tool-db.json"
+
+syft:
+  scan_sources:
+    - registry
+    - docker
+    - podman
+    - containerd
+    - docker-archive
+    - oci-archive
+    - oci-dir
+    - dir
+    - file
+  default_from: "registry"
+  output_formats:
+    - syft-json
+    - cyclonedx-json
+    - spdx-json
+  auth:
+    docker_config_mount_path: "/root/.docker/config.json"
+    registry_username_env: "SYFT_REGISTRY_USERNAME"
+    registry_password_env: "SYFT_REGISTRY_PASSWORD"
+  handoff_to_grype: true
+
+custom_sources:
+  allow_user_sources: true
+  entries:
+    - name: example-corporate-grype
+      type: http
+      url: "https://mirror.example.invalid/grype/listing.json"
+      tool: grype
+      layer: grype-db
+      priority: 50
+      auth_env: "GRYPE_CUSTOM_AUTH_TOKEN"
+      enabled: false
+      trust_level: internal
+      notes: "Enable and replace with your corporate mirror URL."
+    - name: example-custom-trivy-db
+      type: oci-registry
+      url: "oci://registry.example.invalid/custom-trivy-db"
+      tool: trivy
+      layer: trivy-db
+      priority: 60
+      auth_env: "TRIVY_INTERNAL_REGISTRY_PASSWORD"
+      enabled: false
+      trust_level: custom
+      notes: "Use for user-managed OCI mirrors."

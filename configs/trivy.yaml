@@ -1,0 +1,8 @@
+cache:
+  dir: "/work/artifacts/cache/trivy"
+db:
+  skip-update: false
+java-db:
+  skip-update: false
+checks:
+  skip-update: false

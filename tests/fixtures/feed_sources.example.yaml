@@ -1,0 +1,104 @@
+trivy:
+  db_repositories:
+    - name: primary
+      url: "https://registry.example.invalid/trivy-db"
+      priority: 10
+      enabled: true
+  java_db_repositories:
+    - name: primary
+      url: "https://registry.example.invalid/trivy-java-db"
+      priority: 10
+      enabled: true
+  checks_bundle_repositories:
+    - name: primary
+      url: "https://registry.example.invalid/trivy-checks"
+      priority: 10
+      enabled: true
+  vex_repositories: []
+  cache_dir: "artifacts/cache/trivy"
+  offline_policy:
+    skip_db_update: false
+    skip_java_db_update: false
+    skip_check_update: false
+    offline_scan: false
+  retry_backoff_policy:
+    retry_count: 1
+    timeout_seconds: 5
+    backoff_seconds: 0
+    retry_status_codes: [429, 500, 502, 503, 504]
+  source_health_policy:
+    enabled: true
+    healthcheck_timeout_seconds: 3
+    max_consecutive_failures: 3
+grype:
+  internal_update_url: "http://localhost:18080/listing.json"
+  upstream_update_urls:
+    - name: primary
+      url: "http://localhost:18080/listing.json"
+      priority: 10
+      enabled: true
+  validation:
+    validate_hash: true
+    validate_age: true
+    max_allowed_built_age: "72h"
+  timeout_policy:
+    update_available_timeout: 5
+    update_download_timeout: 5
+  last_known_good:
+    enabled: true
+    max_age: "168h"
+    fail_closed_if_missing: true
+  atomic_activation_policy:
+    temp_dir: "artifacts/internal/grype/tmp"
+    active_dir: "artifacts/internal/grype/active"
+    previous_dir: "artifacts/internal/grype/previous"
+    provenance_path: "artifacts/provenance/grype.json"
+cve_bin_tool:
+  nvd_modes: ["api"]
+  data_sources: ["NVD"]
+  mirrors:
+    - name: primary
+      url: "http://localhost:18080/cve-bin-tool"
+      priority: 10
+      enabled: true
+  export_import:
+    export_bundle_path: "artifacts/mirror/export.json"
+    import_bundle_path: "artifacts/mirror/export.json"
+  update_schedule:
+    default: "daily"
+    allowed: ["now", "daily", "never", "latest"]
+  offline_policy:
+    offline: false
+    import_first: true
+    use_last_known_good: true
+  source_health_policy:
+    enabled: true
+    source_timeout_seconds: 5
+    retry_count: 1
+  db_audit:
+    required_sources: ["NVD", "GAD", "REDHAT", "CURL", "PURL2CPE"]
+    min_entries:
+      NVD: 1
+      GAD: 1
+      REDHAT: 1
+      CURL: 1
+      PURL2CPE: 1
+    max_cache_age: "168h"
+    fail_closed_if_required_missing: true
+    activation_policy:
+      temp_dir: "artifacts/internal/cve-bin-tool/tmp"
+      active_dir: "artifacts/internal/cve-bin-tool/active"
+      previous_dir: "artifacts/internal/cve-bin-tool/previous"
+      provenance_path: "artifacts/provenance/cve-bin-tool-db.json"
+syft:
+  scan_sources: ["registry", "docker", "dir", "file"]
+  default_from: "registry"
+  output_formats: ["syft-json", "cyclonedx-json", "spdx-json"]
+  auth:
+    docker_config_mount_path: "/root/.docker/config.json"
+    registry_username_env: "SYFT_REGISTRY_USERNAME"
+    registry_password_env: "SYFT_REGISTRY_PASSWORD"
+  handoff_to_grype: true
+custom_sources:
+  allow_user_sources: true
+  entries: []

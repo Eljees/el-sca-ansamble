@@ -1,0 +1,8 @@
+db:
+  cache-dir: /work/artifacts/cache/grype
+  auto-update: false
+  validate-by-hash-on-start: true
+  validate-age: true
+  max-allowed-built-age: 72h
+  update-url: http://grype-static:8080/listing.json
+check-for-app-update: false
