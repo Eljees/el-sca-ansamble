@@ -6,6 +6,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 import gzip
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -98,12 +99,25 @@ def _strip_archive_suffix(name: str) -> str:
     return Path(name).stem
 
 
-def _ensure_safe_member(target_dir: Path, member_name: str) -> Path:
+def _ensure_safe_member(target_dir: Path, member_name: str, _root: Path | None = None) -> Path:
+    """Return the safe absolute extraction path for *member_name* inside *target_dir*.
+
+    Uses ``os.path.normpath`` instead of ``Path.resolve`` so that no filesystem
+    I/O is performed.  ``resolve`` follows symlinks and checks that every path
+    component exists — on Windows Docker Desktop that means a round-trip through
+    the WSL2/virtio bind mount for *every archive member*, which hangs on large
+    archives.  ``normpath`` is a pure in-memory string operation.
+
+    Pass a pre-computed *_root* (``Path(os.path.normpath(target_dir))``) when
+    iterating over many members to avoid recomputing it on every call.
+    """
     posix = PurePosixPath(member_name.replace("\\", "/"))
     if posix.is_absolute() or ".." in posix.parts:
         raise ValueError(f"unsafe archive member path: {member_name}")
-    target = (target_dir / Path(*posix.parts)).resolve()
-    root = target_dir.resolve()
+    if not posix.parts:
+        raise ValueError(f"archive member has empty name: {member_name!r}")
+    target = Path(os.path.normpath(target_dir / Path(*posix.parts)))
+    root = _root if _root is not None else Path(os.path.normpath(target_dir))
     if root != target and root not in target.parents:
         raise ValueError(f"archive member escapes target dir: {member_name}")
     return target
@@ -124,9 +138,11 @@ def _enforce_limits(output_root: Path, limits: ExtractLimits) -> None:
 
 
 def _extract_zip(path: Path, target_dir: Path) -> None:
+    # Pre-compute _root once — avoids normpath() call per member inside the loop.
+    _root = Path(os.path.normpath(target_dir))
     with zipfile.ZipFile(path) as archive:
         for member in archive.infolist():
-            target = _ensure_safe_member(target_dir, member.filename)
+            target = _ensure_safe_member(target_dir, member.filename, _root)
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
@@ -136,9 +152,11 @@ def _extract_zip(path: Path, target_dir: Path) -> None:
 
 
 def _extract_tar(path: Path, target_dir: Path) -> None:
+    # Pre-compute _root once — avoids normpath() call per member inside the loop.
+    _root = Path(os.path.normpath(target_dir))
     with tarfile.open(path) as archive:
         for member in archive.getmembers():
-            target = _ensure_safe_member(target_dir, member.name)
+            target = _ensure_safe_member(target_dir, member.name, _root)
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
