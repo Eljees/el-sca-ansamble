@@ -7,6 +7,7 @@ import json
 import tarfile
 from typing import Any
 from urllib.parse import urljoin
+from urllib.parse import urlparse
 
 import requests
 
@@ -14,6 +15,7 @@ from .artifact_store import build_last_known_good, ensure_directory, file_sha256
 from .atomic_publish import publish_directory
 from .config import DEFAULT_CONFIG_PATH, load_config, parse_duration_hours, validate_config_data
 from .cve_db_audit import activate_best_cve_bin_tool_db, audit_cve_bin_tool_db, seed_cve_bin_tool_aux_sources
+from .extractor import extract_artifacts
 from .fallback import FailureReason, attempt_sources, fetch_bytes
 from .healthcheck import run_healthcheck
 from .provenance import write_provenance
@@ -32,14 +34,75 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _latest_mtime(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    if path.is_file():
+        return path.stat().st_mtime
+    latest: float | None = None
+    for item in path.rglob("*"):
+        if not item.is_file():
+            continue
+        mtime = item.stat().st_mtime
+        latest = mtime if latest is None else max(latest, mtime)
+    return latest
+
+
+def _db_status_payload(tool: str, path: Path, warning_age: str) -> dict[str, Any]:
+    warning_hours = parse_duration_hours(warning_age)
+    status_path = path
+    if tool == "cve-bin-tool" and path.exists():
+        cve_db = next(path.rglob("cve.db"), None) if path.is_dir() else None
+        if cve_db is None:
+            return {
+                "tool": tool,
+                "path": str(path),
+                "exists": path.exists(),
+                "age_hours": None,
+                "warning_age_hours": warning_hours,
+                "warning": True,
+                "message": "cve-bin-tool database is missing: cve.db was not found",
+                "timestamp_utc": _now_iso(),
+            }
+        status_path = cve_db
+    latest = _latest_mtime(status_path)
+    if latest is None:
+        return {
+            "tool": tool,
+            "path": str(path),
+            "exists": path.exists(),
+            "age_hours": None,
+            "warning_age_hours": warning_hours,
+            "warning": False,
+            "message": "database path is empty or missing",
+            "timestamp_utc": _now_iso(),
+        }
+    age_hours = round((datetime.now(timezone.utc).timestamp() - latest) / 3600, 2)
+    warning = age_hours > warning_hours
+    return {
+        "tool": tool,
+        "path": str(path),
+        "exists": path.exists(),
+        "age_hours": age_hours,
+        "warning_age_hours": warning_hours,
+        "warning": warning,
+        "message": (
+            f"database age warning: {age_hours}h exceeds {warning_hours}h"
+            if warning
+            else f"database age is {age_hours}h"
+        ),
+        "timestamp_utc": _now_iso(),
+    }
+
+
 def _render_trivy_flags(config: dict[str, Any]) -> str:
     parts: list[str] = []
     for item in build_sources(config, "trivy", "trivy-db"):
-        parts.append(f"--db-repository {item.url}")
+        parts.append(f"--db-repository {item.url.removeprefix('oci://')}")
     for item in build_sources(config, "trivy", "trivy-java-db"):
-        parts.append(f"--java-db-repository {item.url}")
+        parts.append(f"--java-db-repository {item.url.removeprefix('oci://')}")
     for item in build_sources(config, "trivy", "trivy-checks"):
-        parts.append(f"--checks-bundle-repository {item.url}")
+        parts.append(f"--checks-bundle-repository {item.url.removeprefix('oci://')}")
     return " ".join(parts)
 
 
@@ -93,6 +156,8 @@ def _extract_checksum_from_text(text: str) -> str:
 
 def _resolve_listing(listing_bytes: bytes, base_url: str) -> tuple[str, str | None, str | None]:
     listing = json.loads(listing_bytes.decode("utf-8"))
+    if "path" in listing:
+        return listing["path"], listing.get("checksum"), listing.get("built")
     if "archive_url" in listing:
         return listing["archive_url"], listing.get("checksum"), listing.get("built")
     available = listing.get("available")
@@ -122,8 +187,13 @@ def _resolve_listing(listing_bytes: bytes, base_url: str) -> tuple[str, str | No
 def _validate_grype_archive(archive_path: Path, checksum: str | None) -> None:
     if checksum and file_sha256(archive_path) != checksum:
         raise ValueError(FailureReason.CHECKSUM_MISMATCH.value)
-    if tarfile.is_tarfile(archive_path) is False:
-        raise ValueError(FailureReason.CORRUPT_ARTIFACT.value)
+    if tarfile.is_tarfile(archive_path):
+        return
+    with archive_path.open("rb") as handle:
+        magic = handle.read(4)
+    if magic == b"\x28\xb5\x2f\xfd":
+        return
+    raise ValueError(FailureReason.CORRUPT_ARTIFACT.value)
 
 
 def _download_grype_candidate(
@@ -134,7 +204,7 @@ def _download_grype_candidate(
     temp_dir: Path,
 ) -> tuple[Path, str | None, str | None]:
     listing_target = temp_dir / f"{source.name}-listing.json"
-    archive_target = temp_dir / f"{source.name}-db.tar.gz"
+    archive_target = temp_dir / f"{source.name}-db.archive"
     listing_target.write_bytes(listing_payload)
     archive_url, checksum, built = _resolve_listing(listing_payload, source.url)
     if archive_url.startswith("/"):
@@ -148,6 +218,8 @@ def _download_grype_candidate(
             checksum = None
     if validation_cfg.get("validate_hash") and not checksum:
         raise ValueError(FailureReason.CHECKSUM_MISMATCH.value)
+    archive_name = Path(urlparse(archive_url).path).name or "db.archive"
+    archive_target = temp_dir / f"{source.name}-{archive_name}"
     archive_status, archive_payload = fetch_bytes(archive_url, int(timeout_cfg["update_download_timeout"]))
     if archive_status >= 400:
         raise ValueError(f"http_{archive_status}")
@@ -232,8 +304,15 @@ def update_grype(config: dict[str, Any]) -> int:
             return EXIT_STALE_REJECTED
         return EXIT_LKG_USED if lkg.is_usable() else EXIT_ALL_SOURCES_FAILED
 
-    (temp_dir / "listing.json").write_bytes((temp_dir / f"{selected_source.name}-listing.json").read_bytes())
-    (temp_dir / "db.tar.gz").write_bytes(selected_archive.read_bytes())
+    listing_bytes = (temp_dir / f"{selected_source.name}-listing.json").read_bytes()
+    archive_bytes = selected_archive.read_bytes()
+    (temp_dir / "listing.json").write_bytes(listing_bytes)
+    (temp_dir / "latest.json").write_bytes(listing_bytes)
+    (temp_dir / "db.tar.gz").write_bytes(archive_bytes)
+    (temp_dir / "db.tar.zst").write_bytes(archive_bytes)
+    v6_dir = ensure_directory(temp_dir / "v6")
+    (v6_dir / "latest.json").write_bytes(listing_bytes)
+    (v6_dir / selected_archive.name.removeprefix(f"{selected_source.name}-")).write_bytes(archive_bytes)
     publish_directory(temp_dir, active_dir, previous_dir)
     payload = {
         "tool": "grype",
@@ -314,6 +393,10 @@ def main() -> int:
     subparsers.add_parser("validate-config")
     subparsers.add_parser("healthcheck")
     subparsers.add_parser("provenance")
+    db_status = subparsers.add_parser("db-status")
+    db_status.add_argument("tool", choices=["trivy", "grype", "cve-bin-tool"])
+    db_status.add_argument("--path")
+    db_status.add_argument("--warning-age", default="24h")
     audit = subparsers.add_parser("audit")
     audit.add_argument("subject", choices=["cve-bin-tool-db"])
     audit.add_argument("--db-root", required=True)
@@ -337,6 +420,12 @@ def main() -> int:
     collect_report.add_argument("--target", default="")
     collect_report.add_argument("--display-target", default="")
     collect_report.add_argument("--case-id", default="CYBERSEC-11531")
+    extract = subparsers.add_parser("extract")
+    extract.add_argument("--input", required=True)
+    extract.add_argument("--output", required=True)
+    extract.add_argument("--max-depth", type=int, default=4)
+    extract.add_argument("--max-files", type=int, default=20000)
+    extract.add_argument("--max-bytes", type=int, default=10 * 1024 * 1024 * 1024)
     render_flags = subparsers.add_parser("render-flags")
     render_flags.add_argument("tool", choices=["trivy"])
     update = subparsers.add_parser("update")
@@ -358,6 +447,16 @@ def main() -> int:
         for item in sorted(Path("artifacts/provenance").glob("*.json")):
             print(item.read_text(encoding="utf-8"))
         return EXIT_SUCCESS
+    if args.command == "db-status":
+        defaults = {
+            "trivy": Path(config.get("trivy", {}).get("cache_dir", "/var/lib/resilient-db/trivy")),
+            "grype": Path(config.get("grype", {}).get("atomic_activation_policy", {}).get("active_dir", "/var/lib/resilient-db/grype/active")),
+            "cve-bin-tool": Path("/root/.cache/cve-bin-tool"),
+        }
+        path = Path(args.path) if args.path else defaults[args.tool]
+        payload = _db_status_payload(args.tool, path, args.warning_age)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS if payload["exists"] and payload["age_hours"] is not None else EXIT_VALIDATION_FAILED
     if args.command == "audit":
         code, payload = _run_cve_db_audit(config, args.db_root)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -389,6 +488,16 @@ def main() -> int:
         output = build_report(args.reports_dir, args.output, target, args.display_target or None, args.case_id)
         print(json.dumps({"status": "ok", "report": str(output)}, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS
+    if args.command == "extract":
+        payload = extract_artifacts(
+            args.input,
+            args.output,
+            max_depth=args.max_depth,
+            max_files=args.max_files,
+            max_bytes=args.max_bytes,
+        )
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS if payload["status"] in {"pass", "warn"} else EXIT_VALIDATION_FAILED
     if args.command == "render-flags":
         print(_render_trivy_flags(config))
         return EXIT_SUCCESS

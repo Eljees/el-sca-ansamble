@@ -63,6 +63,11 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
     trivy = config.get("trivy", {})
     for field in ("db_repositories", "java_db_repositories", "checks_bundle_repositories"):
         _validate_named_sources(trivy.get(field, []), f"trivy.{field}", errors)
+    if "db_status" in trivy:
+        try:
+            parse_duration_hours(trivy["db_status"].get("warning_age", "24h"))
+        except ValueError as exc:
+            errors.append(str(exc))
 
     grype = config.get("grype", {})
     if not grype.get("internal_update_url"):
@@ -77,6 +82,11 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
         parse_duration_hours(validation.get("max_allowed_built_age", "72h"))
     except ValueError as exc:
         errors.append(str(exc))
+    if "db_status" in grype:
+        try:
+            parse_duration_hours(grype["db_status"].get("warning_age", "24h"))
+        except ValueError as exc:
+            errors.append(str(exc))
 
     cve_cfg = config.get("cve_bin_tool", {})
     if not cve_cfg.get("nvd_modes"):
@@ -100,6 +110,11 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
         parse_duration_hours(db_audit.get("max_cache_age", "168h"))
     except ValueError as exc:
         errors.append(str(exc))
+    if "db_status" in cve_cfg:
+        try:
+            parse_duration_hours(cve_cfg["db_status"].get("warning_age", "24h"))
+        except ValueError as exc:
+            errors.append(str(exc))
 
     syft = config.get("syft", {})
     if not syft.get("scan_sources"):

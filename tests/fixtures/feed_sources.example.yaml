@@ -15,7 +15,7 @@ trivy:
       priority: 10
       enabled: true
   vex_repositories: []
-  cache_dir: "artifacts/cache/trivy"
+  cache_dir: "/var/lib/resilient-db/trivy"
   offline_policy:
     skip_db_update: false
     skip_java_db_update: false
@@ -30,8 +30,10 @@ trivy:
     enabled: true
     healthcheck_timeout_seconds: 3
     max_consecutive_failures: 3
+  db_status:
+    warning_age: "24h"
 grype:
-  internal_update_url: "http://localhost:18080/listing.json"
+  internal_update_url: "http://localhost:18080/v6/latest.json"
   upstream_update_urls:
     - name: primary
       url: "http://localhost:18080/listing.json"
@@ -49,10 +51,12 @@ grype:
     max_age: "168h"
     fail_closed_if_missing: true
   atomic_activation_policy:
-    temp_dir: "artifacts/internal/grype/tmp"
-    active_dir: "artifacts/internal/grype/active"
-    previous_dir: "artifacts/internal/grype/previous"
+    temp_dir: "/var/lib/resilient-db/grype/tmp"
+    active_dir: "/var/lib/resilient-db/grype/active"
+    previous_dir: "/var/lib/resilient-db/grype/previous"
     provenance_path: "artifacts/provenance/grype.json"
+  db_status:
+    warning_age: "24h"
 cve_bin_tool:
   nvd_modes: ["api"]
   data_sources: ["NVD"]
@@ -75,6 +79,9 @@ cve_bin_tool:
     enabled: true
     source_timeout_seconds: 5
     retry_count: 1
+  seed_policy:
+    seed_epss: true
+    osv_ecosystems: ["Debian", "Ubuntu", "Alpine"]
   db_audit:
     required_sources: ["NVD", "GAD", "REDHAT", "CURL", "PURL2CPE"]
     min_entries:
@@ -86,10 +93,12 @@ cve_bin_tool:
     max_cache_age: "168h"
     fail_closed_if_required_missing: true
     activation_policy:
-      temp_dir: "artifacts/internal/cve-bin-tool/tmp"
-      active_dir: "artifacts/internal/cve-bin-tool/active"
-      previous_dir: "artifacts/internal/cve-bin-tool/previous"
+      temp_dir: "/var/lib/resilient-db/cve-bin-tool/tmp"
+      active_dir: "/var/lib/resilient-db/cve-bin-tool/active"
+      previous_dir: "/var/lib/resilient-db/cve-bin-tool/previous"
       provenance_path: "artifacts/provenance/cve-bin-tool-db.json"
+  db_status:
+    warning_age: "24h"
 syft:
   scan_sources: ["registry", "docker", "dir", "file"]
   default_from: "registry"

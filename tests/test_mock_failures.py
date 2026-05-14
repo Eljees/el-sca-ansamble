@@ -168,6 +168,40 @@ def test_missing_checksum_is_rejected_when_hash_validation_enabled(tmp_path: Pat
     assert result == EXIT_ALL_SOURCES_FAILED
 
 
+def test_v6_latest_json_with_relative_path_is_accepted(tmp_path: Path):
+    archive = b"\x28\xb5\x2f\xfdnot-real-zstd-but-valid-magic-for-routing"
+    digest = sha256(archive).hexdigest()
+    server, thread = serve_in_thread(
+        {
+            "/v6/latest.json": {
+                "status": 200,
+                "body": json.dumps(
+                    {
+                        "status": "active",
+                        "schemaVersion": "v6.1.4",
+                        "built": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "path": "vulnerability-db_v6.1.4_test.tar.zst",
+                        "checksum": f"sha256:{digest}",
+                    }
+                ),
+                "content_type": "application/json",
+            },
+            "/v6/vulnerability-db_v6.1.4_test.tar.zst": {"status": 200, "body": archive},
+        }
+    )
+    host, port = server.server_address
+    config = _base_config(tmp_path, f"http://{host}:{port}")
+    config["grype"]["upstream_update_urls"] = [{"name": "primary", "url": f"http://{host}:{port}/v6/latest.json", "priority": 10, "enabled": True}]
+    try:
+        result = update_grype(config)
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+    assert result == EXIT_SUCCESS
+    assert (tmp_path / "active" / "db.tar.zst").exists()
+    assert (tmp_path / "active" / "v6" / "latest.json").exists()
+
+
 def test_stale_db_is_rejected(tmp_path: Path):
     archive = _make_archive_bytes()
     stale = datetime.now(timezone.utc) - timedelta(days=10)

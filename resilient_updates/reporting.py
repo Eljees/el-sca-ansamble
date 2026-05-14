@@ -164,7 +164,24 @@ def _get_nested(data: Any, keys: list[str], default: Any = None) -> Any:
 def _collect_paths(root: Path) -> list[str]:
     if not root.exists():
         return []
-    return [str(path) for path in sorted(root.rglob("*")) if path.is_file()]
+    paths = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if "extracted" in relative.parts and path.name != "extraction_manifest.json":
+            continue
+        paths.append(str(path))
+    return paths
+
+
+def _required_report_paths(root: Path) -> dict[str, Path]:
+    return {
+        "syft": root / "sbom" / "syft.json",
+        "grype": root / "reports" / "grype" / "report.json",
+        "trivy": root / "reports" / "trivy" / "report.json",
+        "cve-bin-tool": root / "reports" / "cve-bin-tool" / "report.json",
+    }
 
 
 def _markdown_table(findings: list[dict[str, Any]]) -> str:
@@ -192,6 +209,11 @@ def build_report(
 ) -> Path:
     root = Path(reports_dir)
     output = Path(output_path)
+    required_paths = _required_report_paths(root)
+    missing_required = [f"{name}: {path}" for name, path in required_paths.items() if not path.exists()]
+    if missing_required:
+        missing_text = "; ".join(missing_required)
+        raise FileNotFoundError(f"missing required scan artifacts: {missing_text}")
     syft = _collect_json_from_paths(root, ["sbom/syft.json", "sbom/syft.syft.json"], ["syft.json", "syft.syft.json"])
     grype = _collect_json_from_paths(root, ["reports/grype/grype_report.json", "reports/grype/report.json"], ["grype_report.json"])
     trivy = _collect_json_from_paths(root, ["reports/trivy/trivy_report.json", "reports/trivy/trivy.json", "reports/trivy/report.json"], ["trivy_report.json", "trivy.json"])
@@ -204,6 +226,7 @@ def build_report(
     summary = _collect_json(root, ["summary.json"]) or {}
     run_manifest = _collect_json(root, ["run_manifest.json"]) or {}
     db_snapshot = _collect_json(root, ["db_snapshot.json"]) or {}
+    extraction_manifest = _collect_json(root, ["extraction_manifest.json"]) or {}
     provenance = sorted({*Path("artifacts/provenance").glob("*.json"), *root.rglob("provenance/*.json")})
 
     all_findings = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
@@ -246,6 +269,8 @@ def build_report(
         f"- DB drift: `{db_drift}`",
         f"- Tool failures: `{tool_failures}`",
         f"- Update policy: `grype={summary.get('update_grype_db', 'UNKNOWN')}`, `cve-bin-tool={summary.get('update_cve_db', 'UNKNOWN')}`",
+        f"- Extraction status: `{extraction_manifest.get('status', 'UNKNOWN')}`",
+        f"- Extracted archives: `{extraction_manifest.get('extracted_count', 'UNKNOWN')}`",
         "",
         "## Evidence",
         "",

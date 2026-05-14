@@ -16,9 +16,12 @@ services:
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
     command: ["update", "${TRIVY_TARGET:-alpine:latest}"]
+    environment:
+      TRIVY_CACHE_DIR: /var/lib/resilient-db/trivy
+      TRIVY_RENDERED_FLAGS: ${TRIVY_RENDERED_FLAGS:-}
     volumes:
       - ./:/workspace
-      - trivy-cache:/root/.cache/trivy
+      - trivy-cache:/var/lib/resilient-db/trivy
       - ./artifacts:/workspace/artifacts
       - type: bind
         source: ${SCAN_TARGET_HOST:-.}
@@ -32,9 +35,12 @@ services:
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
     command: ["scan", "${TRIVY_TARGET:-alpine:latest}"]
+    environment:
+      TRIVY_CACHE_DIR: /var/lib/resilient-db/trivy
+      TRIVY_RENDERED_FLAGS: ${TRIVY_RENDERED_FLAGS:-}
     volumes:
       - ./:/workspace
-      - trivy-cache:/root/.cache/trivy
+      - trivy-cache:/var/lib/resilient-db/trivy
       - ./artifacts:/workspace/artifacts
       - type: bind
         source: ${SCAN_TARGET_HOST:-.}
@@ -51,51 +57,102 @@ services:
     command: ["update", "grype"]
     volumes:
       - ./:/workspace
-      - grype-db:/workspace/artifacts/internal/grype
+      - grype-db:/var/lib/resilient-db/grype
       - ./artifacts:/workspace/artifacts
       - internal-mirror-data:/workspace/artifacts/mirror
+    networks: [scanner-net]
+
+  grype-db-importer:
+    image: ghcr.io/anchore/grype:v0.112.0
+    profiles: ["default", "update", "offline"]
+    environment:
+      GRYPE_DB_CACHE_DIR: /grype-db-cache
+      GRYPE_DB_AUTO_UPDATE: "false"
+      GRYPE_CHECK_FOR_APP_UPDATE: "false"
+    command: ["db", "import", "/var/lib/resilient-db/grype/active/db.tar.zst"]
+    volumes:
+      - grype-db:/var/lib/resilient-db/grype:ro
+      - grype-cache:/grype-db-cache
     networks: [scanner-net]
 
   grype-static:
     image: python:3.12-slim
     profiles: ["default", "scan", "test-failover", "offline"]
-    working_dir: /workspace/artifacts/internal/grype/active
+    working_dir: /var/lib/resilient-db/grype/active
     command: ["python", "-m", "http.server", "8080"]
     volumes:
       - ./:/workspace
-      - grype-db:/workspace/artifacts/internal/grype
+      - grype-db:/var/lib/resilient-db/grype
     networks: [scanner-net]
 
   grype-scanner:
-    image: anchore/grype:v0.82.0
+    image: ghcr.io/anchore/grype:v0.112.0
     profiles: ["default", "scan", "offline"]
     environment:
-      GRYPE_DB_UPDATE_URL: http://grype-static:8080/listing.json
+      GRYPE_DB_UPDATE_URL: http://grype-static:8080
       GRYPE_DB_VALIDATE_BY_HASH_ON_START: "true"
       GRYPE_DB_VALIDATE_AGE: "true"
       GRYPE_DB_MAX_ALLOWED_BUILT_AGE: 72h
       GRYPE_DB_CACHE_DIR: /grype-db-cache
+      GRYPE_DB_AUTO_UPDATE: "false"
+      GRYPE_CHECK_FOR_APP_UPDATE: "false"
     command: ["sbom:/workspace/artifacts/sbom/syft.json", "-o", "json", "--file", "/workspace/artifacts/reports/grype/report.json"]
     volumes:
       - ./:/workspace
-      - grype-db:/grype-db-cache
+      - grype-cache:/grype-db-cache
       - ./artifacts:/workspace/artifacts
     networks: [scanner-net]
-    depends_on:
-      - grype-static
 
   syft-sbom:
-    image: anchore/syft:v1.20.0
+    image: ghcr.io/anchore/syft:v1.20.0
     profiles: ["default", "scan", "offline"]
     working_dir: /workspace
-    entrypoint: ["/bin/sh", "/workspace/scripts/run_syft.sh"]
-    command: ["${SYFT_TARGET:-/scan-target}", "${SYFT_FROM:-dir}", "/workspace/artifacts/sbom"]
+    command:
+      [
+        "${SYFT_TARGET:-/scan-target}",
+        "--from",
+        "${SYFT_FROM:-dir}",
+        "-o",
+        "syft-json=/workspace/artifacts/sbom/syft.json",
+        "-o",
+        "cyclonedx-json=/workspace/artifacts/sbom/cyclonedx.json",
+        "-o",
+        "spdx-json=/workspace/artifacts/sbom/spdx.json",
+      ]
     volumes:
       - ./:/workspace
       - ./artifacts:/workspace/artifacts
       - type: bind
         source: ${SCAN_TARGET_HOST:-.}
         target: /scan-target
+        read_only: true
+    networks: [scanner-net]
+
+  artifact-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile.extractor
+    profiles: ["default", "extract", "scan", "offline"]
+    working_dir: /workspace
+    command:
+      [
+        "--input",
+        "/input",
+        "--output",
+        "${EXTRACT_OUTPUT:-/workspace/artifacts/extracted/current}",
+        "--max-depth",
+        "${EXTRACT_MAX_DEPTH:-4}",
+        "--max-files",
+        "${EXTRACT_MAX_FILES:-20000}",
+        "--max-bytes",
+        "${EXTRACT_MAX_BYTES:-10737418240}",
+      ]
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+      - type: bind
+        source: ${EXTRACT_INPUT_HOST:-${SCAN_TARGET_HOST:-.}}
+        target: /input
         read_only: true
     networks: [scanner-net]
 
@@ -106,11 +163,14 @@ services:
     profiles: ["default", "update", "offline"]
     working_dir: /workspace
     command: ["update", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
+    environment:
+      NVD_API_KEY: ${NVD_API_KEY:-}
+      NVD_API_KEY_FALLBACK: ${NVD_API_KEY_FALLBACK:-}
     volumes:
       - ./:/workspace
-      - cve-bin-tool-cache:/root/.cache/cve-bin-tool
+      - cve-bin-tool-cache:/root/.cache
       - ./artifacts:/workspace/artifacts
-      - internal-mirror-data:/workspace/artifacts/mirror
+      - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
     networks: [scanner-net]
 
   cve-bin-tool-scanner:
@@ -122,12 +182,30 @@ services:
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     volumes:
       - ./:/workspace
-      - cve-bin-tool-cache:/root/.cache/cve-bin-tool
+      - cve-bin-tool-cache:/root/.cache
       - ./artifacts:/workspace/artifacts
+      - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
       - type: bind
         source: ${SCAN_TARGET_HOST:-.}
         target: /scan-target
         read_only: true
+    networks: [scanner-net]
+
+  db-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.resilient-updater
+    profiles: ["default", "update", "scan", "report", "offline", "test-failover"]
+    working_dir: /workspace
+    command: ["validate-config"]
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+      - trivy-cache:/var/lib/resilient-db/trivy
+      - grype-db:/var/lib/resilient-db/grype
+      - grype-cache:/var/lib/resilient-db/grype-cache
+      - cve-bin-tool-cache:/root/.cache
+      - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
     networks: [scanner-net]
 
   mock-feed-server:
@@ -166,6 +244,7 @@ services:
 volumes:
   trivy-cache:
   grype-db:
+  grype-cache:
   cve-bin-tool-cache:
   internal-mirror-data:
 
