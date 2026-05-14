@@ -7,7 +7,27 @@ SCAN_TARGET="${SCAN_TARGET:-${SCAN_TARGET_CONTAINER:-}}"
 SCAN_TARGET_DISPLAY="${SCAN_TARGET_DISPLAY:-${SCAN_TARGET_HOST:-$SCAN_TARGET}}"
 CASE_ID="${CASE_ID:-CYBERSEC-11531}"
 
-mkdir -p artifacts/reports/final artifacts/provenance artifacts/sbom
+mkdir -p artifacts/reports/final artifacts/provenance artifacts/sbom \
+         artifacts/reports/cve-bin-tool artifacts/reports/trivy artifacts/reports/grype artifacts/sbom
+
+# Создать пустые плейсхолдеры для отчётов, которые сканеры не сформировали
+# (например, cve-bin-tool упал без цели или trivy не смог подключиться к БД).
+# build_report() требует наличия файлов; плейсхолдер явно отразится в Consistency warnings.
+_ensure_report() {
+  report_path="$1"
+  tool_name="$2"
+  empty_json="$3"
+  if [ ! -f "$report_path" ]; then
+    printf '%s' "$empty_json" > "$report_path"
+    echo "[collect_reports] WARN: ${tool_name} report missing — created empty placeholder at ${report_path}" >&2
+  fi
+}
+
+_ensure_report "artifacts/reports/cve-bin-tool/report.json" "cve-bin-tool" "[]"
+_ensure_report "artifacts/reports/trivy/report.json"        "trivy"        '{"Results":[]}'
+_ensure_report "artifacts/sbom/syft.json"                   "syft"         '{"artifacts":[],"source":{},"schema":{}}'
+_ensure_report "artifacts/reports/grype/report.json"        "grype"        '{"matches":[]}'
+
 python -m resilient_updates.cli collect-report \
   --reports-dir "$REPORTS_DIR" \
   --output "$REPORT_OUTPUT" \

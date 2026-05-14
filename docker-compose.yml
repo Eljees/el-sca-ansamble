@@ -1,3 +1,30 @@
+# ---------------------------------------------------------------------------
+# Proxy support
+#
+# Set HTTP_PROXY / HTTPS_PROXY / NO_PROXY / ALL_PROXY in your .env file
+# (copy .env.example → .env and fill in the values).
+#
+# If your SOCKS/HTTP proxy runs on the Windows/Linux host (127.0.0.1), use
+# host.docker.internal instead of 127.0.0.1 so Docker containers can reach it:
+#
+#   ALL_PROXY=socks5h://host.docker.internal:1080
+#   NO_PROXY=localhost,127.0.0.1,grype-static
+#
+# extra_hosts: [host.docker.internal:host-gateway] is already set on all
+# network-using services — no manual /etc/hosts editing needed.
+# ---------------------------------------------------------------------------
+
+x-proxy-env: &proxy-env
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,grype-static}
+  ALL_PROXY: ${ALL_PROXY:-}
+  # lower-case variants honoured by curl, wget, Python requests, Go net/http
+  http_proxy: ${HTTP_PROXY:-}
+  https_proxy: ${HTTPS_PROXY:-}
+  no_proxy: ${NO_PROXY:-localhost,127.0.0.1,grype-static}
+  all_proxy: ${ALL_PROXY:-}
+
 services:
   stack-info:
     build:
@@ -17,8 +44,11 @@ services:
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
     command: ["update", "${TRIVY_TARGET:-alpine:latest}"]
     environment:
+      <<: *proxy-env
       TRIVY_CACHE_DIR: /var/lib/resilient-db/trivy
       TRIVY_RENDERED_FLAGS: ${TRIVY_RENDERED_FLAGS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./:/workspace
       - trivy-cache:/var/lib/resilient-db/trivy
@@ -36,8 +66,11 @@ services:
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
     command: ["scan", "${TRIVY_TARGET:-alpine:latest}"]
     environment:
+      <<: *proxy-env
       TRIVY_CACHE_DIR: /var/lib/resilient-db/trivy
       TRIVY_RENDERED_FLAGS: ${TRIVY_RENDERED_FLAGS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./:/workspace
       - trivy-cache:/var/lib/resilient-db/trivy
@@ -55,6 +88,10 @@ services:
     profiles: ["default", "update", "test-failover", "offline"]
     working_dir: /workspace
     command: ["update", "grype"]
+    environment:
+      <<: *proxy-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./:/workspace
       - grype-db:/var/lib/resilient-db/grype
@@ -107,6 +144,10 @@ services:
     image: ghcr.io/anchore/syft:v1.20.0
     profiles: ["default", "scan", "offline"]
     working_dir: /workspace
+    environment:
+      <<: *proxy-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       [
         "${SYFT_TARGET:-/scan-target}",
@@ -164,6 +205,7 @@ services:
     working_dir: /workspace
     command: ["update", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
+      <<: *proxy-env
       NVD_API_KEY: ${NVD_API_KEY:-}
       NVD_API_KEY_FALLBACK: ${NVD_API_KEY_FALLBACK:-}
       CVE_BIN_TOOL_UPDATE_MODES: ${CVE_BIN_TOOL_UPDATE_MODES:-}
@@ -171,6 +213,8 @@ services:
       CVE_BIN_TOOL_SEED_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SEED_TIMEOUT_SECONDS:-}
       CVE_BIN_TOOL_SEED_AUX: ${CVE_BIN_TOOL_SEED_AUX:-}
       CVE_BIN_TOOL_OSV_ECOSYSTEMS: ${CVE_BIN_TOOL_OSV_ECOSYSTEMS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./:/workspace
       - cve-bin-tool-cache:/root/.cache
@@ -185,6 +229,8 @@ services:
     profiles: ["default", "scan", "offline"]
     working_dir: /workspace
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
+    environment:
+      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-600}
     volumes:
       - ./:/workspace
       - cve-bin-tool-cache:/root/.cache

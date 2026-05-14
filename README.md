@@ -502,6 +502,18 @@ python3 -m resilient_updates.cli collect-report --reports-dir artifacts --target
 
 ## 7. Полезные команды
 
+Зафиксировать все правки одной командой (удаляет stale index.lock, снимает comands.txt с трекинга):
+
+Windows PowerShell:
+
+```powershell
+.\scripts\windows\commit-fixes.ps1
+```
+
+Настройка прокси — см. [docs/proxy.md](docs/proxy.md).
+
+
+
 Проверить provenance:
 
 ```powershell
@@ -536,10 +548,11 @@ Linux:
 
 ## 8. Ограничения текущего MVP
 
-- Trivy healthcheck в Python wrapper пока не является полноценной OCI-aware проверкой, то есть не понимает `oci://` так же нативно, как сам Trivy.
+- Trivy healthcheck в Python wrapper не является полноценной OCI-aware проверкой: `oci://` URL классифицируются как `invalid_schema` и мгновенно пропускаются без повторных попыток (это правильное поведение — зафиксировано в failure-modes).
 - Grype mirror/update flow работает через наш wrapper и внутренний stable endpoint, а не через встроенный multi-source fallback самого Grype.
-- `cve-bin-tool` пока использует wrapper-first pipeline без форка upstream, но безопасная isolated activation для DB ещё требует следующего этапа усиления.
-- Syft намеренно не имеет никакой vulnerability DB, потому что он отвечает за построение SBOM, а не за matching CVE.
+- `cve-bin-tool` scan на крупных Go-бинарях (>50 МБ) может занимать долгое время. По умолчанию применяется таймаут 600 с (10 мин), настраивается через `CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS`.
+- Syft намеренно не имеет никакой vulnerability DB — он отвечает за построение SBOM, а не за matching CVE.
+- Прокси-поддержка Python-слоя не распространяется автоматически на бинарные инструменты (Trivy, Grype, Syft) внутри Docker — для них прокси задаётся через переменные окружения в `.env` (см. [docs/proxy.md](docs/proxy.md)).
 
 ## 9. Troubleshooting
 
@@ -559,9 +572,10 @@ Linux:
   - убедиться, что `syft.json` уже создан
   - убедиться, что `grype-updater` и `grype-static` отработали корректно
 
-- `cve-bin-tool` scan не стартует:
+- `cve-bin-tool` scan не стартует или завис:
   - проверить DB audit и содержимое cache
   - проверить offline bundle или cache DB
+  - если scan висит часами — это нормально для крупных Go-бинарей (100+ МБ); таймаут задан `CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS=600` в `.env`, при достижении пишется пустой отчёт и пайплайн продолжается
 
 - итоговый отчёт пустой:
   - проверить наличие raw JSON в `artifacts/reports/`

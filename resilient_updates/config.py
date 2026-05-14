@@ -147,4 +147,58 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
         if key in flattened:
             errors.append(f"unsafe setting detected: {key}")
 
+    errors.extend(validate_proxy_config(config))
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Proxy helpers
+# ---------------------------------------------------------------------------
+
+_ALLOWED_PROXY_SCHEMES = {"http", "https", "socks5", "socks5h", "socks4", "socks4a"}
+
+
+def parse_proxy_config(config: dict[str, Any]) -> dict[str, str]:
+    """Return a proxies dict suitable for ``requests.Session.proxies``.
+
+    Reads from the optional top-level ``proxy:`` section in feed_sources.yaml.
+    An empty / absent section returns ``{}`` — callers then fall back to
+    HTTP_PROXY / HTTPS_PROXY / ALL_PROXY environment variables (handled in
+    ``fallback.build_session``).
+
+    Example YAML::
+
+        proxy:
+          http: "socks5h://host.docker.internal:1080"
+          https: "socks5h://host.docker.internal:1080"
+          no_proxy: "localhost,127.0.0.1,grype-static"
+    """
+    section = config.get("proxy") or {}
+    result: dict[str, str] = {}
+    for key in ("http", "https"):
+        val = (section.get(key) or "").strip()
+        if val:
+            result[key] = val
+    no_proxy = (section.get("no_proxy") or "").strip()
+    if no_proxy:
+        result["no_proxy"] = no_proxy
+    return result
+
+
+def validate_proxy_config(config: dict[str, Any]) -> list[str]:
+    """Return validation errors for the proxy section (non-fatal; collected by validate_config_data)."""
+    errors: list[str] = []
+    section = config.get("proxy") or {}
+    for key in ("http", "https"):
+        val = (section.get(key) or "").strip()
+        if not val:
+            continue
+        from urllib.parse import urlparse as _urlparse
+        parsed = _urlparse(val)
+        if parsed.scheme not in _ALLOWED_PROXY_SCHEMES:
+            errors.append(
+                f"proxy.{key}: unsupported scheme '{parsed.scheme}'. "
+                f"Allowed: {sorted(_ALLOWED_PROXY_SCHEMES)}"
+            )
     return errors

@@ -1,3 +1,33 @@
+# ---------------------------------------------------------------------------
+# Proxy settings (optional)
+#
+# Leave all values empty to inherit from environment variables:
+#   HTTP_PROXY / http_proxy   -- for plain HTTP requests
+#   HTTPS_PROXY / https_proxy -- for HTTPS requests (most scanners use this)
+#   NO_PROXY / no_proxy       -- comma-separated list of hosts that bypass proxy
+#   ALL_PROXY / all_proxy     -- fallback for both schemes; supports SOCKS5
+#
+# Set explicit values here to override env vars just for the Python layer
+# (resilient_updates CLI, healthcheck, grype DB download).
+# Docker containers get proxy vars passed through docker-compose x-proxy-env.
+#
+# SOCKS5 example (host.docker.internal reaches the Windows/Linux host from
+# inside Docker when extra_hosts: [host.docker.internal:host-gateway] is set):
+#   http:  "socks5h://host.docker.internal:1080"
+#   https: "socks5h://host.docker.internal:1080"
+#
+# HTTP/HTTPS proxy example:
+#   http:  "http://proxy.corp.example:3128"
+#   https: "http://proxy.corp.example:3128"
+#
+# Supported schemes: http, https, socks4, socks4a, socks5, socks5h
+# socks5h = SOCKS5 with remote DNS resolution (recommended for corporate proxies)
+# ---------------------------------------------------------------------------
+proxy:
+  http: ""
+  https: ""
+  no_proxy: "localhost,127.0.0.1,grype-static"
+
 trivy:
   db_repositories:
     - name: internal-trivy-db

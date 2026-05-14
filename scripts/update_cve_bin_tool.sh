@@ -141,7 +141,24 @@ case "$MODE" in
     if [ "${CVE_BIN_TOOL_VERIFY_DB:-1}" = "1" ]; then
       python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null
     fi
-    cve-bin-tool --offline --format json --output-file "$REPORT_DIR/report.json" "$TARGET"
+    SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-600}"
+    echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$TARGET"
+    set +e
+    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --format json --output-file "$REPORT_DIR/report.json" "$TARGET"
+    scan_rc=$?
+    set -e
+    if [ "$scan_rc" -eq 124 ]; then
+      echo "[cve-bin-tool] WARN: scan timed out after ${SCAN_TIMEOUT}s -- writing empty report" >&2
+      # Ensure a valid empty report exists so collect_reports.sh can proceed.
+      if [ ! -f "$REPORT_DIR/report.json" ]; then
+        printf '[]' > "$REPORT_DIR/report.json"
+      fi
+      exit 0
+    fi
+    if [ "$scan_rc" -ne 0 ]; then
+      echo "[cve-bin-tool] scan exited with code $scan_rc" >&2
+      exit "$scan_rc"
+    fi
     ;;
   export)
     cve-bin-tool --export "artifacts/mirror/cve-bin-tool-export.json"

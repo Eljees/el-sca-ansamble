@@ -10,6 +10,8 @@ Thumbs.db
 -prompts/
 .vscode/
 _el_cvebt_source_research/
+--exps/
+comands.txt
 
 artifacts/cache/*
 artifacts/mirror/*
