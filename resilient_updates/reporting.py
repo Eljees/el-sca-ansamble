@@ -207,7 +207,7 @@ def build_report(
     display_target: str | None = None,
     case_id: str = "CYBERSEC-11531",
 ) -> Path:
-    root = Path(reports_dir)
+    root = Path(reports_dir).resolve()
     output = Path(output_path)
     required_paths = _required_report_paths(root)
     missing_required = [f"{name}: {path}" for name, path in required_paths.items() if not path.exists()]
@@ -227,7 +227,7 @@ def build_report(
     run_manifest = _collect_json(root, ["run_manifest.json"]) or {}
     db_snapshot = _collect_json(root, ["db_snapshot.json"]) or {}
     extraction_manifest = _collect_json(root, ["extraction_manifest.json"]) or {}
-    provenance = sorted({*Path("artifacts/provenance").glob("*.json"), *root.rglob("provenance/*.json")})
+    provenance = sorted({*(root / "provenance").glob("*.json"), *root.rglob("provenance/*.json")})
 
     all_findings = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
     high_critical = [item for item in all_findings if item["severity"] in {"CRITICAL", "HIGH"}]
@@ -246,6 +246,11 @@ def build_report(
         for tool in parsed_counts
         if int(summary_counts[tool] or 0) != parsed_counts[tool]
     ]
+    if syft_count == 0:
+        warnings.append(
+            "syft: 0 components -- extraction may not have run or target has no recognized"
+            " package manifests/binaries; run scan_archive.sh or run-scan.ps1 -Extract"
+        )
 
     target = str(display_target or target_path or "UNKNOWN")
     digest = target_digest(target_path) if target_path else None
@@ -256,11 +261,11 @@ def build_report(
     evidence_files = _collect_paths(root)
 
     report = [
-        f"# {case_id}: контейнерный SCA-отчёт",
+        f"# {case_id}: konteynernyy SCA-otchet",
         "",
-        f"Дата анализа: {date.today().isoformat()}",
+        f"Data analiza: {date.today().isoformat()}",
         "",
-        "## Объект анализа",
+        "## Ob'ekt analiza",
         "",
         f"- Target: `{target}`",
         f"- SHA-256: `{digest or 'UNKNOWN'}`",
@@ -278,11 +283,11 @@ def build_report(
     if evidence_files:
         report.extend([f"- `{item}`" for item in evidence_files])
     else:
-        report.append("- Evidence-файлы не найдены.")
+        report.append("- Evidence files not found.")
     report.extend(
         [
             "",
-            "## Сводка сканеров",
+            "## Scanner summary",
             "",
             f"- Syft components: `{syft_count}`",
             f"- Grype findings: `{grype_count}`",
@@ -299,7 +304,7 @@ def build_report(
     if warnings:
         report.extend([f"- `{item}`" for item in warnings])
     else:
-        report.append("- Расхождений между summary и raw JSON не обнаружено.")
+        report.append("- No discrepancies between summary and raw JSON.")
     report.extend(
         [
             "",
@@ -313,19 +318,19 @@ def build_report(
     if provenance:
         report.extend([f"- `{item}`" for item in provenance])
     else:
-        report.append("- Provenance JSON не найден.")
+        report.append("- Provenance JSON not found.")
     report.extend(
         [
             "",
-            "## Интерпретация",
+            "## Interpretation",
             "",
-            "Отчёт агрегирует raw evidence из контейнерного пайплайна. Наличие findings означает scanner signal, а не автоматическое подтверждение применимости к эксплуатации.",
+            "This report aggregates raw evidence from the container pipeline. Findings represent scanner signal, not confirmed exploitability.",
             "",
-            "## Рекомендации",
+            "## Recommendations",
             "",
-            "1. Проверить High/Critical findings вручную по контексту поставки.",
-            "2. Сохранять raw JSON рядом с итоговым Markdown-отчётом.",
-            "3. Для воспроизводимых сравнений фиксировать DB snapshot и версии инструментов.",
+            "1. Manually review High/Critical findings in delivery context.",
+            "2. Keep raw JSON next to the final Markdown report.",
+            "3. Fix DB snapshot ID and tool versions for reproducible comparisons.",
             "",
         ]
     )

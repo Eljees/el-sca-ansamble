@@ -54,7 +54,19 @@ def classify_exception(exc: Exception) -> FailureReason:
         return FailureReason.TIMEOUT
     if isinstance(exc, (requests.ConnectionError, socket.gaierror)):
         return FailureReason.DNS_OR_NETWORK
+    if isinstance(exc, requests.exceptions.InvalidSchema):
+        # "No connection adapters were found for 'oci://...'" -- protocol not supported.
+        # This is not a network error: retrying will not help.
+        return FailureReason.INVALID_SCHEMA
     return FailureReason.UNKNOWN
+
+
+# Errors where retrying is pointless (permanent, not transient).
+_NON_RETRYABLE_REASONS = frozenset({
+    FailureReason.INVALID_SCHEMA,
+    FailureReason.AUTH_FAILURE,
+    FailureReason.HTTP_4XX,
+})
 
 
 def fetch_bytes(
@@ -100,7 +112,7 @@ def attempt_sources(
             except Exception as exc:  # pragma: no cover - covered via tests on classify result
                 reason = classify_exception(exc)
                 attempts.append(AttemptResult(source, False, reason, str(exc), None))
-                if attempt >= retry_count:
+                if attempt >= retry_count or reason in _NON_RETRYABLE_REASONS:
                     break
             time.sleep(backoff_seconds)
     return None, None, attempts

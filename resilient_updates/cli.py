@@ -16,7 +16,7 @@ from .atomic_publish import publish_directory
 from .config import DEFAULT_CONFIG_PATH, load_config, parse_duration_hours, validate_config_data
 from .cve_db_audit import activate_best_cve_bin_tool_db, audit_cve_bin_tool_db, seed_cve_bin_tool_aux_sources
 from .extractor import extract_artifacts
-from .fallback import FailureReason, attempt_sources, fetch_bytes
+from .fallback import AttemptResult, FailureReason, attempt_sources, fetch_bytes
 from .healthcheck import run_healthcheck
 from .provenance import write_provenance
 from .reporting import build_report
@@ -28,6 +28,14 @@ EXIT_ALL_SOURCES_FAILED = 2
 EXIT_VALIDATION_FAILED = 3
 EXIT_STALE_REJECTED = 4
 EXIT_LKG_USED = 5
+
+
+def _dedup_attempted_sources(attempts: list[AttemptResult]) -> list[dict[str, Any]]:
+    """Return unique sources from attempt list (retries cause duplicates)."""
+    seen: dict[str, dict[str, Any]] = {}
+    for item in attempts:
+        seen[item.source.name] = item.source.to_dict()
+    return list(seen.values())
 
 
 def _now_iso() -> str:
@@ -124,7 +132,7 @@ def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int,
         "tool": tool,
         "artifact_type": layer,
         "selected_source": source.to_dict() if source else None,
-        "attempted_sources": [item.source.to_dict() for item in attempts],
+        "attempted_sources": _dedup_attempted_sources(attempts),
         "failures": [
             {
                 "source": item.source.name,
@@ -284,7 +292,7 @@ def update_grype(config: dict[str, Any]) -> int:
             "tool": "grype",
             "artifact_type": "grype-db",
             "selected_source": None,
-            "attempted_sources": [item.source.to_dict() for item in attempts],
+            "attempted_sources": _dedup_attempted_sources(attempts),
             "failures": [
                 {
                     "source": item.source.name,
@@ -318,7 +326,7 @@ def update_grype(config: dict[str, Any]) -> int:
         "tool": "grype",
         "artifact_type": "grype-db",
         "selected_source": selected_source.to_dict(),
-        "attempted_sources": [item.source.to_dict() for item in attempts],
+        "attempted_sources": _dedup_attempted_sources(attempts),
         "failures": [
             {
                 "source": item.source.name,
