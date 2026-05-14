@@ -1,32 +1,32 @@
 services:
   stack-info:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   grype-updater:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   artifact-extractor:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-extractor:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-extractor:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   cve-bin-tool-updater:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-cve-bin-tool:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-cve-bin-tool:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   cve-bin-tool-scanner:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-cve-bin-tool:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-cve-bin-tool:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   db-admin:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   mock-feed-server:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: !reset null
 
   report-collector:
-    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
-    build: null
+    image: ${REGISTRY_NAMESPACE:-registry.example.com/your-group/el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: !reset null

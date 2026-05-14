@@ -216,7 +216,7 @@ $REGISTRY = "ghcr.io/your-org"
 # override-файл для получателя:
   grype-updater:
     image: your-org/el-sca-resilient-updater:1.0.0
-    build: null
+    build: !reset null
 ```
 
 Что делать в репозитории:
@@ -224,6 +224,7 @@ $REGISTRY = "ghcr.io/your-org"
 - добавить в git файл [docker-compose.prod.example.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.prod.example.yml);
 - не создавать заранее `docker-compose.prod.yml`, потому что это уже рабочий локальный файл конкретного получателя;
 - передавать получателю репозиторий уже с `docker-compose.prod.example.yml`.
+- в этом override-файле `build: !reset null` убирает локальную сборку и оставляет только pull готовых образов.
 
 Что делает получатель после `git clone`:
 
@@ -296,7 +297,7 @@ services:
 Примеры значений для `.env`:
 
 ```dotenv
-REGISTRY_NAMESPACE=el-sca-ansamble
+REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble
 IMAGE_TAG=1.0.0
 ```
 
@@ -374,7 +375,7 @@ Copy-Item .\docker-compose.prod.example.yml .\docker-compose.prod.yml
 
 # 3. Заполнить .env
 @'
-REGISTRY_NAMESPACE=el-sca-ansamble
+REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble
 IMAGE_TAG=1.0.0
 SCAN_TARGET_HOST=D:\path\to\artifact.tar.gz
 SCAN_TARGET_DISPLAY=D:\path\to\artifact.tar.gz
@@ -431,7 +432,7 @@ cp docker-compose.prod.example.yml docker-compose.prod.yml
 
 # 3. Заполнить .env
 cat > .env <<'ENV'
-REGISTRY_NAMESPACE=el-sca-ansamble
+REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble
 IMAGE_TAG=1.0.0
 SCAN_TARGET_HOST=/absolute/path/to/artifact.tar.gz
 SCAN_TARGET_DISPLAY=/absolute/path/to/artifact.tar.gz
@@ -475,7 +476,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admi
 artifacts/reports/final/cve_analysis_report_generated_ru.md
 ```
 
-Готовый минимальный сценарий для Ubuntu, если нужен буквально набор команд без пояснений:
+### Готовый пример для Ubuntu
+
+На Ubuntu получателю можно делать вот так, если нужен полностью готовый сценарий без додумывания:
 
 ```bash
 sudo apt-get update
@@ -489,7 +492,7 @@ cd el-sca-ansamble
 cp receiver.env.example .env
 cp docker-compose.prod.example.yml docker-compose.prod.yml
 
-sed -i 's|^REGISTRY_NAMESPACE=.*|REGISTRY_NAMESPACE=el-sca-ansamble|' .env
+sed -i 's|^REGISTRY_NAMESPACE=.*|REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble|' .env
 sed -i 's|^IMAGE_TAG=.*|IMAGE_TAG=1.0.0|' .env
 sed -i 's|^SCAN_TARGET_HOST=.*|SCAN_TARGET_HOST=/absolute/path/to/artifact.tar.gz|' .env
 sed -i 's|^SCAN_TARGET_DISPLAY=.*|SCAN_TARGET_DISPLAY=/absolute/path/to/artifact.tar.gz|' .env
@@ -503,6 +506,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm cve-bin-tool-updater
 
 ./scripts/scan_archive.sh /absolute/path/to/artifact.tar.gz CYBERSEC-TEST
+```
+
+Итоговый отчёт будет здесь:
+
+```text
+artifacts/reports/final/cve_analysis_report_generated_ru.md
 ```
 
 Если получателю не нужны ручные низкоуровневые команды, а нужен только один запуск после настройки, то на Windows используется `.\scripts\windows\run-scan.ps1`, а на Linux `./scripts/scan_archive.sh`.
