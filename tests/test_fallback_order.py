@@ -36,8 +36,7 @@ def test_primary_timeout_falls_back_to_secondary():
 
 
 # ---------------------------------------------------------------------------
-# InvalidSchema (OCI) is non-retryable — must not retry, must not fall into
-# the general retry path that would burn backoff_seconds * retry_count time.
+# InvalidSchema (OCI) is non-retryable — must not retry even when retry_count > 0
 # ---------------------------------------------------------------------------
 
 def test_invalid_schema_is_not_retried():
@@ -52,7 +51,7 @@ def test_invalid_schema_is_not_retried():
     selected, payload, attempts = attempt_sources(
         [source],
         timeout=1,
-        retry_count=3,  # would normally allow 3 retries
+        retry_count=3,
         backoff_seconds=0,
         retry_status_codes=[429, 500],
         downloader=downloader,
@@ -63,7 +62,7 @@ def test_invalid_schema_is_not_retried():
 
 
 # ---------------------------------------------------------------------------
-# AUTH_FAILURE (401/403) is non-retryable.
+# AUTH_FAILURE (401/403) is non-retryable
 # ---------------------------------------------------------------------------
 
 def test_auth_failure_401_is_not_retried():
@@ -80,7 +79,7 @@ def test_auth_failure_401_is_not_retried():
         timeout=1,
         retry_count=3,
         backoff_seconds=0,
-        retry_status_codes=[429, 500, 401],  # even if 401 is in retry list, it's non-retryable
+        retry_status_codes=[429, 500, 401],
         downloader=downloader,
     )
     assert selected is None
@@ -110,18 +109,17 @@ def test_auth_failure_403_is_not_retried():
 
 
 # ---------------------------------------------------------------------------
-# session argument is forwarded to the downloader.
+# session argument is forwarded unchanged to the downloader
 # ---------------------------------------------------------------------------
 
 def test_session_is_forwarded_to_downloader():
-    import requests
-
+    import requests as req
     source = SourceCandidate(priority=10, name="src", url="https://src", tool="grype", layer="grype-db")
-    sentinel = requests.Session()
-    received_sessions = []
+    sentinel = req.Session()
+    received = []
 
     def downloader(url, timeout, session, headers):
-        received_sessions.append(session)
+        received.append(session)
         return 200, b"ok"
 
     attempt_sources(
@@ -133,11 +131,11 @@ def test_session_is_forwarded_to_downloader():
         downloader=downloader,
         session=sentinel,
     )
-    assert received_sessions == [sentinel], "The session object must be forwarded unchanged to the downloader"
+    assert received == [sentinel], "The session object must be forwarded unchanged to the downloader"
 
 
 # ---------------------------------------------------------------------------
-# 500 responses are retried up to retry_count times.
+# 500 responses are retried up to retry_count times
 # ---------------------------------------------------------------------------
 
 def test_http_5xx_is_retried_up_to_retry_count():

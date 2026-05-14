@@ -45,10 +45,14 @@ git add `
     resilient_updates/fallback.py `
     resilient_updates/healthcheck.py `
     resilient_updates/reporting.py `
+    tests/test_proxy.py `
+    tests/test_fallback_order.py `
+    tests/test_reporting.py `
     scripts/scan_archive.sh `
     scripts/update_cve_bin_tool.sh `
     scripts/windows/commit-fixes.ps1 `
     docs/architecture.md `
+    docs/distribution.md `
     docs/failure-modes.md `
     docs/operations.md `
     docs/proxy.md `

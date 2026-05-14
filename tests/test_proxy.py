@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
-
 from resilient_updates.config import parse_proxy_config, validate_proxy_config
 from resilient_updates.fallback import build_session
 
