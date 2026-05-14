@@ -141,6 +141,81 @@ def test_build_report_fails_when_required_scan_artifacts_are_missing(tmp_path: P
     assert "cve-bin-tool" in message
 
 
+def _make_minimal_reports(root: Path, syft_artifacts: list | None = None) -> None:
+    """Create the minimum valid report structure under *root*."""
+    (root / "sbom").mkdir(parents=True, exist_ok=True)
+    (root / "reports" / "grype").mkdir(parents=True, exist_ok=True)
+    (root / "reports" / "trivy").mkdir(parents=True, exist_ok=True)
+    (root / "reports" / "cve-bin-tool").mkdir(parents=True, exist_ok=True)
+    artifacts = syft_artifacts if syft_artifacts is not None else []
+    (root / "sbom" / "syft.json").write_text(json.dumps({"artifacts": artifacts}), encoding="utf-8")
+    (root / "reports" / "grype" / "report.json").write_text(json.dumps({"matches": []}), encoding="utf-8")
+    (root / "reports" / "trivy" / "report.json").write_text(json.dumps({"Results": []}), encoding="utf-8")
+    (root / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
+
+
+def test_build_report_warns_when_syft_has_zero_components(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports, syft_artifacts=[])  # explicitly 0 components
+
+    output = build_report(reports, tmp_path / "report.md", None, "target", "CASE")
+    text = output.read_text(encoding="utf-8")
+
+    assert "syft: 0 components" in text
+    assert "extraction" in text.lower()
+
+
+def test_build_report_does_not_warn_when_syft_has_components(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports, syft_artifacts=[{"name": "libc"}])
+
+    output = build_report(reports, tmp_path / "report.md", None, "target", "CASE")
+    text = output.read_text(encoding="utf-8")
+
+    assert "syft: 0 components" not in text
+
+
+def test_build_report_warns_when_cve_bin_tool_timed_out(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports)
+    # Write the sentinel file that update_cve_bin_tool.sh creates on timeout
+    (reports / "reports" / "cve-bin-tool" / "timeout.flag").write_text(
+        "timed_out_after=600\n", encoding="utf-8"
+    )
+
+    output = build_report(reports, tmp_path / "report.md", None, "target", "CASE")
+    text = output.read_text(encoding="utf-8")
+
+    assert "cve-bin-tool" in text
+    assert "timed out" in text
+    assert "600" in text
+    assert "CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS" in text
+
+
+def test_build_report_no_timeout_warning_without_flag(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports)
+    # No timeout.flag → no warning
+
+    output = build_report(reports, tmp_path / "report.md", None, "target", "CASE")
+    text = output.read_text(encoding="utf-8")
+
+    assert "timed out" not in text
+
+
+def test_build_report_timeout_warning_handles_missing_seconds_gracefully(tmp_path: Path):
+    """timeout.flag exists but is empty or malformed — should not crash, shows 'unknown'."""
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports)
+    (reports / "reports" / "cve-bin-tool" / "timeout.flag").write_text("", encoding="utf-8")
+
+    output = build_report(reports, tmp_path / "report.md", None, "target", "CASE")
+    text = output.read_text(encoding="utf-8")
+
+    assert "timed out" in text
+    assert "unknown" in text
+
+
 def test_build_report_summarizes_extraction_manifest_without_listing_payload(tmp_path: Path):
     reports = tmp_path / "artifacts"
     (reports / "sbom").mkdir(parents=True)

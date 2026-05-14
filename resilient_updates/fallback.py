@@ -138,7 +138,7 @@ def attempt_sources(
                     attempts.append(AttemptResult(source, True, None, "ok", status_code))
                     return source, payload, attempts
                 attempts.append(AttemptResult(source, False, reason, f"http status {status_code}", status_code))
-                if status_code not in retry_status_codes or attempt >= retry_count:
+                if reason in _NON_RETRYABLE_REASONS or status_code not in retry_status_codes or attempt >= retry_count:
                     break
             except Exception as exc:  # pragma: no cover - covered via tests on classify result
                 reason = classify_exception(exc)
