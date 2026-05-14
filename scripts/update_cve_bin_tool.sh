@@ -142,13 +142,35 @@ case "$MODE" in
       python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null
     fi
     SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-600}"
-    echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$TARGET"
+
+    # On Windows (Docker Desktop), bind mounts from NTFS go through the WSL2/virtio
+    # layer and are 10-100x slower than native Linux I/O.  cve-bin-tool runs 365
+    # byte-level regex patterns on every binary — reading a 100 MB Go binary through
+    # a Windows bind mount takes hours.
+    #
+    # Fix: copy scan target to a tmpfs inside the container first, then scan locally.
+    # The copy itself is fast (network-speed equivalent within Docker); the subsequent
+    # scan reads from container-local memory-backed storage.
+    LOCAL_TARGET="/tmp/cbt-scan-local"
+    if [ "${CVE_BIN_TOOL_LOCAL_COPY:-1}" = "1" ] && [ -d "$TARGET" ]; then
+      echo "[cve-bin-tool] copying scan target to container-local tmpfs for faster I/O..."
+      rm -rf "$LOCAL_TARGET"
+      cp -a "$TARGET/." "$LOCAL_TARGET/"
+      EFFECTIVE_TARGET="$LOCAL_TARGET"
+      echo "[cve-bin-tool] copy done, scanning from $EFFECTIVE_TARGET"
+    else
+      EFFECTIVE_TARGET="$TARGET"
+    fi
+
+    echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$EFFECTIVE_TARGET"
     set +e
-    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --format json --output-file "$REPORT_DIR/report.json" "$TARGET"
+    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
     scan_rc=$?
     set -e
     if [ "$scan_rc" -eq 124 ]; then
       echo "[cve-bin-tool] WARN: scan timed out after ${SCAN_TIMEOUT}s -- writing empty report" >&2
+      # Write sentinel so the reporting layer can distinguish timeout from real zero findings.
+      printf 'timed_out_after=%s\n' "$SCAN_TIMEOUT" > "$REPORT_DIR/timeout.flag"
       # Ensure a valid empty report exists so collect_reports.sh can proceed.
       if [ ! -f "$REPORT_DIR/report.json" ]; then
         printf '[]' > "$REPORT_DIR/report.json"

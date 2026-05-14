@@ -229,6 +229,20 @@ def build_report(
     extraction_manifest = _collect_json(root, ["extraction_manifest.json"]) or {}
     provenance = sorted({*(root / "provenance").glob("*.json"), *root.rglob("provenance/*.json")})
 
+    # Detect whether cve-bin-tool scan was cut short by the timeout wrapper.
+    # When it times out, update_cve_bin_tool.sh writes timeout.flag alongside report.json.
+    # Without this flag the report shows "0 findings" indistinguishably from a genuine clean scan.
+    cve_timeout_flag = root / "reports" / "cve-bin-tool" / "timeout.flag"
+    cve_timed_out = cve_timeout_flag.exists()
+    cve_timeout_seconds: str = "unknown"
+    if cve_timed_out:
+        try:
+            for line in cve_timeout_flag.read_text(encoding="utf-8").splitlines():
+                if line.startswith("timed_out_after="):
+                    cve_timeout_seconds = line.split("=", 1)[1].strip()
+        except Exception:  # noqa: BLE001
+            pass
+
     all_findings = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
     high_critical = [item for item in all_findings if item["severity"] in {"CRITICAL", "HIGH"}]
     severity_counts = Counter(item["severity"] for item in all_findings)
@@ -250,6 +264,12 @@ def build_report(
         warnings.append(
             "syft: 0 components -- extraction may not have run or target has no recognized"
             " package manifests/binaries; run scan_archive.sh or run-scan.ps1 -Extract"
+        )
+    if cve_timed_out:
+        warnings.append(
+            f"cve-bin-tool: scan timed out after {cve_timeout_seconds}s -- results show"
+            " 0 findings but scan did not complete; increase"
+            " CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS or reduce scan target size"
         )
 
     target = str(display_target or target_path or "UNKNOWN")

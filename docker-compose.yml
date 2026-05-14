@@ -53,10 +53,6 @@ services:
       - ./:/workspace
       - trivy-cache:/var/lib/resilient-db/trivy
       - ./artifacts:/workspace/artifacts
-      - type: bind
-        source: ${SCAN_TARGET_HOST:-.}
-        target: /scan-target
-        read_only: true
     networks: [scanner-net]
 
   trivy-scanner:
@@ -76,7 +72,7 @@ services:
       - trivy-cache:/var/lib/resilient-db/trivy
       - ./artifacts:/workspace/artifacts
       - type: bind
-        source: ${SCAN_TARGET_HOST:-.}
+        source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST in .env to the path of the archive or directory to scan. See .env.example}
         target: /scan-target
         read_only: true
     networks: [scanner-net]
@@ -164,7 +160,7 @@ services:
       - ./:/workspace
       - ./artifacts:/workspace/artifacts
       - type: bind
-        source: ${SCAN_TARGET_HOST:-.}
+        source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST in .env to the path of the archive or directory to scan. See .env.example}
         target: /scan-target
         read_only: true
     networks: [scanner-net]
@@ -192,7 +188,7 @@ services:
       - ./:/workspace
       - ./artifacts:/workspace/artifacts
       - type: bind
-        source: ${EXTRACT_INPUT_HOST:-${SCAN_TARGET_HOST:-.}}
+        source: ${EXTRACT_INPUT_HOST:-${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST or EXTRACT_INPUT_HOST in .env to the path of the archive to extract. See .env.example}}
         target: /input
         read_only: true
     networks: [scanner-net]
@@ -281,13 +277,13 @@ services:
     environment:
       REPORT_OUTPUT: ${REPORT_OUTPUT:-/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md}
       SCAN_TARGET: ${SCAN_TARGET_CONTAINER:-/scan-target}
-      SCAN_TARGET_HOST: ${SCAN_TARGET_HOST:-.}
-      SCAN_TARGET_DISPLAY: ${SCAN_TARGET_DISPLAY:-${SCAN_TARGET_HOST:-.}}
+      SCAN_TARGET_HOST: ${SCAN_TARGET_HOST:-UNKNOWN}
+      SCAN_TARGET_DISPLAY: ${SCAN_TARGET_DISPLAY:-${SCAN_TARGET_HOST:-UNKNOWN}}
     volumes:
       - ./:/workspace
       - ./artifacts:/workspace/artifacts
       - type: bind
-        source: ${SCAN_TARGET_HOST:-.}
+        source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST in .env to the path of the archive or directory to scan. See .env.example}
         target: /scan-target
         read_only: true
     networks: [scanner-net]
