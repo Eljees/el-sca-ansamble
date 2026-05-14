@@ -114,7 +114,7 @@ docker push $REGISTRY/el-sca-extractor:latest
 На Windows (PowerShell):
 
 ```powershell
-$REGISTRY = "el-sca-ansamble"
+$REGISTRY = "elariaphd"
 $VERSION = "1.0.0"
 
 docker login
@@ -144,7 +144,7 @@ docker push "${REGISTRY}/el-sca-extractor:latest"
 ```powershell
 Set-Location "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble"
 
-$REGISTRY = "el-sca-ansamble"
+$REGISTRY = "elariaphd"
 $VERSION = "1.0.0"
 
 # 1. Логин в реестр
@@ -297,7 +297,7 @@ services:
 Примеры значений для `.env`:
 
 ```dotenv
-REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble
+REGISTRY_NAMESPACE=elariaphd
 IMAGE_TAG=1.0.0
 ```
 
@@ -375,7 +375,7 @@ Copy-Item .\docker-compose.prod.example.yml .\docker-compose.prod.yml
 
 # 3. Заполнить .env
 @'
-REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble
+REGISTRY_NAMESPACE=elariaphd
 IMAGE_TAG=1.0.0
 SCAN_TARGET_HOST=D:\path\to\artifact.tar.gz
 SCAN_TARGET_DISPLAY=D:\path\to\artifact.tar.gz
@@ -432,7 +432,7 @@ cp docker-compose.prod.example.yml docker-compose.prod.yml
 
 # 3. Заполнить .env
 cat > .env <<'ENV'
-REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble
+REGISTRY_NAMESPACE=elariaphd
 IMAGE_TAG=1.0.0
 SCAN_TARGET_HOST=/absolute/path/to/artifact.tar.gz
 SCAN_TARGET_DISPLAY=/absolute/path/to/artifact.tar.gz
@@ -492,7 +492,7 @@ cd el-sca-ansamble
 cp receiver.env.example .env
 cp docker-compose.prod.example.yml docker-compose.prod.yml
 
-sed -i 's|^REGISTRY_NAMESPACE=.*|REGISTRY_NAMESPACE=registry.example.com/your-group/el-sca-ansamble|' .env
+sed -i 's|^REGISTRY_NAMESPACE=.*|REGISTRY_NAMESPACE=elariaphd|' .env
 sed -i 's|^IMAGE_TAG=.*|IMAGE_TAG=1.0.0|' .env
 sed -i 's|^SCAN_TARGET_HOST=.*|SCAN_TARGET_HOST=/absolute/path/to/artifact.tar.gz|' .env
 sed -i 's|^SCAN_TARGET_DISPLAY=.*|SCAN_TARGET_DISPLAY=/absolute/path/to/artifact.tar.gz|' .env
