@@ -11,7 +11,7 @@
 1. **Конфигурация и скрипты** — хранятся в git-репозитории. Это то, что вы уже разрабатываете.
 2. **Docker-образы** — собираются из репозитория и публикуются в реестр (Docker Hub или внутренний).
 
-Получатели делают три шага: клонируют репозиторий → создают `.env` со своими настройками → запускают. Никаких дополнительных установок, кроме Docker Desktop.
+Получатели делают три шага: клонируют репозиторий → создают `.env` со своими настройками → запускают. На Windows для этого нужен Docker Desktop, на Ubuntu или WSL достаточно Docker Engine и `docker compose`.
 
 ---
 
@@ -29,6 +29,23 @@ artifacts/            ← результаты сканирований — не
 ```
 
 `.env.example` — коммитить обязательно, это шаблон для новых пользователей.
+
+### Какие файлы надо подготовить и запушить
+
+Чтобы получатель мог просто сделать `git clone`, а потом копировать готовые шаблоны, в git должны лежать:
+
+- [docker-compose.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.yml) — основной compose для разработки и запуска;
+- [docker-compose.prod.example.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.prod.example.yml) — override-файл для запуска из готовых образов;
+- [.env.example](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/.env.example) — общий пример переменных;
+- [receiver.env.example](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/receiver.env.example) — готовый шаблон `.env` именно для получателя;
+- [scripts/windows/run-scan.ps1](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/scripts/windows/run-scan.ps1) — запуск скана на Windows;
+- [scripts/scan_archive.sh](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/scripts/scan_archive.sh) — запуск скана на Linux / WSL.
+
+Идея простая: вы пушите эти файлы один раз, а получатель уже у себя создаёт только локальные рабочие копии:
+
+- `.env`
+- `docker-compose.prod.yml`
+- локальные артефакты и отчёты в `artifacts/`
 
 ### Создать репозиторий на GitHub/GitLab
 
@@ -97,7 +114,7 @@ docker push $REGISTRY/el-sca-extractor:latest
 На Windows (PowerShell):
 
 ```powershell
-$REGISTRY = "your-org"
+$REGISTRY = "el-sca-ansamble"
 $VERSION = "1.0.0"
 
 docker login
@@ -122,56 +139,373 @@ docker push "${REGISTRY}/el-sca-extractor:${VERSION}"
 docker push "${REGISTRY}/el-sca-extractor:latest"
 ```
 
+Готовая последовательность для PowerShell целиком:
+
+```powershell
+Set-Location "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble"
+
+$REGISTRY = "el-sca-ansamble"
+$VERSION = "1.0.0"
+
+# 1. Логин в реестр
+docker login
+
+# 2. Сборка образа resilient-updater
+docker build -f Dockerfile.resilient-updater `
+  -t "${REGISTRY}/el-sca-resilient-updater:${VERSION}" `
+  -t "${REGISTRY}/el-sca-resilient-updater:latest" .
+
+# 3. Сборка образа cve-bin-tool
+docker build -f Dockerfile.cve-bin-tool `
+  -t "${REGISTRY}/el-sca-cve-bin-tool:${VERSION}" `
+  -t "${REGISTRY}/el-sca-cve-bin-tool:latest" .
+
+# 4. Сборка образа extractor
+docker build -f Dockerfile.extractor `
+  -t "${REGISTRY}/el-sca-extractor:${VERSION}" `
+  -t "${REGISTRY}/el-sca-extractor:latest" .
+
+# 5. Проверка, что образы действительно собраны локально
+docker image ls "${REGISTRY}/el-sca-resilient-updater"
+docker image ls "${REGISTRY}/el-sca-cve-bin-tool"
+docker image ls "${REGISTRY}/el-sca-extractor"
+
+# 6. Публикация образов
+docker push "${REGISTRY}/el-sca-resilient-updater:${VERSION}"
+docker push "${REGISTRY}/el-sca-resilient-updater:latest"
+docker push "${REGISTRY}/el-sca-cve-bin-tool:${VERSION}"
+docker push "${REGISTRY}/el-sca-cve-bin-tool:latest"
+docker push "${REGISTRY}/el-sca-extractor:${VERSION}"
+docker push "${REGISTRY}/el-sca-extractor:latest"
+
+# 7. Проверка, что теги уже существуют в удалённом реестре
+docker pull "${REGISTRY}/el-sca-resilient-updater:${VERSION}"
+docker pull "${REGISTRY}/el-sca-cve-bin-tool:${VERSION}"
+docker pull "${REGISTRY}/el-sca-extractor:${VERSION}"
+```
+
+Если используется не Docker Hub, а внутренний реестр, меняется только значение `$REGISTRY`.
+
+Примеры:
+
+```powershell
+$REGISTRY = "registry.gitlab.com/your-group/el-sca-ansamble"
+$REGISTRY = "registry.your-org.internal:5000/sca"
+$REGISTRY = "ghcr.io/your-org"
+```
+
 ### Обновить docker-compose.yml
 
-После публикации замените `build:` секции на готовые образы, чтобы получатели не пересобирали:
+Главная идея такая:
+
+1. Основной [docker-compose.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.yml) разработчики не трогают.
+2. Для передачи получателю в git кладётся отдельный override-файл.
+3. Получатель после `git clone` просто копирует этот override-файл в рабочее имя и запускает Compose с двумя файлами.
+
+То есть не надо вручную редактировать основной compose и не надо копировать YAML из документации.
+
+Как это выглядит на уровне сервиса:
 
 ```yaml
-# было (собирает локально):
+# основной compose для разработки:
   grype-updater:
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
 
-# стало (берёт готовый образ):
+# override-файл для получателя:
   grype-updater:
     image: your-org/el-sca-resilient-updater:1.0.0
+    build: null
 ```
 
-Сделайте это для всех трёх сервисов (`grype-updater`, `cve-bin-tool-updater`, `cve-bin-tool-scanner`, `artifact-extractor`, `report-collector`, `db-admin`, `mock-feed-server`).
+Что делать в репозитории:
 
-Или создайте отдельный `docker-compose.prod.yml` с `image:` вместо `build:` и не трогайте основной файл для разработки.
+- добавить в git файл [docker-compose.prod.example.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.prod.example.yml);
+- не создавать заранее `docker-compose.prod.yml`, потому что это уже рабочий локальный файл конкретного получателя;
+- передавать получателю репозиторий уже с `docker-compose.prod.example.yml`.
+
+Что делает получатель после `git clone`:
+
+```powershell
+Copy-Item .\docker-compose.prod.example.yml .\docker-compose.prod.yml
+```
+
+или на Linux:
+
+```bash
+cp docker-compose.prod.example.yml docker-compose.prod.yml
+```
+
+После этого получатель запускает Compose так:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+```
+
+Готовый шаблон, который надо хранить в git, уже создан как `docker-compose.prod.example.yml`:
+
+```yaml
+services:
+  stack-info:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  grype-updater:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  artifact-extractor:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-extractor:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  cve-bin-tool-updater:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-cve-bin-tool:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  cve-bin-tool-scanner:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-cve-bin-tool:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  db-admin:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  mock-feed-server:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: null
+
+  report-collector:
+    image: ${REGISTRY_NAMESPACE:-el-sca-ansamble}/el-sca-resilient-updater:${IMAGE_TAG:-1.0.0}
+    build: null
+```
+
+Почему так удобнее:
+
+- не надо править YAML руками под каждый новый релиз;
+- можно менять только `REGISTRY_NAMESPACE` и `IMAGE_TAG` в `.env`;
+- один и тот же шаблон подходит и для GitHub Container Registry, и для GitLab Container Registry, и для внутреннего реестра;
+- файл можно коммитить в git и передавать вместе с репозиторием.
+
+Что именно должен изменить получатель:
+
+- `REGISTRY_NAMESPACE` — путь к вашему namespace или registry prefix;
+- `IMAGE_TAG` — версия образов.
+
+Примеры значений для `.env`:
+
+```dotenv
+REGISTRY_NAMESPACE=el-sca-ansamble
+IMAGE_TAG=1.0.0
+```
+
+```dotenv
+REGISTRY_NAMESPACE=registry.gitlab.com/your-group/el-sca-ansamble
+IMAGE_TAG=1.0.0
+```
+
+```dotenv
+REGISTRY_NAMESPACE=registry.your-org.internal:5000/sca
+IMAGE_TAG=1.0.0
+```
+
+Если всё же хочется жёстко зафиксировать образы прямо в YAML, можно заменить переменные на literal values:
+
+```yaml
+image: registry.gitlab.com/your-group/el-sca-ansamble/el-sca-resilient-updater:1.0.0
+image: registry.gitlab.com/your-group/el-sca-ansamble/el-sca-cve-bin-tool:1.0.0
+image: registry.gitlab.com/your-group/el-sca-ansamble/el-sca-extractor:1.0.0
+```
+
+Проверка, что override-файл корректный:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+```
+
+Что передавать получателю вместе с репозиторием:
+
+- `docker-compose.yml`
+- `docker-compose.prod.example.yml`
+- `.env.example`
+- `receiver.env.example`
+- `scripts/windows/run-scan.ps1`
+- `scripts/scan_archive.sh`
+
+Что НЕ передавать в git как рабочие локальные файлы:
+
+- `.env`
+- `docker-compose.prod.yml`
+- `artifacts/`
+- `--exps/`
+
+Что именно переводится на готовые образы:
+
+```text
+stack-info
+grype-updater
+artifact-extractor
+cve-bin-tool-updater
+cve-bin-tool-scanner
+db-admin
+mock-feed-server
+report-collector
+```
+
+`trivy`, `grype` и `syft` уже и так приходят как внешние `image:` и дополнительной замены не требуют.
 
 ---
 
 ## Шаг 3: что делает получатель
 
-Инструкция для того, кому вы передаёте комплекс:
+Ниже даны две готовые последовательности: для Windows и для Linux. Обе исходят из того, что автоматические обновления баз отключены и выполняются только вручную.
+
+### Вариант для Windows (PowerShell)
+
+```powershell
+# 1. Клонировать репозиторий
+git clone https://github.com/YOUR_ORG/el-sca-ansamble.git
+Set-Location .\el-sca-ansamble
+
+# 2. Создать рабочие файлы из шаблонов
+Copy-Item .\receiver.env.example .\.env
+Copy-Item .\docker-compose.prod.example.yml .\docker-compose.prod.yml
+
+# 3. Заполнить .env
+@'
+REGISTRY_NAMESPACE=el-sca-ansamble
+IMAGE_TAG=1.0.0
+SCAN_TARGET_HOST=D:\path\to\artifact.tar.gz
+SCAN_TARGET_DISPLAY=D:\path\to\artifact.tar.gz
+SCAN_TARGET_CONTAINER=/scan-target
+SYFT_TARGET=/scan-target
+SYFT_FROM=dir
+TRIVY_TARGET=/scan-target
+CVE_BIN_TOOL_TARGET=/scan-target
+REPORT_OUTPUT=/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md
+CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS=600
+# NVD_API_KEY=
+# NVD_API_KEY_FALLBACK=
+# ALL_PROXY=socks5h://host.docker.internal:1080
+# NO_PROXY=localhost,127.0.0.1,grype-static
+'@ | Set-Content -Encoding UTF8 .\.env
+
+# 4. Проверить итоговый compose
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+
+# 5. Скачать все образы
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+
+# 6. Ручное обновление баз по необходимости
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm trivy-updater
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm grype-updater
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm grype-db-importer
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm cve-bin-tool-updater
+
+# 7. Проверить статус баз
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admin db-status trivy --path /var/lib/resilient-db/trivy --warning-age 24h
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admin db-status grype --path /var/lib/resilient-db/grype/active --warning-age 24h
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admin db-status cve-bin-tool --path /root/.cache/cve-bin-tool --warning-age 24h
+
+# 8. Запустить полный скан архива с распаковкой
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\artifact.tar.gz" -Extract -Tool all -Profile scan
+```
+
+Итоговый Markdown-отчёт после этого лежит здесь:
+
+```text
+artifacts\reports\final\cve_analysis_report_generated_ru.md
+```
+
+### Вариант для Linux / WSL / bash
 
 ```bash
 # 1. Клонировать репозиторий
 git clone https://github.com/YOUR_ORG/el-sca-ansamble.git
 cd el-sca-ansamble
 
-# 2. Создать .env из шаблона
-cp .env.example .env
-# Открыть .env и заполнить:
-#   SCAN_TARGET_HOST=C:\путь\к\архиву.tar.gz   (Windows)
-#   SCAN_TARGET_HOST=/путь/к/архиву.tar.gz     (Linux)
-#   NVD_API_KEY=...                             (опционально)
-#   ALL_PROXY=socks5h://...                     (если нужен прокси)
+# 2. Создать рабочие файлы из шаблонов
+cp receiver.env.example .env
+cp docker-compose.prod.example.yml docker-compose.prod.yml
 
-# 3. Скачать образы (не собирать!)
-docker compose pull
+# 3. Заполнить .env
+cat > .env <<'ENV'
+REGISTRY_NAMESPACE=el-sca-ansamble
+IMAGE_TAG=1.0.0
+SCAN_TARGET_HOST=/absolute/path/to/artifact.tar.gz
+SCAN_TARGET_DISPLAY=/absolute/path/to/artifact.tar.gz
+SCAN_TARGET_CONTAINER=/scan-target
+SYFT_TARGET=/scan-target
+SYFT_FROM=dir
+TRIVY_TARGET=/scan-target
+CVE_BIN_TOOL_TARGET=/scan-target
+REPORT_OUTPUT=/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md
+CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS=600
+# NVD_API_KEY=
+# NVD_API_KEY_FALLBACK=
+# ALL_PROXY=socks5h://host.docker.internal:1080
+# NO_PROXY=localhost,127.0.0.1,grype-static
+ENV
 
-# 4. Запустить (пример — обновить БД)
-docker compose --profile update up
+# 4. Проверить итоговый compose
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 
-# 5. Запустить сканирование
-docker compose --profile scan up
+# 5. Скачать все образы
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+
+# 6. Ручное обновление баз по необходимости
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm trivy-updater
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm grype-updater
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm grype-db-importer
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm cve-bin-tool-updater
+
+# 7. Проверить статус баз
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admin db-status trivy --path /var/lib/resilient-db/trivy --warning-age 24h
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admin db-status grype --path /var/lib/resilient-db/grype/active --warning-age 24h
+docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm db-admin db-status cve-bin-tool --path /root/.cache/cve-bin-tool --warning-age 24h
+
+# 8. Запустить полный скан архива с распаковкой
+./scripts/scan_archive.sh /absolute/path/to/artifact.tar.gz CYBERSEC-TEST
 ```
 
-На Windows — использовать `.\scripts\windows\run-scan.ps1` из репозитория.
+Итоговый Markdown-отчёт после этого лежит здесь:
+
+```text
+artifacts/reports/final/cve_analysis_report_generated_ru.md
+```
+
+Готовый минимальный сценарий для Ubuntu, если нужен буквально набор команд без пояснений:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git docker.io docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker
+
+git clone https://github.com/YOUR_ORG/el-sca-ansamble.git
+cd el-sca-ansamble
+cp receiver.env.example .env
+cp docker-compose.prod.example.yml docker-compose.prod.yml
+
+sed -i 's|^REGISTRY_NAMESPACE=.*|REGISTRY_NAMESPACE=el-sca-ansamble|' .env
+sed -i 's|^IMAGE_TAG=.*|IMAGE_TAG=1.0.0|' .env
+sed -i 's|^SCAN_TARGET_HOST=.*|SCAN_TARGET_HOST=/absolute/path/to/artifact.tar.gz|' .env
+sed -i 's|^SCAN_TARGET_DISPLAY=.*|SCAN_TARGET_DISPLAY=/absolute/path/to/artifact.tar.gz|' .env
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm trivy-updater
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm grype-updater
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm grype-db-importer
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile update run --rm cve-bin-tool-updater
+
+./scripts/scan_archive.sh /absolute/path/to/artifact.tar.gz CYBERSEC-TEST
+```
+
+Если получателю не нужны ручные низкоуровневые команды, а нужен только один запуск после настройки, то на Windows используется `.\scripts\windows\run-scan.ps1`, а на Linux `./scripts/scan_archive.sh`.
 
 ---
 

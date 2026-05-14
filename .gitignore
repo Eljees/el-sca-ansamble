@@ -12,13 +12,16 @@ Thumbs.db
 _el_cvebt_source_research/
 --exps/
 comands.txt
+docker-compose.prod.yml
 
 artifacts/cache/*
+artifacts/extracted/*
 artifacts/mirror/*
 artifacts/internal/*
 artifacts/reports/*
 artifacts/provenance/*
 artifacts/sbom/*
+!artifacts/extracted/.gitkeep
 !artifacts/**/.gitkeep
 
 docker-auth.json
