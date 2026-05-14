@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import os
 from pathlib import Path
 import socket
 import time
@@ -35,6 +36,36 @@ class AttemptResult:
     reason: FailureReason | None
     message: str
     status_code: int | None = None
+
+
+def build_session(proxies: dict[str, str] | None = None) -> requests.Session:
+    """Create a requests.Session with proxy support.
+
+    Priority order:
+    1. *proxies* dict passed explicitly (comes from feed_sources.yaml ``proxy:`` section).
+    2. Standard env vars HTTP_PROXY / HTTPS_PROXY / NO_PROXY — requests picks these up
+       automatically, so nothing extra is needed here.
+    3. ALL_PROXY / all_proxy — requests does *not* read ALL_PROXY natively; we wire it
+       explicitly so SOCKS5 (``socks5h://...``) works out of the box.
+
+    Note on Docker: ``127.0.0.1`` inside a container resolves to the container itself, not
+    the host.  Use ``host.docker.internal`` (add ``extra_hosts: [host.docker.internal:host-
+    gateway]`` in docker-compose) so proxies on the Windows/Linux host are reachable from
+    containers.
+    """
+    sess = requests.Session()
+    if proxies:
+        # Explicit config overrides everything.
+        sess.proxies.update(proxies)
+    else:
+        # requests reads HTTP_PROXY / HTTPS_PROXY / NO_PROXY automatically.
+        # ALL_PROXY is a widely supported convention but requests ignores it —
+        # wire it to both schemes so SOCKS5 works without extra config.
+        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+        if all_proxy:
+            sess.proxies.setdefault("http", all_proxy)
+            sess.proxies.setdefault("https", all_proxy)
+    return sess
 
 
 def classify_http_status(status_code: int) -> FailureReason | None:
@@ -79,7 +110,7 @@ def fetch_bytes(
     if parsed.scheme == "file":
         payload = Path(parsed.path).read_bytes()
         return 200, payload
-    sess = session or requests.Session()
+    sess = session or build_session()
     response = sess.get(url, timeout=timeout, headers=headers)
     return response.status_code, response.content
 

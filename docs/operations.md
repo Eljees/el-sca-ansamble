@@ -111,3 +111,56 @@ Syft находит компоненты через **binary cataloger** тол�
 4. Если `extracted_count: 0` — архив не распознан экстрактором (проверьте формат файла).
 5. Если директория заполнена, но Syft всё равно 0 — объект может не содержать Go/npm/rpm/deb
    компонентов (например, нативное C-приложение без известных менеджеров пакетов).
+
+---
+
+## Настройка прокси
+
+Стек поддерживает HTTP, HTTPS и SOCKS5 прокси без хардкодинга — всё задаётся через переменные окружения.
+
+### Быстрый старт (SOCKS5 на локальной машине)
+
+Скопируйте `.env.example` → `.env` и заполните:
+
+```dotenv
+ALL_PROXY=socks5h://host.docker.internal:1080
+NO_PROXY=localhost,127.0.0.1,grype-static
+```
+
+`host.docker.internal` — имя хоста Docker-контейнеров для выхода на Windows/Linux машину. Оно прописано в `extra_hosts` каждого сетевого сервиса в `docker-compose.yml`, поэтому дополнительных правок не требуется.
+
+### Переменные окружения
+
+| Переменная | Назначение |
+|---|---|
+| `HTTP_PROXY` / `http_proxy` | Прокси для HTTP-запросов |
+| `HTTPS_PROXY` / `https_proxy` | Прокси для HTTPS-запросов |
+| `NO_PROXY` / `no_proxy` | Хосты, исключённые из проксирования (через запятую) |
+| `ALL_PROXY` / `all_proxy` | Резервный прокси для обоих протоколов; поддерживает SOCKS5 |
+
+Нижний регистр нужен для совместимости с `curl`, `wget` и Go `net/http` внутри Docker-образов.
+
+### Корпоративный HTTP/HTTPS прокси
+
+```dotenv
+HTTP_PROXY=http://proxy.corp.example:3128
+HTTPS_PROXY=http://proxy.corp.example:3128
+NO_PROXY=localhost,127.0.0.1,grype-static,.corp.example
+```
+
+### Переопределение только для Python-слоя (resilient_updates CLI)
+
+Если Python-код должен ходить через другой прокси, чем Docker-контейнеры, задайте секцию `proxy:` в `configs/feed_sources.yaml`:
+
+```yaml
+proxy:
+  http: "socks5h://host.docker.internal:1080"
+  https: "socks5h://host.docker.internal:1080"
+  no_proxy: "localhost,127.0.0.1,grype-static"
+```
+
+Поддерживаемые схемы: `http`, `https`, `socks4`, `socks4a`, `socks5`, `socks5h`.
+
+### Что происходит без прокси
+
+Если переменные не заданы — `requests.Session` работает без прокси. `ALL_PROXY` подхватывается автоматически даже без явного задания в `feed_sources.yaml`.

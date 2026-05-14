@@ -13,10 +13,10 @@ import requests
 
 from .artifact_store import build_last_known_good, ensure_directory, file_sha256
 from .atomic_publish import publish_directory
-from .config import DEFAULT_CONFIG_PATH, load_config, parse_duration_hours, validate_config_data
+from .config import DEFAULT_CONFIG_PATH, load_config, parse_duration_hours, parse_proxy_config, validate_config_data
 from .cve_db_audit import activate_best_cve_bin_tool_db, audit_cve_bin_tool_db, seed_cve_bin_tool_aux_sources
 from .extractor import extract_artifacts
-from .fallback import AttemptResult, FailureReason, attempt_sources, fetch_bytes
+from .fallback import AttemptResult, FailureReason, attempt_sources, build_session, fetch_bytes
 from .healthcheck import run_healthcheck
 from .provenance import write_provenance
 from .reporting import build_report
@@ -120,13 +120,14 @@ def _provenance_path(config: dict[str, Any], tool: str) -> Path:
     return Path("artifacts/provenance") / f"{tool}.json"
 
 
-def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int, retry_count: int, backoff_seconds: int, retry_codes: list[int]) -> tuple[int, dict[str, Any]]:
+def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int, retry_count: int, backoff_seconds: int, retry_codes: list[int], session: "requests.Session | None" = None) -> tuple[int, dict[str, Any]]:
     source, _payload, attempts = attempt_sources(
         build_sources(config, tool, layer),
         timeout=timeout,
         retry_count=retry_count,
         backoff_seconds=backoff_seconds,
         retry_status_codes=retry_codes,
+        session=session,
     )
     payload = {
         "tool": tool,
@@ -151,8 +152,8 @@ def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int,
     return EXIT_SUCCESS if source else EXIT_ALL_SOURCES_FAILED, payload
 
 
-def _download_text(url: str, timeout: int) -> str:
-    status_code, payload = fetch_bytes(url, timeout)
+def _download_text(url: str, timeout: int, session: "requests.Session | None" = None) -> str:
+    status_code, payload = fetch_bytes(url, timeout, session=session)
     if status_code >= 400:
         raise ValueError(f"status {status_code}")
     return payload.decode("utf-8")
@@ -210,6 +211,7 @@ def _download_grype_candidate(
     timeout_cfg: dict[str, Any],
     validation_cfg: dict[str, Any],
     temp_dir: Path,
+    session: "requests.Session | None" = None,
 ) -> tuple[Path, str | None, str | None]:
     listing_target = temp_dir / f"{source.name}-listing.json"
     archive_target = temp_dir / f"{source.name}-db.archive"
@@ -221,14 +223,14 @@ def _download_grype_candidate(
         archive_url = urljoin(source.url, archive_url)
     if checksum is None and archive_url.startswith(("http://", "https://")):
         try:
-            checksum = _extract_checksum_from_text(_download_text(f"{archive_url}.sha256", int(timeout_cfg["update_download_timeout"])))
+            checksum = _extract_checksum_from_text(_download_text(f"{archive_url}.sha256", int(timeout_cfg["update_download_timeout"]), session=session))
         except Exception:
             checksum = None
     if validation_cfg.get("validate_hash") and not checksum:
         raise ValueError(FailureReason.CHECKSUM_MISMATCH.value)
     archive_name = Path(urlparse(archive_url).path).name or "db.archive"
     archive_target = temp_dir / f"{source.name}-{archive_name}"
-    archive_status, archive_payload = fetch_bytes(archive_url, int(timeout_cfg["update_download_timeout"]))
+    archive_status, archive_payload = fetch_bytes(archive_url, int(timeout_cfg["update_download_timeout"]), session=session)
     if archive_status >= 400:
         raise ValueError(f"http_{archive_status}")
     archive_target.write_bytes(archive_payload)
@@ -242,7 +244,7 @@ def _download_grype_candidate(
     return archive_target, checksum, built
 
 
-def update_grype(config: dict[str, Any]) -> int:
+def update_grype(config: dict[str, Any], session: "requests.Session | None" = None) -> int:
     timeout_cfg = config["grype"]["timeout_policy"]
     validation_cfg = config["grype"]["validation"]
     atomic_cfg = config["grype"]["atomic_activation_policy"]
@@ -266,6 +268,7 @@ def update_grype(config: dict[str, Any]) -> int:
             retry_count=1,
             backoff_seconds=1,
             retry_status_codes=retry_codes,
+            session=session,
         )
         attempts.extend(source_attempts)
         if not candidate_source or not listing_payload:
@@ -277,6 +280,7 @@ def update_grype(config: dict[str, Any]) -> int:
                 timeout_cfg,
                 validation_cfg,
                 temp_dir,
+                session=session,
             )
             selected_source = candidate_source
             break
@@ -441,6 +445,8 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_config(args.config)
+    # Build a shared HTTP session honoring proxy settings from config and env vars.
+    _session = build_session(parse_proxy_config(config))
     if args.command == "validate-config":
         errors = validate_config_data(config)
         if errors:
@@ -511,7 +517,7 @@ def main() -> int:
         return EXIT_SUCCESS
     if args.command == "update":
         if args.tool == "grype":
-            return update_grype(config)
+            return update_grype(config, session=_session)
         if args.tool == "trivy":
             code, payload = _health_summary(
                 config,
@@ -521,6 +527,7 @@ def main() -> int:
                 retry_count=int(config["trivy"]["retry_backoff_policy"]["retry_count"]),
                 backoff_seconds=int(config["trivy"]["retry_backoff_policy"]["backoff_seconds"]),
                 retry_codes=list(config["trivy"]["retry_backoff_policy"]["retry_status_codes"]),
+                session=_session,
             )
             print(json.dumps(payload, indent=2))
             return code
@@ -532,6 +539,7 @@ def main() -> int:
             retry_count=int(config["cve_bin_tool"]["source_health_policy"]["retry_count"]),
             backoff_seconds=1,
             retry_codes=[429, 500, 502, 503, 504],
+            session=_session,
         )
         print(json.dumps(payload, indent=2))
         return code
