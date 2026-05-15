@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /workspace
+
+# 7zip for NSIS extraction; msitools for MSI; binutils + file for PE inspection
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      7zip \
+      msitools \
+      binutils \
+      file \
+      python3-pefile \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir "pefile>=2023.2.7"
+
+COPY scripts/analyze_win_installer.py /scripts/analyze_win_installer.py
+
+ENTRYPOINT ["python", "/scripts/analyze_win_installer.py"]

@@ -288,6 +288,48 @@ services:
         read_only: true
     networks: [scanner-net]
 
+  # ── Specialized format analyzers ──────────────────────────────────────────
+
+  apk-analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.apk-analyzer
+    profiles: ["apk"]
+    working_dir: /workspace
+    command:
+      [
+        "--input",  "/scan-target",
+        "--output", "/workspace/artifacts",
+      ]
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+      - type: bind
+        source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST to the .apk file or directory}
+        target: /scan-target
+        read_only: true
+    networks: [scanner-net]
+
+  win-analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.win-analyzer
+    profiles: ["win"]
+    working_dir: /workspace
+    command:
+      [
+        "--input",  "/scan-target",
+        "--output", "/workspace/artifacts",
+      ]
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+      - type: bind
+        source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST to the .exe/.msi file or directory}
+        target: /scan-target
+        read_only: true
+    networks: [scanner-net]
+
 volumes:
   trivy-cache:
   grype-db:

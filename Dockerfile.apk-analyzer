@@ -1,0 +1,24 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    JAVA_TOOL_OPTIONS="-Xmx512m"
+
+WORKDIR /workspace
+
+# Java is required by apktool; 7zip for APK extraction fallback
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      default-jre-headless \
+      7zip \
+      binutils \
+      file \
+      unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# androguard: parses DEX, binary AndroidManifest.xml, identifies libraries
+RUN pip install --no-cache-dir "androguard>=3.3.5"
+
+COPY scripts/analyze_apk.py /scripts/analyze_apk.py
+
+ENTRYPOINT ["python", "/scripts/analyze_apk.py"]
