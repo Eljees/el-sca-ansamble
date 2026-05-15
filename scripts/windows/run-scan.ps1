@@ -87,6 +87,7 @@ if (-not (Test-Path $Target)) {
 $TargetResolved = (Resolve-Path $Target).Path
 $TargetDir      = Split-Path $TargetResolved -Parent
 $RawName        = [System.IO.Path]::GetFileName($TargetResolved)
+$TargetKind     = if ((Get-Item $TargetResolved).PSIsContainer) { "dir" } else { "file" }
 
 # Strip known archive extensions (compound ones first)
 $BaseName = $RawName
@@ -148,6 +149,16 @@ $env:CVE_BIN_TOOL_TARGET   = "/scan-target"
 # Internal container path for the primary report (picked up by report-collector)
 $env:REPORT_OUTPUT = "/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md"
 
+# Archive targets need extraction before the standard dir-based scan.
+if (-not $Extract -and $TargetKind -eq "file") {
+  $archiveExts = @(".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".zip", ".rpm", ".deb")
+  $targetLower = $TargetResolved.ToLower()
+  if ($archiveExts | Where-Object { $targetLower.EndsWith($_) }) {
+    $Extract = $true
+    Write-Host " Extract : enabled automatically for archive target" -ForegroundColor Yellow
+  }
+}
+
 # ── Auto-detect format if not specified ──────────────────────────────────────
 
 if ($Format -eq "auto") {
@@ -188,6 +199,8 @@ if ($Extract) {
 
   $env:SCAN_TARGET_HOST    = (Resolve-Path $extractHost).Path
   $env:SCAN_TARGET_DISPLAY = "$TargetResolved -> $env:SCAN_TARGET_HOST"
+  $env:SYFT_TARGET         = "/scan-target"
+  $env:SYFT_FROM           = "dir"
 }
 
 # ── Specialized format pipelines ─────────────────────────────────────────────
