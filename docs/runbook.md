@@ -106,10 +106,10 @@ echo "$COMPOSE_PROFILES"
 
 **Фикс. По степени радикальности:**
 1. **SBOM fast-path.** Установите `CVE_BIN_TOOL_AUTO_SBOM=1` (по умолчанию уже 1) — cve-bin-tool прочитает `artifacts/sbom/cyclonedx.json` вместо binary scan.
-2. **Параллелизм.** `CVE_BIN_TOOL_PARALLEL=8` (по умолчанию авто, ½ ядер, ≤ 8).
-3. **Pre-filter.** Set `CVE_BIN_TOOL_MAX_FILE_MB=128` чтобы пропустить файлы крупнее 128 МБ.
-4. **Checkers.** `CVE_BIN_TOOL_CHECKERS=go,rust` — ограничить regex-checker'ы до релевантных языков. Auto-detect это уже делает для pure-Go целей.
-5. **Увеличить таймаут.** `CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS=3600`.
+2. **Pre-filter.** Set `CVE_BIN_TOOL_MAX_FILE_MB=128` чтобы пропустить файлы крупнее 128 МБ.
+3. **Checkers.** `CVE_BIN_TOOL_CHECKERS=go,rust` — ограничить regex-checker'ы до релевантных языков. Auto-detect это уже делает для pure-Go целей.
+4. **Увеличить таймаут.** `CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS=3600`.
+5. **Параллелизм.** `CVE_BIN_TOOL_PARALLEL` в cve-bin-tool 3.4 является no-op; не используйте его как рычаг ускорения.
 
 ### 3.3. Trivy экспоненциально медленный на bind-mount'ах
 

@@ -3,6 +3,10 @@ param(
   [Parameter(Mandatory=$true)]
   [string]$Target,
 
+  # Case identifier to print in the final report. Auto-detected from Target path
+  # when omitted, e.g. CYBERSEC-12080.
+  [string]$CaseId = "",
+
   # docker compose profile for scanning
   [string]$Profile = "scan",
 
@@ -60,20 +64,20 @@ function Import-LocalEnv {
 }
 
 function Invoke-ComposeChecked {
-  param([Parameter(Mandatory=$true)][string[]]$Args)
+  param(
+    [Parameter(Mandatory=$true)][string[]]$Args,
+    [int[]]$SuccessExitCodes = @(0)
+  )
   & docker compose @Args
-  if ($LASTEXITCODE -ne 0) {
+  if ($SuccessExitCodes -notcontains $LASTEXITCODE) {
     throw "docker compose failed (exit $LASTEXITCODE): $($Args -join ' ')"
   }
 }
 
-function Invoke-ComposeChecked {
+function Invoke-CveBinToolScannerChecked {
   param([Parameter(Mandatory=$true)][string[]]$Args)
-  & docker compose @Args
-  # cve-bin-tool exits with 1 when CVEs are found (success state), 0 when none found
-  if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) {
-    throw "cve-bin-tool failed (exit $LASTEXITCODE): $($Args -join ' ')"
-  }
+  # cve-bin-tool exits with 1 when CVEs are found (success state), 0 when none found.
+  Invoke-ComposeChecked -Args $Args -SuccessExitCodes @(0, 1)
 }
 
 function Invoke-DbStatus {
@@ -187,6 +191,15 @@ $TargetKind     = if ((Get-Item $TargetResolved).PSIsContainer) { "dir" } else {
 $TargetLower    = $TargetResolved.ToLower()
 $IsStandaloneApk = $TargetLower.EndsWith(".apk")
 
+if ([string]::IsNullOrWhiteSpace($CaseId)) {
+  $caseMatch = [regex]::Match($TargetResolved, "CYBERSEC-\d+", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if ($caseMatch.Success) {
+    $CaseId = $caseMatch.Value.ToUpperInvariant()
+  } else {
+    $CaseId = "CYBERSEC-UNKNOWN"
+  }
+}
+
 # Strip known archive extensions (compound ones first)
 $BaseName = $RawName
 $knownExts = @(
@@ -210,6 +223,7 @@ Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host " SCA Pipeline" -ForegroundColor Cyan
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host " Case    : $CaseId"         -ForegroundColor White
 Write-Host " Target  : $TargetResolved" -ForegroundColor White
 Write-Host " MD out  : $ReportMd"       -ForegroundColor Gray
 Write-Host " HTML out: $ReportHtml"     -ForegroundColor Gray
@@ -291,9 +305,9 @@ $env:CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS = [string]$CveBinToolTimeout
 $env:CVE_BIN_TOOL_CHECKERS              = $CveBinToolCheckers
 # SBOM fast-path — only when -SbomScan flag is explicitly passed
 if ($SbomScan) {
-  $env:CVE_BIN_TOOL_SBOM_PATH   = "/workspace/artifacts/sbom/syft.json"
-  $env:CVE_BIN_TOOL_SBOM_FORMAT = "syft"
-  Write-Host " SbomScan: ENABLED (cve-bin-tool will read syft.json)" -ForegroundColor DarkCyan
+  $env:CVE_BIN_TOOL_SBOM_PATH   = "/workspace/artifacts/sbom/cyclonedx.json"
+  $env:CVE_BIN_TOOL_SBOM_FORMAT = "cyclonedx"
+  Write-Host " SbomScan: ENABLED (cve-bin-tool will read cyclonedx.json)" -ForegroundColor DarkCyan
 } else {
   $env:CVE_BIN_TOOL_SBOM_PATH   = ""
   $env:CVE_BIN_TOOL_SBOM_FORMAT = ""
@@ -395,7 +409,7 @@ if ($Format -eq "apk") {
       $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/apk-native"
       $env:SCAN_TARGET_HOST    = (Resolve-Path $nativeDir).Path
       Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
-      Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+      Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
     }
   }
 
@@ -423,7 +437,7 @@ if ($Format -eq "apk") {
     Write-Host "[win] Running cve-bin-tool binary scan on extracted installer contents…" -ForegroundColor Cyan
     $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/win-installer"
     $env:SCAN_TARGET_HOST    = (Resolve-Path $winExtractDir).Path
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 
 } else {
@@ -444,7 +458,7 @@ switch ($Tool) {
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
   "syft" {
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
@@ -470,7 +484,7 @@ switch ($Tool) {
       Invoke-ComposeChecked -Args @("--profile","update","run","--rm","cve-bin-tool-updater")
     }
     Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 }
 
@@ -478,6 +492,7 @@ switch ($Tool) {
 
 # ── Collect reports ───────────────────────────────────────────────────────────
 
+$env:CASE_ID = $CaseId
 Invoke-ComposeChecked -Args @("--profile","report","run","--rm","report-collector")
 
 # Generate Markdown report next to source file
@@ -485,6 +500,7 @@ python -m resilient_updates.cli collect-report `
   --reports-dir artifacts `
   --target      $env:SCAN_TARGET_HOST `
   --display-target $env:SCAN_TARGET_DISPLAY `
+  --case-id     $CaseId `
   --output      $ReportMd | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "Markdown report generation failed (exit $LASTEXITCODE)" }
 

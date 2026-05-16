@@ -57,13 +57,14 @@ python -m resilient_updates.cli validate-config
 | Параметр | Зачем | Дефолт |
 |---|---|---|
 | `-Target <path>` | файл / директория / архив для анализа | (обязателен) |
+| `-CaseId <id>` | идентификатор кейса в шапке отчёта; если не задан, берётся из пути `CYBERSEC-\d+` | auto |
 | `-Profile <name>` | docker-compose profile | `scan` |
 | `-Tool <all\|syft\|grype\|trivy\|cve-bin-tool>` | гонять только один сканер | `all` |
 | `-Format <auto\|apk\|win>` | специализированный pipeline | `auto` |
 | `-UpdateDb` | сначала обновить БД | off |
 | `-Extract` | распаковать архив до скана | автодетект для архивов |
 | `-Clean` | удалить предыдущие артефакты | off |
-| `-SbomScan` | подсунуть syft.json в cve-bin-tool вместо binary scan | off |
+| `-SbomScan` | подсунуть `cyclonedx.json` в cve-bin-tool вместо binary scan | off |
 | `-CveBinToolTimeout <sec>` | таймаут cve-bin-tool scan | `1800` |
 
 После завершения отчёт лежит рядом с целью: `<target_basename>_report_<date>.md` + HTML.
@@ -128,7 +129,7 @@ Get-Content .\artifacts\provenance\benchmark.json
 - **Defender exclusions** — `setup-defender-exclusions.ps1`. Без них Defender пересканивает каждый файл, который extractor/cve-bin-tool открывают через WSL2 bind mount.
 - **Overlay `windows.override`** — tmpfs `/tmp` (4 GB у `cve-bin-tool-scanner`), `extracted-staging` named volume на ext4 внутри WSL VHDX.
 - **BuildKit cache** — apt-cache и pip-cache переиспользуются между `docker build`.
-- **CVE_BIN_TOOL_PARALLEL** — авто-распараллеливание (½ ядер, ≤ 8).
+- **CVE_BIN_TOOL_PARALLEL** — зарезервирован на будущее; в cve-bin-tool 3.4 это no-op, потому что binary scan уже использует внутренний CPU-count Pool.
 - **CVE_BIN_TOOL_AUTO_SBOM** — если syft уже сгенерировал `cyclonedx.json`/`spdx.json`, cve-bin-tool читает его как SBOM (секунды вместо ≈ 30 мин на больших Go-бинарях).
 - **CVE_BIN_TOOL_LOCAL_COPY** — `cp -a` цели в `/tmp/cbt-scan-local` (tmpfs) перед binary scan: устраняет 9P round-trip overhead для каждой `read()`-операции.
 - **CVE_BIN_TOOL_MAX_FILE_MB** — пропускаем монолиты > 256 MB (regex-backtracking budget).

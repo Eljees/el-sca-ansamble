@@ -11,6 +11,7 @@
 #
 # Options:
 #   -t, --target PATH       Path to file or directory to scan (required)
+#       --case-id CASE      Case identifier for the final report (auto-detected)
 #   -p, --profile NAME      Docker Compose profile (default: scan)
 #       --tool TOOL         Run only one tool: all|syft|grype|trivy|cve-bin-tool (default: all)
 #       --format FORMAT     Target format: auto|apk|win (default: auto)
@@ -26,6 +27,7 @@ set -euo pipefail
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 TARGET=""
+CASE_ID=""
 PROFILE="scan"
 TOOL="all"
 FORMAT="auto"
@@ -41,6 +43,7 @@ CBT_CHECKERS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -t|--target)           TARGET="$2"; shift 2 ;;
+    --case-id)             CASE_ID="$2"; shift 2 ;;
     -p|--profile)          PROFILE="$2"; shift 2 ;;
     --tool)                TOOL="$2"; shift 2 ;;
     --format)              FORMAT="$2"; shift 2 ;;
@@ -78,6 +81,15 @@ compose_checked() {
   fi
 }
 
+compose_cve_bin_tool_checked() {
+  docker compose "$@"
+  local rc=$?
+  # cve-bin-tool exits with 1 when CVEs are found (success state), 0 when none found.
+  if [[ $rc -ne 0 && $rc -ne 1 ]]; then
+    die "cve-bin-tool failed (exit $rc): $*"
+  fi
+}
+
 db_status() {
   local tool="$1" path="$2"
   docker compose run --rm db-admin db-status "$tool" --path "$path" --warning-age 24h || true
@@ -100,6 +112,19 @@ import_local_env
 TARGET_RESOLVED="$(realpath "$TARGET")"
 TARGET_DIR="$(dirname "$TARGET_RESOLVED")"
 RAW_NAME="$(basename "$TARGET_RESOLVED")"
+TARGET_LOWER="${TARGET_RESOLVED,,}"
+IS_STANDALONE_APK=0
+case "$TARGET_LOWER" in
+  *.apk) IS_STANDALONE_APK=1 ;;
+esac
+
+if [[ -z "$CASE_ID" ]]; then
+  if [[ "$TARGET_RESOLVED" =~ (CYBERSEC-[0-9]+) ]]; then
+    CASE_ID="${BASH_REMATCH[1]}"
+  else
+    CASE_ID="CYBERSEC-UNKNOWN"
+  fi
+fi
 
 # Strip known archive extensions (compound first)
 BASE_NAME="$RAW_NAME"
@@ -118,6 +143,7 @@ echo ""
 printf '\e[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
 printf '\e[36m SCA Pipeline\e[0m\n'
 printf '\e[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
+printf ' Case    : %s\n' "$CASE_ID"
 printf ' Target  : %s\n' "$TARGET_RESOLVED"
 printf ' MD out  : %s\n' "$REPORT_MD"
 printf ' HTML out: %s\n' "$REPORT_HTML"
@@ -160,9 +186,9 @@ export CVE_BIN_TOOL_CHECKERS="$CBT_CHECKERS"
 export REPORT_OUTPUT="/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md"
 
 if [[ $SBOM_SCAN -eq 1 ]]; then
-  export CVE_BIN_TOOL_SBOM_PATH="/workspace/artifacts/sbom/syft.json"
-  export CVE_BIN_TOOL_SBOM_FORMAT="syft"
-  echo " SbomScan: ENABLED (cve-bin-tool will read syft.json)"
+  export CVE_BIN_TOOL_SBOM_PATH="/workspace/artifacts/sbom/cyclonedx.json"
+  export CVE_BIN_TOOL_SBOM_FORMAT="cyclonedx"
+  echo " SbomScan: ENABLED (cve-bin-tool will read cyclonedx.json)"
 else
   export CVE_BIN_TOOL_SBOM_PATH=""
   export CVE_BIN_TOOL_SBOM_FORMAT=""
@@ -187,14 +213,27 @@ if [[ "$FORMAT" == "auto" ]]; then
   [[ "$FORMAT" != "auto" ]] && echo " Format  : $FORMAT (auto-detected)"
 fi
 
-# ── Auto-enable extract for archives (except APK which handles its own) ───────
-if [[ "$FORMAT" != "apk" && $EXTRACT -eq 0 ]]; then
-  case "${TARGET_RESOLVED,,}" in
+# ── Auto-enable extract for archives ──────────────────────────────────────────
+if [[ "$FORMAT" != "apk" && $EXTRACT -eq 0 && -f "$TARGET_RESOLVED" ]]; then
+  case "$TARGET_LOWER" in
     *.tar|*.tar.gz|*.tgz|*.tar.bz2|*.tar.xz|*.tar.zst|*.zip|*.rpm|*.deb)
       EXTRACT=1
       echo " Extract : enabled automatically for archive target"
       ;;
   esac
+fi
+
+# APK analyzer can inspect standalone .apk files directly.  ZIP wrappers still
+# need generic extraction first because Docker bind-mounts the wrapper at
+# /scan-target without the original .zip suffix.
+if [[ "$FORMAT" == "apk" ]]; then
+  if [[ $IS_STANDALONE_APK -eq 1 ]]; then
+    EXTRACT=0
+    echo " Extract : disabled for standalone APK (apk-analyzer extracts internally)"
+  else
+    EXTRACT=1
+    echo " Extract : enabled for APK archive wrapper"
+  fi
 fi
 
 # ── Extract ───────────────────────────────────────────────────────────────────
@@ -230,7 +269,7 @@ if [[ "$FORMAT" == "apk" ]]; then
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/apk-native"
     export SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
     db_status cve-bin-tool /root/.cache/cve-bin-tool
-    compose_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+    compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
 elif [[ "$FORMAT" == "win" ]]; then
@@ -254,7 +293,7 @@ elif [[ "$FORMAT" == "win" ]]; then
     echo "[win] Running cve-bin-tool on extracted installer contents..."
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/win-installer"
     export SCAN_TARGET_HOST="$(realpath "$WIN_EXTRACT_DIR")"
-    compose_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+    compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
 else
@@ -273,7 +312,7 @@ else
       compose_checked --profile "$PROFILE" run --rm syft-sbom
       compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
       compose_checked --profile "$PROFILE" run --rm grype-scanner
-      compose_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
     syft)
       compose_checked --profile "$PROFILE" run --rm syft-sbom ;;
@@ -291,18 +330,20 @@ else
     cve-bin-tool)
       [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm cve-bin-tool-updater
       db_status cve-bin-tool /root/.cache/cve-bin-tool
-      compose_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
   esac
 fi
 
 # ── Collect reports ───────────────────────────────────────────────────────────
+export CASE_ID="$CASE_ID"
 compose_checked --profile report run --rm report-collector
 
 python -m resilient_updates.cli collect-report \
   --reports-dir artifacts \
   --target      "$SCAN_TARGET_HOST" \
   --display-target "$SCAN_TARGET_DISPLAY" \
+  --case-id     "$CASE_ID" \
   --output      "$REPORT_MD"
 
 python scripts/report_html.py \

@@ -117,7 +117,7 @@ class TestBuildSyftSbomWin:
         installer.write_bytes(b"MZ")
         mod = _load_script("analyze_win_installer.py")
         sbom = mod.build_syft_sbom(installer, [])
-        assert sbom["bomFormat"] == "CycloneDX" or "schema" in sbom
+        assert sbom.get("bomFormat") == "CycloneDX" or "schema" in sbom
         assert "artifacts" in sbom or "components" in sbom
 
     def test_sbom_includes_components(self, tmp_path):

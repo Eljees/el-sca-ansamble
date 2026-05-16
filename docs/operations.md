@@ -77,6 +77,9 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 # Android APK (внутри ZIP)
 .\scripts\windows\run-scan.ps1 -Target "D:\path\to\app.zip" -Format apk -Clean
 
+# Явно задать номер кейса в шапке отчёта
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\app.zip" -CaseId CYBERSEC-12080 -Clean
+
 # Windows NSIS/MSI установщик
 .\scripts\windows\run-scan.ps1 -Target "D:\path\to\Setup.exe" -Format win -Clean
 
@@ -98,13 +101,14 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 | Параметр | Тип | По умолчанию | Описание |
 |---|---|---|---|
 | `-Target` | string | **обязателен** | Путь к файлу или директории |
+| `-CaseId` | string | auto | Идентификатор кейса в итоговом отчёте; если не задан, берётся из пути `CYBERSEC-\d+` |
 | `-Profile` | string | `scan` | Docker Compose профиль |
 | `-Tool` | ValidateSet | `all` | `all\|syft\|grype\|trivy\|cve-bin-tool` |
 | `-Format` | ValidateSet | `auto` | `auto\|apk\|win` |
 | `-UpdateDb` | switch | off | Обновить CVE-базы (требует сеть) |
 | `-Extract` | switch | auto | Распаковать архив перед сканом |
 | `-Clean` | switch | off | Удалить предыдущие артефакты |
-| `-SbomScan` | switch | off | cve-bin-tool читает syft.json вместо бинарного скана |
+| `-SbomScan` | switch | off | cve-bin-tool читает `cyclonedx.json` вместо бинарного скана |
 | `-CveBinToolTimeout` | int | `1800` | Таймаут cve-bin-tool в секундах |
 
 ### Linux / macOS — `run-scan.sh`
@@ -114,7 +118,7 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 ./scripts/run-scan.sh -t /path/to/prometheus-3.11.0.linux-amd64.tar.gz -c
 
 # Android APK
-./scripts/run-scan.sh -t /path/to/app.zip --format apk -c
+./scripts/run-scan.sh -t /path/to/app.zip --format apk --case-id CYBERSEC-12080 -c
 
 # Windows installer
 ./scripts/run-scan.sh -t /path/to/Setup.exe --format win -c

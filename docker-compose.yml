@@ -250,8 +250,8 @@ services:
       # Checker filter: empty = auto-detect, "all" = run all 365 checkers,
       # "go" or "go,rust,python" = language-only (fast, for Go/JVM/Rust targets)
       CVE_BIN_TOOL_CHECKERS: ${CVE_BIN_TOOL_CHECKERS:-}
-      # Parallel workers: empty = auto (half of nproc, capped at 8); 0/1 = serial;
-      # any positive integer = pin that many workers.  See scripts/update_cve_bin_tool.sh.
+      # Reserved for future cve-bin-tool versions.  In v3.4 this is logged as a
+      # no-op because binary scans already use an internal CPU-count Pool.
       CVE_BIN_TOOL_PARALLEL: ${CVE_BIN_TOOL_PARALLEL:-}
     volumes:
       - ./:/workspace
