@@ -87,6 +87,87 @@ function Invoke-DbStatus {
   }
 }
 
+function Get-DbStatusJson {
+  # Internal helper: runs db-status quietly, returns parsed object.
+  param(
+    [Parameter(Mandatory=$true)][string]$DbTool,
+    [Parameter(Mandatory=$true)][string]$DbPath,
+    [string]$WarningAge = "24h"
+  )
+  try {
+    $json = & docker compose run --rm --no-TTY db-admin db-status $DbTool --path $DbPath --warning-age $WarningAge 2>$null
+    if (-not $json) { return $null }
+    return ($json -join "`n") | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    return $null
+  }
+}
+
+function Show-DbFreshnessBanner {
+  param(
+    [string]$Title = "DATABASE FRESHNESS"
+  )
+  $tools = @(
+    @{ Name='Trivy';        Tool='trivy';        Path='/var/lib/resilient-db/trivy' }
+    @{ Name='Grype';        Tool='grype';        Path='/var/lib/resilient-db/grype/active' }
+    @{ Name='cve-bin-tool'; Tool='cve-bin-tool'; Path='/root/.cache/cve-bin-tool' }
+  )
+
+  $rows = @()
+  foreach ($t in $tools) {
+    $s = Get-DbStatusJson -DbTool $t.Tool -DbPath $t.Path -WarningAge '24h'
+    $rows += [pscustomobject]@{
+      Name      = $t.Name
+      Exists    = if ($s) { [bool]$s.exists } else { $false }
+      Age       = if ($s -and $s.age_hours) { [double]$s.age_hours } else { $null }
+      Warning   = if ($s) { [bool]$s.warning } else { $true }
+      Message   = if ($s) { [string]$s.message } else { 'db-status failed' }
+    }
+  }
+
+  $anyStale  = ($rows | Where-Object { $_.Warning -or -not $_.Exists }).Count -gt 0
+  $headColor = if ($anyStale) { 'Red' } else { 'Green' }
+
+  $bar = ('━' * 70)
+  Write-Host ''
+  Write-Host $bar -ForegroundColor $headColor
+  Write-Host (' ' + $Title) -ForegroundColor $headColor
+  Write-Host $bar -ForegroundColor $headColor
+  foreach ($r in $rows) {
+    if (-not $r.Exists) {
+      $line  = '{0,-14} MISSING       — DB never built; run with -UpdateDb' -f $r.Name
+      $color = 'Red'
+    } elseif ($r.Warning) {
+      $age   = if ($null -ne $r.Age) { ('{0,6:N1} h old' -f $r.Age) } else { '   ? h old' }
+      $line  = '{0,-14} {1}  STALE — older than 24h, RUN UPDATE' -f $r.Name, $age
+      $color = 'Yellow'
+    } else {
+      $age   = ('{0,6:N1} h old' -f $r.Age)
+      $line  = '{0,-14} {1}  OK' -f $r.Name, $age
+      $color = 'Green'
+    }
+    Write-Host (' ' + $line) -ForegroundColor $color
+  }
+  Write-Host $bar -ForegroundColor $headColor
+  if ($anyStale) {
+    Write-Host ''
+    Write-Host ' ⚠  HOW TO REFRESH DATABASES' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '   Whole pipeline + DB refresh in one go:'
+    Write-Host '     .\scripts\windows\run-scan.ps1 -Target <PATH> -Clean -UpdateDb' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '   Just refresh DBs (no scan):'
+    Write-Host '     .\scripts\windows\update-trivy.ps1'      -ForegroundColor Cyan
+    Write-Host '     .\scripts\windows\update-grype.ps1'      -ForegroundColor Cyan
+    Write-Host '     .\scripts\windows\update-cve-bin-tool.ps1' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '   NVD API keys live in .env.local (NVD_API_KEY, NVD_API_KEY_FALLBACK)'
+    Write-Host '   Update first runs without -UpdateDb take 5-10 minutes (NVD download).'
+    Write-Host $bar -ForegroundColor $headColor
+  }
+  Write-Host ''
+}
+
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
 
 docker --version     | Out-Null
@@ -103,6 +184,8 @@ $TargetResolved = (Resolve-Path $Target).Path
 $TargetDir      = Split-Path $TargetResolved -Parent
 $RawName        = [System.IO.Path]::GetFileName($TargetResolved)
 $TargetKind     = if ((Get-Item $TargetResolved).PSIsContainer) { "dir" } else { "file" }
+$TargetLower    = $TargetResolved.ToLower()
+$IsStandaloneApk = $TargetLower.EndsWith(".apk")
 
 # Strip known archive extensions (compound ones first)
 $BaseName = $RawName
@@ -133,22 +216,47 @@ Write-Host " HTML out: $ReportHtml"     -ForegroundColor Gray
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
 Write-Host ""
 
+# Show DB freshness BEFORE scan: stale DB = stale findings.  If -UpdateDb was
+# passed we still show it (afterwards it'll be re-shown with new ages).
+Show-DbFreshnessBanner -Title 'DATABASE FRESHNESS (PRE-SCAN)'
+
 # ── Clean artifacts from previous run ────────────────────────────────────────
 
 if ($Clean) {
   Write-Host "[clean] Removing previous artifacts..." -ForegroundColor Yellow
-  # Remove files first
-  Get-ChildItem -Path $ArtifactsDir -Recurse -File |
-    Where-Object { $_.Name -ne ".gitkeep" } |
-    Remove-Item -Force
-  # Remove empty subdirectories (leaves .gitkeep dirs intact)
-  Get-ChildItem -Path $ArtifactsDir -Recurse -Directory |
-    Sort-Object { $_.FullName.Length } -Descending |
-    Where-Object { (Get-ChildItem $_.FullName -Force).Count -eq 0 } |
-    Remove-Item -Force -ErrorAction SilentlyContinue
-  # Clean orphan cve-bin-tool output files left in workspace root
+  # First try Docker-based cleanup: a Linux container sees the volume mount as
+  # plain ext4/9P paths, so it can delete files whose names are illegal on NTFS
+  # (e.g. trailing-dot directories that innoextract creates from NSIS installers
+  # like `app.\AvandocClient.cmd`).  PowerShell's Remove-Item chokes on those.
+  $dockerCleanOK = $false
+  try {
+    $cleanSh = "find /cleanme -type f ! -name .gitkeep -delete 2>/dev/null; find /cleanme -mindepth 1 -type d -empty -delete 2>/dev/null; true"
+    & docker run --rm -v "${ArtifactsDir}:/cleanme" alpine sh -c $cleanSh
+    if ($LASTEXITCODE -eq 0) { $dockerCleanOK = $true }
+  } catch {
+    # Fall through to PowerShell cleanup.
+  }
+
+  if (-not $dockerCleanOK) {
+    Write-Host "[clean]   docker-based clean unavailable, falling back to PowerShell (may skip NTFS-illegal names)" -ForegroundColor DarkYellow
+    Get-ChildItem -Path $ArtifactsDir -Recurse -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -ne ".gitkeep" } |
+      ForEach-Object {
+        try   { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop }
+        catch { & cmd /c del /f /q "$($_.FullName)" *>$null }
+      }
+    Get-ChildItem -Path $ArtifactsDir -Recurse -Directory -ErrorAction SilentlyContinue |
+      Sort-Object { $_.FullName.Length } -Descending |
+      Where-Object { (Get-ChildItem -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0 } |
+      ForEach-Object {
+        try   { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop }
+        catch { & cmd /c rd /s /q "$($_.FullName)" *>$null }
+      }
+  }
+
+  # Orphan cve-bin-tool output files left in workspace root (these have normal names).
   Get-ChildItem -Path (Get-Location).Path -Filter "output.cve-bin-tool.*.json" -File -ErrorAction SilentlyContinue |
-    Remove-Item -Force
+    Remove-Item -Force -ErrorAction SilentlyContinue
   Write-Host "[clean] Done." -ForegroundColor Yellow
   Write-Host ""
 }
@@ -231,8 +339,13 @@ if ($Format -eq "auto") {
 # (otherwise artifact-extractor unpacks the outer ZIP AND the APK-as-ZIP, leaving
 #  no .apk file for apk-analyzer to find)
 if ($Format -eq "apk") {
-  $Extract = $false
-  Write-Host " Extract : disabled for APK format (apk-analyzer extracts internally)" -ForegroundColor DarkGray
+  if ($IsStandaloneApk) {
+    $Extract = $false
+    Write-Host " Extract : disabled for standalone APK (apk-analyzer extracts internally)" -ForegroundColor DarkGray
+  } else {
+    $Extract = $true
+    Write-Host " Extract : enabled for APK archive wrapper" -ForegroundColor Yellow
+  }
 }
 
 # ── Extract (optional) ────────────────────────────────────────────────────────
@@ -393,3 +506,6 @@ Write-Host "   MD  : $ReportMd"   -ForegroundColor White
 Write-Host "   HTML: $ReportHtml" -ForegroundColor White
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
 Write-Host ""
+
+# Re-show DB freshness AFTER the scan so the final state stays on screen.
+Show-DbFreshnessBanner -Title 'DATABASE FRESHNESS (POST-SCAN)'

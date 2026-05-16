@@ -62,6 +62,8 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 без распаковки даёт 0 компонентов в Syft и, соответственно, 0 совпадений в Grype.
 `scripts/windows/run-scan.ps1` теперь включает `-Extract` автоматически для архивных целей, но флаг
 по-прежнему можно передать явно, если хочется зафиксировать поведение.
+Для APK-обёрток в `.zip` extraction тоже остаётся включённым, чтобы `apk-analyzer` видел реальный
+`.apk` внутри распакованной директории. Для standalone `.apk` generic extraction не нужен.
 
 ### Windows (PowerShell) — `run-scan.ps1`
 
