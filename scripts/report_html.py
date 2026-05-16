@@ -5,6 +5,8 @@ Usage:
     python scripts/report_html.py --artifacts-dir artifacts --output report.html --target /path/to/file
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -14,20 +16,30 @@ from html import escape
 from pathlib import Path
 
 
-# ── JSON loaders ─────────────────────────────────────────────────────────────
+TOOL_ORDER = ["grype", "trivy", "cve-bin-tool"]
+TOOL_COLOR = {"grype": "#7c3aed", "trivy": "#0369a1", "cve-bin-tool": "#b45309", "syft": "#0f766e"}
+TOOL_LABEL = {"grype": "Grype", "trivy": "Trivy", "cve-bin-tool": "cve-bin-tool", "syft": "Syft"}
+SEV_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "NEGLIGIBLE": 4, "UNKNOWN": 5}
+SEV_STYLE = {
+    "CRITICAL": ("#b91c1c", "#fee2e2", "#fca5a5"),
+    "HIGH": ("#c2410c", "#ffedd5", "#fdba74"),
+    "MEDIUM": ("#a16207", "#fef9c3", "#fde047"),
+    "LOW": ("#15803d", "#dcfce7", "#86efac"),
+    "NEGLIGIBLE": ("#4b5563", "#f3f4f6", "#d1d5db"),
+    "UNKNOWN": ("#4b5563", "#f3f4f6", "#d1d5db"),
+}
 
-def load_json(path):
+
+def load_json(path: str | os.PathLike[str] | None):
     if not path or not os.path.exists(path):
         return None
     try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"[warn] could not load {path}: {e}", file=sys.stderr)
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] could not load {path}: {exc}", file=sys.stderr)
         return None
 
-
-# ── Parser: Grype ─────────────────────────────────────────────────────────────
 
 def parse_grype(data):
     if not data:
@@ -36,30 +48,36 @@ def parse_grype(data):
     for match in data.get("matches", []):
         vuln = match.get("vulnerability", {})
         artifact = match.get("artifact", {})
-        pkg = artifact.get("name", "")
-        version = artifact.get("version", "")
-        cve = vuln.get("id", "")
-        severity = (vuln.get("severity") or "UNKNOWN").upper()
-        # best CVSS score
         score = ""
-        for s in vuln.get("cvss", []):
-            v = (s.get("metrics") or {}).get("baseScore")
-            if v is not None:
-                score = str(v)
+        for item in vuln.get("cvss", []):
+            value = (item.get("metrics") or {}).get("baseScore")
+            if value is not None:
+                score = str(value)
                 break
         fix_versions = (vuln.get("fix") or {}).get("versions") or []
-        fix = ", ".join(fix_versions)
-        fix_state = (vuln.get("fix") or {}).get("state", "")
-        pkg_type = artifact.get("type", "")
-        url = f"https://nvd.nist.gov/vuln/detail/{cve}" if cve.startswith("CVE-") else \
-              f"https://github.com/advisories/{cve}" if cve.startswith("GHSA-") else ""
-        findings.append(dict(tool="grype", cve=cve, severity=severity, score=score,
-                             product=pkg, version=version, pkg_type=pkg_type,
-                             fix=fix, fix_state=fix_state, url=url))
+        cve = vuln.get("id", "")
+        findings.append(
+            {
+                "tool": "grype",
+                "cve": cve,
+                "severity": (vuln.get("severity") or "UNKNOWN").upper(),
+                "score": score,
+                "product": artifact.get("name", ""),
+                "version": artifact.get("version", ""),
+                "pkg_type": artifact.get("type", ""),
+                "fix": ", ".join(fix_versions),
+                "fix_state": (vuln.get("fix") or {}).get("state", ""),
+                "url": (
+                    f"https://nvd.nist.gov/vuln/detail/{cve}"
+                    if cve.startswith("CVE-")
+                    else f"https://github.com/advisories/{cve}"
+                    if cve.startswith("GHSA-")
+                    else ""
+                ),
+            }
+        )
     return findings
 
-
-# ── Parser: Trivy ─────────────────────────────────────────────────────────────
 
 def parse_trivy(data):
     if not data:
@@ -68,194 +86,268 @@ def parse_trivy(data):
     for result in data.get("Results", []):
         pkg_type = result.get("Type", "")
         for vuln in result.get("Vulnerabilities") or []:
-            cve = vuln.get("VulnerabilityID", "")
-            severity = (vuln.get("Severity") or "UNKNOWN").upper()
-            cvss_map = (vuln.get("CVSS") or {})
             score = ""
-            for src in ("nvd", "redhat"):
-                s = cvss_map.get(src, {})
-                v = s.get("V3Score") or s.get("V2Score")
-                if v is not None:
-                    score = str(v)
+            for source in ("nvd", "redhat"):
+                values = (vuln.get("CVSS") or {}).get(source, {})
+                score_value = values.get("V3Score") or values.get("V2Score")
+                if score_value is not None:
+                    score = str(score_value)
                     break
-            findings.append(dict(
-                tool="trivy",
-                cve=cve, severity=severity, score=score,
-                product=vuln.get("PkgName", ""),
-                version=vuln.get("InstalledVersion", ""),
-                pkg_type=pkg_type,
-                fix=vuln.get("FixedVersion", ""),
-                fix_state="fixed" if vuln.get("FixedVersion") else "",
-                url=vuln.get("PrimaryURL", ""),
-            ))
+            findings.append(
+                {
+                    "tool": "trivy",
+                    "cve": vuln.get("VulnerabilityID", ""),
+                    "severity": (vuln.get("Severity") or "UNKNOWN").upper(),
+                    "score": score,
+                    "product": vuln.get("PkgName", ""),
+                    "version": vuln.get("InstalledVersion", ""),
+                    "pkg_type": pkg_type,
+                    "fix": vuln.get("FixedVersion", ""),
+                    "fix_state": "fixed" if vuln.get("FixedVersion") else "",
+                    "url": vuln.get("PrimaryURL", ""),
+                }
+            )
     return findings
 
 
-# ── Parser: cve-bin-tool ──────────────────────────────────────────────────────
-
 def parse_cvebt(data):
-    if not data:
-        return []
     rows = data if isinstance(data, list) else []
     findings = []
     for row in rows:
         cve = row.get("cve_number", "")
-        severity = (row.get("severity") or "UNKNOWN").upper()
-        score = str(row.get("score") or "")
-        findings.append(dict(
-            tool="cve-bin-tool",
-            cve=cve, severity=severity, score=score,
-            product=row.get("product", ""),
-            version=row.get("version", ""),
-            pkg_type="",
-            fix="", fix_state="",
-            url=f"https://nvd.nist.gov/vuln/detail/{cve}" if cve.startswith("CVE-") else "",
-        ))
+        findings.append(
+            {
+                "tool": "cve-bin-tool",
+                "cve": cve,
+                "severity": (row.get("severity") or "UNKNOWN").upper(),
+                "score": str(row.get("score") or ""),
+                "product": row.get("product", ""),
+                "version": row.get("version", ""),
+                "pkg_type": "",
+                "fix": "",
+                "fix_state": "",
+                "url": f"https://nvd.nist.gov/vuln/detail/{cve}" if cve.startswith("CVE-") else "",
+            }
+        )
     return findings
 
 
-# ── Severity helpers ──────────────────────────────────────────────────────────
+def parse_syft_components(data):
+    if not data:
+        return []
+    components = []
+    for artifact in data.get("artifacts", []):
+        components.append(
+            {
+                "name": artifact.get("name", ""),
+                "version": artifact.get("version", ""),
+                "type": artifact.get("type", ""),
+                "purl": artifact.get("purl", ""),
+                "locations": len(artifact.get("locations") or []),
+            }
+        )
+    components.sort(key=lambda item: (item["name"], item["version"], item["type"]))
+    return components
 
-SEV_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "NEGLIGIBLE": 4, "UNKNOWN": 5}
 
-SEV_STYLE = {
-    "CRITICAL":   ("#b91c1c", "#fee2e2", "#fca5a5"),
-    "HIGH":       ("#c2410c", "#ffedd5", "#fdba74"),
-    "MEDIUM":     ("#a16207", "#fef9c3", "#fde047"),
-    "LOW":        ("#15803d", "#dcfce7", "#86efac"),
-    "NEGLIGIBLE": ("#4b5563", "#f3f4f6", "#d1d5db"),
-    "UNKNOWN":    ("#4b5563", "#f3f4f6", "#d1d5db"),
-}
-
-
-def severity_badge(sev):
-    fg, bg, _ = SEV_STYLE.get(sev, SEV_STYLE["UNKNOWN"])
-    return (f'<span class="badge" '
-            f'style="color:{fg};background:{bg};border:1px solid {fg}40">'
-            f'{escape(sev)}</span>')
+def severity_badge(severity):
+    fg, bg, _ = SEV_STYLE.get(severity, SEV_STYLE["UNKNOWN"])
+    return (
+        f'<span class="badge" style="color:{fg};background:{bg};border:1px solid {fg}40">'
+        f"{escape(severity)}</span>"
+    )
 
 
 def score_html(score):
     if not score or score in ("", "None"):
-        return '<span style="color:#9ca3af">—</span>'
+        return '<span class="muted">-</span>'
     try:
-        v = float(score)
+        value = float(score)
     except ValueError:
         return escape(score)
-    if v >= 9.0:
+    if value >= 9.0:
         color = "#b91c1c"
-    elif v >= 7.0:
+    elif value >= 7.0:
         color = "#c2410c"
-    elif v >= 4.0:
+    elif value >= 4.0:
         color = "#a16207"
     else:
         color = "#15803d"
-    return f'<span style="font-weight:700;color:{color}">{v:.1f}</span>'
+    return f'<span style="font-weight:700;color:{color}">{value:.1f}</span>'
 
 
-# ── HTML generation ───────────────────────────────────────────────────────────
+def dedupe_findings(findings):
+    seen = set()
+    deduped = []
+    for finding in findings:
+        key = (
+            finding["tool"],
+            finding["cve"],
+            finding["product"],
+            finding["version"],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(finding)
+    return deduped
 
-TOOL_COLOR = {"grype": "#7c3aed", "trivy": "#0369a1", "cve-bin-tool": "#b45309"}
 
-
-def generate_html(findings, target_display, artifacts_dir, output_path):
-    # Deduplicate
-    seen, deduped = set(), []
-    for f in findings:
-        key = (f["tool"], f["cve"], f["product"], f["version"])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(f)
-
-    # Sort: severity → score desc
-    def sort_key(f):
+def sort_findings(findings):
+    def sort_key(item):
         try:
-            s = -float(f["score"])
+            score = -float(item["score"])
         except (ValueError, TypeError):
-            s = 0
-        return (SEV_ORDER.get(f["severity"], 5), s)
+            score = 0
+        return (SEV_ORDER.get(item["severity"], 5), score, item["cve"], item["product"])
 
-    deduped.sort(key=sort_key)
+    return sorted(findings, key=sort_key)
 
-    counts = {}
-    for f in deduped:
-        counts[f["severity"]] = counts.get(f["severity"], 0) + 1
 
-    total    = len(deduped)
-    critical = counts.get("CRITICAL", 0)
-    high     = counts.get("HIGH", 0)
-    medium   = counts.get("MEDIUM", 0)
-    low      = counts.get("LOW", 0)
+def build_page_paths(output_path: str | os.PathLike[str]):
+    output = Path(output_path)
+    if output.stem == "index":
+        return {
+            "overview": output,
+            "grype": output.with_name("grype.html"),
+            "trivy": output.with_name("trivy.html"),
+            "cve-bin-tool": output.with_name("cve-bin-tool.html"),
+            "syft": output.with_name("syft.html"),
+        }
+    return {
+        "overview": output,
+        "grype": output.with_name(f"{output.stem}_grype{output.suffix}"),
+        "trivy": output.with_name(f"{output.stem}_trivy{output.suffix}"),
+        "cve-bin-tool": output.with_name(f"{output.stem}_cve-bin-tool{output.suffix}"),
+        "syft": output.with_name(f"{output.stem}_syft{output.suffix}"),
+    }
 
-    # Component count from syft
-    components = 0
-    syft = load_json(os.path.join(artifacts_dir, "sbom", "syft.json"))
-    if syft:
-        components = len(syft.get("artifacts", []))
 
-    date_str  = datetime.now().strftime("%Y-%m-%d %H:%M")
-    base_name = os.path.basename(target_display) if target_display else "Unknown"
+def nav_html(page_paths, active_key):
+    items = [
+        ("overview", "Overview"),
+        ("grype", "Grype"),
+        ("trivy", "Trivy"),
+        ("cve-bin-tool", "cve-bin-tool"),
+        ("syft", "Syft"),
+    ]
+    links = []
+    current_dir = page_paths[active_key].parent
+    for key, label in items:
+        href = os.path.relpath(page_paths[key], current_dir).replace("\\", "/")
+        cls = "nav-link active" if key == active_key else "nav-link"
+        links.append(f'<a class="{cls}" href="{escape(href)}">{escape(label)}</a>')
+    return "".join(links)
 
-    # ── Severity bar chart ──
-    bars = ""
-    for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
-        c = counts.get(sev, 0)
-        pct = c / total * 100 if total else 0
-        fg, bg, _ = SEV_STYLE.get(sev, SEV_STYLE["UNKNOWN"])
-        bars += f"""
+
+def render_findings_rows(findings):
+    rows = []
+    for finding in findings:
+        cve = escape(finding["cve"])
+        cve_html = (
+            f'<a href="{escape(finding["url"])}" target="_blank" class="cve-link">{cve}</a>'
+            if finding["url"]
+            else f'<span class="mono">{cve}</span>'
+        )
+        fix_html = ""
+        if finding["fix"]:
+            fix_html = f'<span class="fix-yes">yes: {escape(finding["fix"])}</span>'
+        elif finding["fix_state"] == "wont-fix":
+            fix_html = '<span class="fix-no">wont-fix</span>'
+        rows.append(
+            f"""
+        <tr data-sev="{escape(finding['severity'])}">
+          <td><span class="tool-tag" style="color:{TOOL_COLOR.get(finding['tool'], '#6b7280')};border-color:{TOOL_COLOR.get(finding['tool'], '#6b7280')}40;background:{TOOL_COLOR.get(finding['tool'], '#6b7280')}10">{escape(finding['tool'])}</span></td>
+          <td class="mono">{cve_html}</td>
+          <td>{severity_badge(finding['severity'])}</td>
+          <td class="score-cell">{score_html(finding['score'])}</td>
+          <td><span class="pkg-name">{escape(finding['product'])}</span>{f'<br><span class="pkg-type">{escape(finding["pkg_type"])}</span>' if finding["pkg_type"] else ""}</td>
+          <td class="mono ver">{escape(finding['version'])}</td>
+          <td>{fix_html}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
+def render_component_rows(components):
+    rows = []
+    for component in components:
+        rows.append(
+            f"""
+        <tr>
+          <td><span class="pkg-name">{escape(component['name'])}</span>{f'<br><span class="pkg-type">{escape(component["type"])}</span>' if component["type"] else ""}</td>
+          <td class="mono ver">{escape(component['version'])}</td>
+          <td class="mono">{escape(component['purl']) if component['purl'] else '<span class="muted">-</span>'}</td>
+          <td class="score-cell">{component['locations']}</td>
+        </tr>"""
+        )
+    return "".join(rows)
+
+
+def render_summary_cards(total, severity_counts, components):
+    return f"""
+  <div class="cards">
+    <div class="card" style="border-color:#334155">
+      <div class="card-num" style="color:#0f172a">{total}</div>
+      <div class="card-label">Findings</div>
+    </div>
+    <div class="card" style="border-color:#b91c1c">
+      <div class="card-num" style="color:#b91c1c">{severity_counts.get("CRITICAL", 0)}</div>
+      <div class="card-label">Critical</div>
+    </div>
+    <div class="card" style="border-color:#c2410c">
+      <div class="card-num" style="color:#c2410c">{severity_counts.get("HIGH", 0)}</div>
+      <div class="card-label">High</div>
+    </div>
+    <div class="card" style="border-color:#a16207">
+      <div class="card-num" style="color:#a16207">{severity_counts.get("MEDIUM", 0)}</div>
+      <div class="card-label">Medium</div>
+    </div>
+    <div class="card" style="border-color:#0f766e">
+      <div class="card-num" style="color:#0f766e">{components}</div>
+      <div class="card-label">Syft components</div>
+    </div>
+  </div>"""
+
+
+def render_bars(severity_counts, total):
+    bars = []
+    for severity in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
+        count = severity_counts.get(severity, 0)
+        pct = (count / total * 100) if total else 0
+        fg, _, _ = SEV_STYLE.get(severity, SEV_STYLE["UNKNOWN"])
+        bars.append(
+            f"""
           <div class="bar-row">
-            <div class="bar-label" style="color:{fg}">{sev}</div>
+            <div class="bar-label" style="color:{fg}">{severity}</div>
             <div class="bar-track">
               <div class="bar-fill" style="width:{pct:.1f}%;background:{fg}"></div>
             </div>
-            <div class="bar-count" style="color:{fg}">{c}</div>
+            <div class="bar-count" style="color:{fg}">{count}</div>
           </div>"""
+        )
+    return "".join(bars)
 
-    # ── Tool breakdown ──
-    tool_counts = {}
-    for f in deduped:
-        tool_counts[f["tool"]] = tool_counts.get(f["tool"], 0) + 1
 
-    tool_rows = ""
-    for tool, cnt in sorted(tool_counts.items()):
-        tc = TOOL_COLOR.get(tool, "#6b7280")
-        tool_rows += f'<div class="tool-item"><span style="color:{tc};font-weight:700">{escape(tool)}</span><span class="tool-cnt">{cnt}</span></div>'
+def render_tool_breakdown(tool_counts):
+    rows = []
+    for tool in TOOL_ORDER:
+        count = tool_counts.get(tool, 0)
+        rows.append(
+            f'<div class="tool-item"><span style="color:{TOOL_COLOR[tool]};font-weight:700">{escape(TOOL_LABEL[tool])}</span><span class="tool-cnt">{count}</span></div>'
+        )
+    return "".join(rows)
 
-    # ── Table rows ──
-    rows_html = ""
-    for f in deduped:
-        cve = escape(f["cve"])
-        cve_html = (f'<a href="{escape(f["url"])}" target="_blank" class="cve-link">{cve}</a>'
-                    if f["url"] else f'<span class="mono">{cve}</span>')
-        fix_html = ""
-        if f["fix"]:
-            fix_html = f'<span class="fix-yes">✓ {escape(f["fix"])}</span>'
-        elif f["fix_state"] == "wont-fix":
-            fix_html = '<span class="fix-no">won\'t fix</span>'
 
-        tc = TOOL_COLOR.get(f["tool"], "#6b7280")
-        rows_html += f"""
-        <tr data-sev="{escape(f['severity'])}">
-          <td><span class="tool-tag" style="color:{tc};border-color:{tc}40;background:{tc}10">{escape(f['tool'])}</span></td>
-          <td class="mono">{cve_html}</td>
-          <td>{severity_badge(f['severity'])}</td>
-          <td class="score-cell">{score_html(f['score'])}</td>
-          <td><span class="pkg-name">{escape(f['product'])}</span>
-              {f'<br><span class="pkg-type">{escape(f["pkg_type"])}</span>' if f["pkg_type"] else ""}
-          </td>
-          <td class="mono ver">{escape(f['version'])}</td>
-          <td>{fix_html}</td>
-        </tr>"""
-
-    html = f"""<!DOCTYPE html>
+def page_template(title, target_display, date_str, nav, body_html, base_name):
+    return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SCA Report — {escape(base_name)}</title>
+<title>{escape(title)} - {escape(base_name)}</title>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-
   body {{
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: #f1f5f9;
@@ -263,45 +355,52 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     font-size: 14px;
     line-height: 1.5;
   }}
-
-  /* Header */
   .header {{
     background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
     color: white;
     padding: 28px 40px 24px;
   }}
-  .header-top {{
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-    margin-bottom: 12px;
-  }}
-  .header-icon {{ font-size: 32px; line-height: 1; }}
   .header-title {{ font-size: 22px; font-weight: 800; letter-spacing: -0.3px; }}
   .header-target {{
     font-size: 13px;
     color: #94a3b8;
     font-family: "Courier New", monospace;
-    margin-top: 4px;
+    margin-top: 6px;
     word-break: break-all;
   }}
   .header-meta {{
     display: flex;
     gap: 24px;
     font-size: 12px;
-    color: #64748b;
-    margin-top: 8px;
+    color: #cbd5e1;
+    margin-top: 12px;
+    flex-wrap: wrap;
   }}
-  .header-meta span {{ display: flex; align-items: center; gap: 6px; }}
-
-  /* Layout */
+  .nav {{
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+    flex-wrap: wrap;
+  }}
+  .nav-link {{
+    color: #cbd5e1;
+    text-decoration: none;
+    border: 1px solid #475569;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+  }}
+  .nav-link.active {{
+    background: white;
+    color: #0f172a;
+    border-color: white;
+  }}
   .container {{
     max-width: 1440px;
     margin: 0 auto;
     padding: 24px 40px;
   }}
-
-  /* Summary cards */
   .cards {{
     display: grid;
     grid-template-columns: repeat(5, 1fr);
@@ -314,16 +413,9 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     padding: 18px 20px;
     box-shadow: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.04);
     border-top: 3px solid;
-    transition: transform .15s, box-shadow .15s;
   }}
-  .card:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,.1);
-  }}
-  .card-num  {{ font-size: 38px; font-weight: 900; line-height: 1; letter-spacing: -1px; }}
+  .card-num {{ font-size: 38px; font-weight: 900; line-height: 1; letter-spacing: -1px; }}
   .card-label {{ font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: #64748b; margin-top: 4px; }}
-
-  /* Section */
   .section {{
     background: white;
     border-radius: 12px;
@@ -350,16 +442,12 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     border-radius: 999px;
     font-weight: 600;
   }}
-
-  /* Charts row */
   .charts-row {{
     display: grid;
     grid-template-columns: 2fr 1fr;
     gap: 20px;
     margin-bottom: 20px;
   }}
-
-  /* Bar chart */
   .bar-row {{
     display: flex;
     align-items: center;
@@ -382,7 +470,6 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
   .bar-fill {{
     height: 100%;
     border-radius: 4px;
-    transition: width .4s ease;
   }}
   .bar-count {{
     width: 32px;
@@ -390,8 +477,6 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     font-weight: 800;
     font-size: 13px;
   }}
-
-  /* Stats block */
   .stats-block {{ padding: 4px 0; }}
   .stat-row {{
     display: flex;
@@ -403,8 +488,6 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
   .stat-row:last-child {{ border-bottom: none; }}
   .stat-label {{ color: #64748b; }}
   .stat-value {{ font-weight: 700; color: #0f172a; }}
-
-  /* Tool breakdown */
   .tool-item {{
     display: flex;
     justify-content: space-between;
@@ -420,8 +503,6 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     font-size: 15px;
     color: #374151;
   }}
-
-  /* Filter bar */
   .filter-bar {{
     display: flex;
     gap: 10px;
@@ -437,11 +518,6 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     border-radius: 8px;
     font-size: 13px;
     outline: none;
-    transition: border-color .15s, box-shadow .15s;
-  }}
-  .search-input:focus {{
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 3px #3b82f620;
   }}
   .sev-btn {{
     padding: 6px 14px;
@@ -450,19 +526,16 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
-    transition: all .15s;
     background: #f1f5f9;
     color: #64748b;
     text-transform: uppercase;
     letter-spacing: .05em;
   }}
-  .sev-btn:hover, .sev-btn.active {{
+  .sev-btn.active {{
     background: #0f172a;
     color: white;
   }}
-
-  /* Table */
-  .table-wrap {{ overflow-x: auto; max-height: 600px; overflow-y: auto; }}
+  .table-wrap {{ overflow-x: auto; max-height: 640px; overflow-y: auto; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
   thead th {{
     position: sticky;
@@ -484,8 +557,6 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
     vertical-align: middle;
   }}
   tbody tr:hover td {{ background: #f8fafc; }}
-
-  /* Cells */
   .tool-tag {{
     display: inline-block;
     font-size: 11px;
@@ -518,18 +589,16 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
   .pkg-name {{ font-weight: 600; }}
   .pkg-type {{ font-size: 11px; color: #94a3b8; }}
   .fix-yes {{ color: #15803d; font-size: 12px; font-weight: 600; }}
-  .fix-no  {{ color: #b91c1c; font-size: 12px; }}
-
-  /* Footer */
+  .fix-no {{ color: #b91c1c; font-size: 12px; }}
+  .muted {{ color: #94a3b8; }}
   .footer {{
     text-align: center;
     padding: 20px;
     color: #94a3b8;
     font-size: 12px;
   }}
-
   @media (max-width: 900px) {{
-    .cards {{ grid-template-columns: repeat(3, 1fr); }}
+    .cards {{ grid-template-columns: repeat(2, 1fr); }}
     .charts-row {{ grid-template-columns: 1fr; }}
     .container {{ padding: 16px; }}
     .header {{ padding: 20px 16px; }}
@@ -537,175 +606,227 @@ def generate_html(findings, target_display, artifacts_dir, output_path):
 </style>
 </head>
 <body>
-
-<!-- Header -->
 <div class="header">
-  <div class="header-top">
-    <div class="header-icon">🔬</div>
-    <div>
-      <div class="header-title">SCA Security Report</div>
-      <div class="header-target">{escape(target_display or "Unknown")}</div>
-    </div>
-  </div>
+  <div class="header-title">{escape(title)}</div>
+  <div class="header-target">{escape(target_display or "Unknown")}</div>
   <div class="header-meta">
-    <span>📅 {date_str}</span>
-    <span>📦 {components} компонентов</span>
-    <span>🔍 Trivy · Grype · cve-bin-tool · Syft</span>
+    <span>{escape(date_str)}</span>
+    <span>Trivy + Grype + cve-bin-tool + Syft</span>
   </div>
+  <div class="nav">{nav}</div>
 </div>
-
 <div class="container">
+{body_html}
+</div>
+<div class="footer">Generated by el-sca-ansamble · {escape(date_str)}</div>
+<script>
+  function bindFilters(rootId) {{
+    var root = document.getElementById(rootId);
+    if (!root) return;
+    var activeSev = 'all';
+    var searchQ = '';
+    function applyFilters() {{
+      var rows = root.querySelectorAll('tbody tr');
+      var hidden = 0;
+      rows.forEach(function(row) {{
+        var sevMatch = activeSev === 'all' || row.dataset.sev === activeSev;
+        var textMatch = !searchQ || row.textContent.toLowerCase().includes(searchQ);
+        var show = sevMatch && textMatch;
+        row.style.display = show ? '' : 'none';
+        if (!show) hidden++;
+      }});
+      var empty = root.querySelector('.no-results');
+      if (empty) {{
+        empty.style.display = hidden === rows.length ? '' : 'none';
+      }}
+    }}
+    var search = root.querySelector('.search-input');
+    if (search) {{
+      search.addEventListener('input', function() {{
+        searchQ = this.value.toLowerCase();
+        applyFilters();
+      }});
+    }}
+    root.querySelectorAll('.sev-btn').forEach(function(btn) {{
+      btn.addEventListener('click', function() {{
+        activeSev = btn.dataset.sev;
+        root.querySelectorAll('.sev-btn').forEach(function(item) {{ item.classList.remove('active'); }});
+        btn.classList.add('active');
+        applyFilters();
+      }});
+    }});
+  }}
+  bindFilters('findings-root');
+</script>
+</body>
+</html>"""
 
-  <!-- Cards -->
-  <div class="cards">
-    <div class="card" style="border-color:#334155">
-      <div class="card-num" style="color:#0f172a">{total}</div>
-      <div class="card-label">Всего</div>
-    </div>
-    <div class="card" style="border-color:#b91c1c">
-      <div class="card-num" style="color:#b91c1c">{critical}</div>
-      <div class="card-label">Critical</div>
-    </div>
-    <div class="card" style="border-color:#c2410c">
-      <div class="card-num" style="color:#c2410c">{high}</div>
-      <div class="card-label">High</div>
-    </div>
-    <div class="card" style="border-color:#a16207">
-      <div class="card-num" style="color:#a16207">{medium}</div>
-      <div class="card-label">Medium</div>
-    </div>
-    <div class="card" style="border-color:#15803d">
-      <div class="card-num" style="color:#15803d">{low}</div>
-      <div class="card-label">Low</div>
-    </div>
-  </div>
 
-  <!-- Charts row -->
+def build_finding_page(page_key, page_title, findings, target_display, page_paths, components_total, tool_counts):
+    deduped = sort_findings(dedupe_findings(findings))
+    severity_counts = {}
+    for finding in deduped:
+        severity_counts[finding["severity"]] = severity_counts.get(finding["severity"], 0) + 1
+    total = len(deduped)
+    body = (
+        render_summary_cards(total, severity_counts, components_total)
+        + f"""
   <div class="charts-row">
     <div class="section">
-      <div class="section-title">📊 Распределение по критичности</div>
-      {bars}
+      <div class="section-title">Severity distribution</div>
+      {render_bars(severity_counts, total)}
     </div>
-
     <div>
       <div class="section" style="margin-bottom:14px">
-        <div class="section-title">📈 Статистика</div>
+        <div class="section-title">Quick stats</div>
         <div class="stats-block">
-          <div class="stat-row"><span class="stat-label">Компонентов (Syft)</span><span class="stat-value">{components}</span></div>
-          <div class="stat-row"><span class="stat-label">Уникальных CVE</span><span class="stat-value">{total}</span></div>
-          <div class="stat-row"><span class="stat-label">Critical + High</span><span class="stat-value" style="color:#b91c1c">{critical + high}</span></div>
-          <div class="stat-row"><span class="stat-label">С исправлением</span><span class="stat-value" style="color:#15803d">{sum(1 for f in deduped if f["fix"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Unique findings</span><span class="stat-value">{total}</span></div>
+          <div class="stat-row"><span class="stat-label">Critical + High</span><span class="stat-value" style="color:#b91c1c">{severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)}</span></div>
+          <div class="stat-row"><span class="stat-label">Syft components</span><span class="stat-value">{components_total}</span></div>
+          <div class="stat-row"><span class="stat-label">Fix versions known</span><span class="stat-value" style="color:#15803d">{sum(1 for item in deduped if item["fix"])}</span></div>
         </div>
       </div>
       <div class="section">
-        <div class="section-title">🛠 По инструментам</div>
-        {tool_rows}
+        <div class="section-title">By tool</div>
+        {render_tool_breakdown(tool_counts)}
       </div>
     </div>
   </div>
-
-  <!-- Findings table -->
-  <div class="section">
-    <div class="section-title">
-      🐛 Уязвимости
-      <span class="count">{total}</span>
-    </div>
+  <div class="section" id="findings-root">
+    <div class="section-title">Findings <span class="count">{total}</span></div>
     <div class="filter-bar">
-      <input type="text" id="search" class="search-input" placeholder="Поиск по CVE, пакету, версии...">
-      <button class="sev-btn active" onclick="filterSev('all',this)">Все</button>
-      <button class="sev-btn" onclick="filterSev('CRITICAL',this)" style="color:#b91c1c">Critical</button>
-      <button class="sev-btn" onclick="filterSev('HIGH',this)" style="color:#c2410c">High</button>
-      <button class="sev-btn" onclick="filterSev('MEDIUM',this)" style="color:#a16207">Medium</button>
-      <button class="sev-btn" onclick="filterSev('LOW',this)" style="color:#15803d">Low</button>
+      <input type="text" class="search-input" placeholder="Search by CVE, package, version">
+      <button class="sev-btn active" data-sev="all">All</button>
+      <button class="sev-btn" data-sev="CRITICAL" style="color:#b91c1c">Critical</button>
+      <button class="sev-btn" data-sev="HIGH" style="color:#c2410c">High</button>
+      <button class="sev-btn" data-sev="MEDIUM" style="color:#a16207">Medium</button>
+      <button class="sev-btn" data-sev="LOW" style="color:#15803d">Low</button>
     </div>
     <div class="table-wrap">
-      <table id="tbl">
+      <table>
         <thead>
           <tr>
-            <th>Инструмент</th>
+            <th>Tool</th>
             <th>CVE / GHSA</th>
-            <th>Уровень</th>
+            <th>Severity</th>
             <th style="text-align:right">Score</th>
-            <th>Пакет</th>
-            <th>Версия</th>
-            <th>Исправление</th>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Fix</th>
           </tr>
         </thead>
         <tbody>
-          {rows_html}
+          {render_findings_rows(deduped)}
         </tbody>
       </table>
     </div>
-    <div id="no-results" style="display:none;text-align:center;padding:32px;color:#94a3b8">
-      Ничего не найдено
+    <div class="no-results" style="display:none;text-align:center;padding:32px;color:#94a3b8">No matching rows</div>
+  </div>"""
+    )
+    html = page_template(
+        page_title,
+        target_display,
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        nav_html(page_paths, page_key),
+        body,
+        os.path.basename(target_display or "Unknown"),
+    )
+    page_paths[page_key].parent.mkdir(parents=True, exist_ok=True)
+    page_paths[page_key].write_text(html, encoding="utf-8")
+
+
+def build_syft_page(page_paths, target_display, components, all_findings):
+    severity_counts = {}
+    for finding in all_findings:
+        severity_counts[finding["severity"]] = severity_counts.get(finding["severity"], 0) + 1
+    body = (
+        render_summary_cards(len(all_findings), severity_counts, len(components))
+        + f"""
+  <div class="charts-row">
+    <div class="section">
+      <div class="section-title">SBOM component inventory</div>
+      <div class="stats-block">
+        <div class="stat-row"><span class="stat-label">Components</span><span class="stat-value">{len(components)}</span></div>
+        <div class="stat-row"><span class="stat-label">Findings across all tools</span><span class="stat-value">{len(all_findings)}</span></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-title">By tool</div>
+      {render_tool_breakdown({tool: sum(1 for item in all_findings if item["tool"] == tool) for tool in TOOL_ORDER})}
     </div>
   </div>
+  <div class="section">
+    <div class="section-title">Syft components <span class="count">{len(components)}</span></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Version</th>
+            <th>PURL</th>
+            <th style="text-align:right">Locations</th>
+          </tr>
+        </thead>
+        <tbody>
+          {render_component_rows(components)}
+        </tbody>
+      </table>
+    </div>
+  </div>"""
+    )
+    html = page_template(
+        "Syft components",
+        target_display,
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        nav_html(page_paths, "syft"),
+        body,
+        os.path.basename(target_display or "Unknown"),
+    )
+    page_paths["syft"].parent.mkdir(parents=True, exist_ok=True)
+    page_paths["syft"].write_text(html, encoding="utf-8")
 
-</div>
 
-<div class="footer">
-  Сгенерировано el-sca-ansamble &nbsp;·&nbsp; {date_str}
-</div>
-
-<script>
-  var activeSev = 'all';
-  var searchQ   = '';
-
-  function applyFilters() {{
-    var rows = document.querySelectorAll('#tbl tbody tr');
-    var hidden = 0;
-    rows.forEach(function(row) {{
-      var sevMatch = activeSev === 'all' || row.dataset.sev === activeSev;
-      var textMatch = !searchQ || row.textContent.toLowerCase().includes(searchQ);
-      var show = sevMatch && textMatch;
-      row.style.display = show ? '' : 'none';
-      if (!show) hidden++;
-    }});
-    document.getElementById('no-results').style.display =
-      hidden === rows.length ? '' : 'none';
-  }}
-
-  function filterSev(sev, btn) {{
-    activeSev = sev;
-    document.querySelectorAll('.sev-btn').forEach(function(b) {{ b.classList.remove('active'); }});
-    btn.classList.add('active');
-    applyFilters();
-  }}
-
-  document.getElementById('search').addEventListener('input', function() {{
-    searchQ = this.value.toLowerCase();
-    applyFilters();
-  }});
-</script>
-
-</body>
-</html>
-"""
-
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"HTML report → {output_path}")
+def generate_html_site(findings, target_display, artifacts_dir, output_path, components):
+    page_paths = build_page_paths(output_path)
+    deduped_all = sort_findings(dedupe_findings(findings))
+    tool_counts = {tool: sum(1 for item in deduped_all if item["tool"] == tool) for tool in TOOL_ORDER}
+    build_finding_page("overview", "SCA report overview", deduped_all, target_display, page_paths, len(components), tool_counts)
+    for tool in TOOL_ORDER:
+        build_finding_page(
+            tool,
+            f"{TOOL_LABEL[tool]} findings",
+            [item for item in deduped_all if item["tool"] == tool],
+            target_display,
+            page_paths,
+            len(components),
+            tool_counts,
+        )
+    build_syft_page(page_paths, target_display, components, deduped_all)
+    print(f"HTML report → {page_paths['overview']}")
+    for key in ("grype", "trivy", "cve-bin-tool", "syft"):
+        print(f"HTML page   → {page_paths[key]}")
     return 0
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Generate HTML SCA vulnerability report")
-    ap.add_argument("--artifacts-dir", required=True, help="Path to artifacts/ directory")
-    ap.add_argument("--output",        required=True, help="Output .html file path")
-    ap.add_argument("--target",        default="",   help="Display name of the scanned target")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Generate HTML SCA vulnerability report")
+    parser.add_argument("--artifacts-dir", required=True, help="Path to artifacts/ directory")
+    parser.add_argument("--output", required=True, help="Output .html file path for the overview page")
+    parser.add_argument("--target", default="", help="Display name of the scanned target")
+    args = parser.parse_args()
 
-    adir = args.artifacts_dir
+    artifacts_dir = args.artifacts_dir
+    syft_data = load_json(os.path.join(artifacts_dir, "sbom", "syft.json"))
     findings = []
-    findings += parse_grype(load_json(os.path.join(adir, "reports", "grype",        "report.json")))
-    findings += parse_trivy(load_json(os.path.join(adir, "reports", "trivy",        "report.json")))
-    findings += parse_cvebt(load_json(os.path.join(adir, "reports", "cve-bin-tool", "report.json")))
+    findings += parse_grype(load_json(os.path.join(artifacts_dir, "reports", "grype", "report.json")))
+    findings += parse_trivy(load_json(os.path.join(artifacts_dir, "reports", "trivy", "report.json")))
+    findings += parse_cvebt(load_json(os.path.join(artifacts_dir, "reports", "cve-bin-tool", "report.json")))
+    components = parse_syft_components(syft_data)
 
     if not findings:
         print("[warn] no findings loaded — check artifacts/ structure", file=sys.stderr)
 
-    return generate_html(findings, args.target, adir, args.output)
+    return generate_html_site(findings, args.target, artifacts_dir, args.output, components)
 
 
 if __name__ == "__main__":

@@ -302,6 +302,7 @@ services:
     entrypoint: ["/bin/sh", "/workspace/scripts/collect_reports.sh"]
     environment:
       REPORT_OUTPUT: ${REPORT_OUTPUT:-/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md}
+      HTML_REPORT_OUTPUT: ${HTML_REPORT_OUTPUT:-/workspace/artifacts/reports/final/index.html}
       CASE_ID: ${CASE_ID:-CYBERSEC-UNKNOWN}
       SCAN_TARGET: ${SCAN_TARGET_CONTAINER:-/scan-target}
       SCAN_TARGET_HOST: ${SCAN_TARGET_HOST:-UNKNOWN}

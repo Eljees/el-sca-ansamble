@@ -3,6 +3,7 @@ set -eu
 
 REPORTS_DIR="${REPORTS_DIR:-artifacts}"
 REPORT_OUTPUT="${REPORT_OUTPUT:-artifacts/reports/final/cve_analysis_report_generated_ru.md}"
+HTML_REPORT_OUTPUT="${HTML_REPORT_OUTPUT:-artifacts/reports/final/index.html}"
 SCAN_TARGET="${SCAN_TARGET:-${SCAN_TARGET_CONTAINER:-}}"
 SCAN_TARGET_DISPLAY="${SCAN_TARGET_DISPLAY:-${SCAN_TARGET_HOST:-$SCAN_TARGET}}"
 CASE_ID="${CASE_ID:-CYBERSEC-UNKNOWN}"
@@ -34,3 +35,10 @@ python -m resilient_updates.cli collect-report \
   --target "$SCAN_TARGET" \
   --display-target "$SCAN_TARGET_DISPLAY" \
   --case-id "$CASE_ID"
+
+if ! python scripts/report_html.py \
+  --artifacts-dir "$REPORTS_DIR" \
+  --output "$HTML_REPORT_OUTPUT" \
+  --target "$SCAN_TARGET_DISPLAY"; then
+  echo "[collect_reports] WARN: HTML report generation failed" >&2
+fi
