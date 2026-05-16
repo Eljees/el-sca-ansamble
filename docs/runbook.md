@@ -151,6 +151,23 @@ echo "$COMPOSE_PROFILES"
 2. `python -m json.tool artifacts/reports/grype/report.json | head` — есть ли `matches`. Если нет — DB Grype не активна.
 3. `python -m resilient_updates.cli db-status grype --path /var/lib/resilient-db/grype/active` — `warning: true`? тогда `update grype`.
 
+### 4.3. В шапке отчёта неправильный номер кейса
+
+**Симптом.** В первой строке Markdown указан `CYBERSEC-UNKNOWN` или не тот тикет.
+
+**Причина.** Runner не получил `-CaseId` / `--case-id` и не смог найти `CYBERSEC-\d+`
+в пути к цели.
+
+**Фикс.** Передайте номер явно:
+
+```powershell
+.\scripts\windows\run-scan.ps1 -Target "D:\samples\app.zip" -CaseId CYBERSEC-12080 -Clean
+```
+
+```sh
+./scripts/run-scan.sh -t /path/to/app.zip --case-id CYBERSEC-12080 -c
+```
+
 ---
 
 ## 5. Сеть / прокси

@@ -68,6 +68,8 @@ python -m resilient_updates.cli validate-config
 | `-CveBinToolTimeout <sec>` | таймаут cve-bin-tool scan | `1800` |
 
 После завершения отчёт лежит рядом с целью: `<target_basename>_report_<date>.md` + HTML.
+Если `-CaseId` не задан и путь не содержит `CYBERSEC-\d+`, шапка отчёта будет
+`CYBERSEC-UNKNOWN`, а не старый референсный кейс.
 
 ---
 

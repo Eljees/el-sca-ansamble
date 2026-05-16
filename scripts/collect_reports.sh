@@ -5,7 +5,7 @@ REPORTS_DIR="${REPORTS_DIR:-artifacts}"
 REPORT_OUTPUT="${REPORT_OUTPUT:-artifacts/reports/final/cve_analysis_report_generated_ru.md}"
 SCAN_TARGET="${SCAN_TARGET:-${SCAN_TARGET_CONTAINER:-}}"
 SCAN_TARGET_DISPLAY="${SCAN_TARGET_DISPLAY:-${SCAN_TARGET_HOST:-$SCAN_TARGET}}"
-CASE_ID="${CASE_ID:-CYBERSEC-11531}"
+CASE_ID="${CASE_ID:-CYBERSEC-UNKNOWN}"
 
 mkdir -p artifacts/reports/final artifacts/provenance artifacts/sbom \
          artifacts/reports/cve-bin-tool artifacts/reports/trivy artifacts/reports/grype artifacts/sbom

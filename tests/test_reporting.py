@@ -154,6 +154,29 @@ def _make_minimal_reports(root: Path, syft_artifacts: list | None = None) -> Non
     (root / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
 
 
+def test_build_report_auto_detects_case_id_from_target_when_missing(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports, syft_artifacts=[{"name": "android-app"}])
+
+    display_target = r"D:\__tests\_SCA\CYBERSEC-12080\android-build.zip"
+    output = build_report(reports, tmp_path / "report.md", None, display_target)
+    text = output.read_text(encoding="utf-8")
+
+    assert text.startswith("# CYBERSEC-12080: контейнерный SCA-отчет")
+    assert "CYBERSEC-11531" not in text
+
+
+def test_build_report_uses_unknown_case_id_when_missing_and_not_detectable(tmp_path: Path):
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports, syft_artifacts=[{"name": "component"}])
+
+    output = build_report(reports, tmp_path / "report.md", None, "target-without-ticket")
+    text = output.read_text(encoding="utf-8")
+
+    assert text.startswith("# CYBERSEC-UNKNOWN: контейнерный SCA-отчет")
+    assert "CYBERSEC-11531" not in text
+
+
 def test_build_report_warns_when_syft_has_zero_components(tmp_path: Path):
     reports = tmp_path / "artifacts"
     _make_minimal_reports(reports, syft_artifacts=[])  # explicitly 0 components

@@ -111,6 +111,10 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 | `-SbomScan` | switch | off | cve-bin-tool читает `cyclonedx.json` вместо бинарного скана |
 | `-CveBinToolTimeout` | int | `1800` | Таймаут cve-bin-tool в секундах |
 
+Если `-CaseId` / `--case-id` не задан, runner пытается взять номер из пути к цели по
+шаблону `CYBERSEC-\d+`. Если такого фрагмента нет, в отчёте будет `CYBERSEC-UNKNOWN`;
+референсный `CYBERSEC-11531` больше не используется как дефолт.
+
 ### Linux / macOS — `run-scan.sh`
 
 ```sh

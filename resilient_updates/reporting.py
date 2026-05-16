@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
+import re
 from hashlib import sha256
 from pathlib import Path
 import json
 from typing import Any
 
 
+DEFAULT_CASE_ID = "CYBERSEC-UNKNOWN"
+_CASE_ID_RE = re.compile(r"\b(CYBERSEC-\d+)\b", re.IGNORECASE)
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
 
 
@@ -258,12 +261,29 @@ def _dedup_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _resolve_case_id(
+    case_id: str | None,
+    target_path: str | Path | None = None,
+    display_target: str | None = None,
+) -> str:
+    explicit = (case_id or "").strip()
+    if explicit and explicit.upper() != DEFAULT_CASE_ID:
+        return explicit
+    for candidate in (display_target, target_path):
+        if candidate is None:
+            continue
+        match = _CASE_ID_RE.search(str(candidate))
+        if match:
+            return match.group(1).upper()
+    return DEFAULT_CASE_ID
+
+
 def build_report(
     reports_dir: str | Path,
     output_path: str | Path,
     target_path: str | Path | None = None,
     display_target: str | None = None,
-    case_id: str = "CYBERSEC-11531",
+    case_id: str = DEFAULT_CASE_ID,
 ) -> Path:
     root = Path(reports_dir).resolve()
     output = Path(output_path)
@@ -346,13 +366,14 @@ def build_report(
     tool_failures = status.get("tool_failures", summary.get("tool_failures", "UNKNOWN")) if isinstance(status, dict) else "UNKNOWN"
     db_drift = status.get("db_drift", summary.get("db_drift", "UNKNOWN")) if isinstance(status, dict) else "UNKNOWN"
     evidence_files = _collect_paths(root)
+    resolved_case_id = _resolve_case_id(case_id, target_path, display_target)
 
     report = [
-        f"# {case_id}: konteynernyy SCA-otchet",
+        f"# {resolved_case_id}: контейнерный SCA-отчет",
         "",
-        f"Data analiza: {date.today().isoformat()}",
+        f"Дата анализа: {date.today().isoformat()}",
         "",
-        "## Ob'ekt analiza",
+        "## Объект анализа",
         "",
         f"- Target: `{target}`",
         f"- SHA-256: `{digest or 'UNKNOWN'}`",
@@ -411,13 +432,13 @@ def build_report(
             "",
             "## Interpretation",
             "",
-            "This report aggregates raw evidence from the container pipeline. Findings represent scanner signal, not confirmed exploitability.",
+            "Отчет агрегирует raw evidence из контейнерного пайплайна. Находки являются сигналом сканеров, а не подтвержденной применимостью уязвимостей.",
             "",
             "## Recommendations",
             "",
-            "1. Manually review High/Critical findings in delivery context.",
-            "2. Keep raw JSON next to the final Markdown report.",
-            "3. Fix DB snapshot ID and tool versions for reproducible comparisons.",
+            "1. Вручную проверить High/Critical находки в контексте поставки.",
+            "2. Хранить raw JSON рядом с итоговым Markdown-отчетом.",
+            "3. Фиксировать DB snapshot ID и версии инструментов для воспроизводимых сравнений.",
             "",
         ]
     )

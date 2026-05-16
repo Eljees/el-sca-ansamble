@@ -431,7 +431,7 @@ def main() -> int:
     collect_report.add_argument("--output", default="artifacts/reports/final/cve_analysis_report_generated_ru.md")
     collect_report.add_argument("--target", default="")
     collect_report.add_argument("--display-target", default="")
-    collect_report.add_argument("--case-id", default="CYBERSEC-11531")
+    collect_report.add_argument("--case-id", default="CYBERSEC-UNKNOWN")
     extract = subparsers.add_parser("extract")
     extract.add_argument("--input", required=True)
     extract.add_argument("--output", required=True)
