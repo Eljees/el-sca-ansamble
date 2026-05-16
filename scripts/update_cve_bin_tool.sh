@@ -438,22 +438,18 @@ PYEOF
     fi
 
     # ── Parallelism ──────────────────────────────────────────────────────────
-    # cve-bin-tool 3.x accepts -n N to run N regex workers in parallel.  On
-    # Windows + WSL2 host CPUs are typically 4-8 cores; we default to half of
-    # them, capped at 8, so a scan never starves Docker Desktop's own helper
-    # processes.  Set CVE_BIN_TOOL_PARALLEL=0 (or 1) to disable parallelism;
-    # set =N to pin a specific worker count.
+    # NOTE: cve-bin-tool 3.4 does NOT expose a CLI flag for binary-scan worker
+    # count.  Its `-n` flag is reserved for `--nvd <mode>` (api/api2/json/
+    # json-mirror/json-nvd) — passing a number to `-n` aborts the run.
+    # Internally cve-bin-tool builds a multiprocessing.Pool sized to the host
+    # CPU count, so binary scan is already parallel by default.
+    #
+    # `CVE_BIN_TOOL_PARALLEL` is kept as a reserved env knob: when a future
+    # cve-bin-tool release ships a real `--workers N` flag we can wire it
+    # here without touching the call-sites again.
     PARALLEL_FLAGS=""
-    PARALLEL_N="${CVE_BIN_TOOL_PARALLEL:-}"
-    if [ -z "$PARALLEL_N" ]; then
-      cores=$(nproc 2>/dev/null || echo 2)
-      PARALLEL_N=$((cores / 2))
-      [ "$PARALLEL_N" -lt 1 ] && PARALLEL_N=1
-      [ "$PARALLEL_N" -gt 8 ] && PARALLEL_N=8
-    fi
-    if [ "$PARALLEL_N" -gt 1 ]; then
-      PARALLEL_FLAGS="-n $PARALLEL_N"
-      echo "[cve-bin-tool] parallel workers: $PARALLEL_N (override via CVE_BIN_TOOL_PARALLEL)"
+    if [ -n "${CVE_BIN_TOOL_PARALLEL:-}" ]; then
+      echo "[cve-bin-tool] CVE_BIN_TOOL_PARALLEL=$CVE_BIN_TOOL_PARALLEL — no-op for v3.4 (binary scan uses CPU-count multiprocessing.Pool internally)"
     fi
 
     echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$EFFECTIVE_TARGET"
