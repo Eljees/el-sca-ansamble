@@ -244,9 +244,9 @@ services:
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
       CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}
-      # SBOM fast-path: set to a Syft JSON path to skip binary scanning.
+      # SBOM fast-path: set to a CycloneDX/SPDX path to skip binary scanning.
       CVE_BIN_TOOL_SBOM_PATH: ${CVE_BIN_TOOL_SBOM_PATH:-}
-      CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-syft}
+      CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}
       # Checker filter: empty = auto-detect, "all" = run all 365 checkers,
       # "go" or "go,rust,python" = language-only (fast, for Go/JVM/Rust targets)
       CVE_BIN_TOOL_CHECKERS: ${CVE_BIN_TOOL_CHECKERS:-}

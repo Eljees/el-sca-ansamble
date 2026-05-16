@@ -464,6 +464,23 @@ PYEOF
       [ -f "$REPORT_DIR/report.json" ] || printf '[]' > "$REPORT_DIR/report.json"
       exit 0
     fi
+    # cve-bin-tool exit codes:
+    #   0 = success, no CVEs found
+    #   1 = success, CVEs found  ← keep compose runs green
+    #   2+ = actual tool/runtime error
+    if [ "$scan_rc" -le 1 ]; then
+      if [ ! -s "$REPORT_DIR/report.json" ]; then
+        latest=$(ls -t /workspace/output.cve-bin-tool.*.json 2>/dev/null | head -1)
+        if [ -n "$latest" ]; then
+          mv "$latest" "$REPORT_DIR/report.json"
+          echo "[cve-bin-tool] moved orphan output → $REPORT_DIR/report.json"
+        else
+          printf '[]' > "$REPORT_DIR/report.json"
+        fi
+      fi
+      echo "[cve-bin-tool] binary scan done (exit $scan_rc)"
+      exit 0
+    fi
     if [ "$scan_rc" -ne 0 ]; then
       echo "[cve-bin-tool] scan exited with code $scan_rc" >&2
       exit "$scan_rc"
