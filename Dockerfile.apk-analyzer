@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -7,17 +8,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /workspace
 
 # Java is required by apktool; 7zip for APK extraction fallback
-RUN apt-get update \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
       default-jre-headless \
       7zip \
       binutils \
       file \
-      unzip \
-    && rm -rf /var/lib/apt/lists/*
+      unzip
 
-# androguard: parses DEX, binary AndroidManifest.xml, identifies libraries
-RUN pip install --no-cache-dir "androguard>=3.3.5"
+# androguard: parses DEX, binary AndroidManifest.xml, identifies libraries.
+# Pin to 4.1.x — API 3.x and 4.x are incompatible; analyze_apk.py handles both
+# import paths but a version drift mid-run would break silently.
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install "androguard==4.1.2"
 
 COPY scripts/analyze_apk.py /scripts/analyze_apk.py
 

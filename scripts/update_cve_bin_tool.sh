@@ -151,17 +151,161 @@ case "$MODE" in
     # This replaces 365 regex-per-binary checkers with a simple DB lookup:
     # seconds instead of 10+ minutes for large Go / JVM targets.
     #
-    # Enable by setting CVE_BIN_TOOL_SBOM_PATH to the SBOM file path, e.g.:
+    # AUTO-DETECT: if CVE_BIN_TOOL_SBOM_PATH wasn't set explicitly but Syft
+    # already produced a syft.json in the standard location, use it.  This
+    # turns the slow binary scan into a SBOM lookup whenever the pipeline
+    # ran syft-sbom first (i.e. the default `run-scan.sh` flow).  Opt out
+    # by exporting CVE_BIN_TOOL_AUTO_SBOM=0.
+    if [ -z "$SBOM_PATH" ] && [ "${CVE_BIN_TOOL_AUTO_SBOM:-1}" = "1" ]; then
+      # syft.json (native Syft format) is NOT accepted by cve-bin-tool's --sbom flag.
+      # Only cyclonedx and spdx are valid; try cyclonedx first (richer component data).
+      for candidate in \
+        /workspace/artifacts/sbom/cyclonedx.json \
+        /workspace/artifacts/sbom/spdx.json; do
+        if [ -s "$candidate" ]; then
+          SBOM_PATH="$candidate"
+          case "$candidate" in
+            *cyclonedx.json) SBOM_FORMAT="cyclonedx" ;;
+            *spdx.json)      SBOM_FORMAT="spdx" ;;
+          esac
+          echo "[cve-bin-tool] auto-SBOM: found $candidate (format=$SBOM_FORMAT)"
+          break
+        fi
+      done
+    fi
+    #
+    # Explicit override is still respected:
     #   CVE_BIN_TOOL_SBOM_PATH=/workspace/artifacts/sbom/cyclonedx.json
     #   CVE_BIN_TOOL_SBOM_FORMAT=cyclonedx   (or spdx / syft)
+
+    # ── Go runtime injection into SBOM ────────────────────────────────────────
+    # syft's CycloneDX SBOM catalogs Go *module* dependencies but omits the
+    # Go *runtime* (golang:go X.Y.Z) because syft reports packages, not the
+    # toolchain that compiled them.  cve-bin-tool's Go checker matches NVD
+    # entries for the runtime itself (e.g. CVE-2024-3566 affects go < 1.24).
+    #
+    # Fix: when a SBOM is available and the scan target contains Go binaries,
+    # extract the embedded Go version(s) from go:buildinfo and inject each as
+    # a separate CycloneDX component before feeding the SBOM to cve-bin-tool.
+    #
+    # We collect MULTIPLE versions because a single tarball can ship binaries
+    # compiled with different Go toolchains (vendored helpers, plugins, the
+    # main daemon) — see CYBERSEC-11531 reference (Prometheus 3.11 contained
+    # both go1.23.0 and go1.26.1).  The legacy "first match wins" injection
+    # only ever surfaced one runtime CVE per scan, so a clean reproduction
+    # would consistently undercount findings.
+    #
+    # Opt-out: CVE_BIN_TOOL_INJECT_GO_RUNTIME=0
+    if [ -n "$SBOM_PATH" ] && [ -f "$SBOM_PATH" ] && [ "${CVE_BIN_TOOL_INJECT_GO_RUNTIME:-1}" = "1" ]; then
+      GO_VERSIONS_FILE="/tmp/cbt-go-versions.txt"
+      : > "$GO_VERSIONS_FILE"
+      if [ -d "$TARGET" ]; then
+        # Detect ELF files by magic bytes rather than the execute bit:
+        # on Windows + WSL2 bind-mounts the exec bit is not preserved, so
+        # `find -perm /111` lies.  The size>+1M fallback catches large
+        # monoliths but skips small helper binaries (e.g. promtool ~ 80 MB
+        # is fine, but tiny sidecars and node_exporter helpers might fall
+        # through).  Walk *every* regular file up to depth 6 and probe the
+        # first 4 bytes for the ELF magic 0x7F 'E' 'L' 'F'.
+        #
+        # Python is preferred over `xxd`/`hexdump` because the cve-bin-tool
+        # image ships python:3.12-slim but neither hexdump utility.
+        ELF_LIST="/tmp/cbt-elf-list.txt"
+        TARGET_SCAN_DIR="$TARGET" python3 - <<'PYEOF' >"$ELF_LIST"
+import os, sys
+root = os.environ['TARGET_SCAN_DIR']
+for dirpath, _dirs, files in os.walk(root, followlinks=False):
+    # mirror -maxdepth 6 from the find invocation
+    depth = dirpath[len(root):].count(os.sep)
+    if depth > 6:
+        continue
+    for name in files:
+        path = os.path.join(dirpath, name)
+        try:
+            with open(path, 'rb') as f:
+                magic = f.read(4)
+        except OSError:
+            continue
+        if magic == b'\x7fELF':
+            print(path)
+PYEOF
+        # Pull every embedded "go1.X.Y" string out of every ELF binary and
+        # deduplicate.  grep -oa = print bytes that match without binary
+        # warning, -m1 = stop after first match per file (one runtime per
+        # binary is the rule), sort -u = collapse duplicates across binaries.
+        while IFS= read -r _bin; do
+          [ -n "$_bin" ] || continue
+          grep -oam1 'go1\.[0-9][0-9]*\.[0-9][0-9]*' "$_bin" 2>/dev/null
+        done < "$ELF_LIST" | sed 's/^go//' | sort -u > "$GO_VERSIONS_FILE.tmp"
+        mv "$GO_VERSIONS_FILE.tmp" "$GO_VERSIONS_FILE"
+        elf_count=$(wc -l < "$ELF_LIST" 2>/dev/null || echo 0)
+        ver_count=$(wc -l < "$GO_VERSIONS_FILE" 2>/dev/null || echo 0)
+        echo "[cve-bin-tool] ELF files probed: $elf_count, unique Go runtime versions: $ver_count"
+        if [ "$ver_count" -gt 0 ]; then
+          while IFS= read -r _v; do
+            [ -n "$_v" ] && echo "[cve-bin-tool]   - go$_v"
+          done < "$GO_VERSIONS_FILE"
+        fi
+      fi
+      if [ -s "$GO_VERSIONS_FILE" ]; then
+        PATCHED_SBOM="/tmp/cbt-sbom-patched.json"
+        set +e
+        SBOM_PATH_IN="$SBOM_PATH" VERSIONS_FILE="$GO_VERSIONS_FILE" PATCHED_OUT="$PATCHED_SBOM" \
+        python3 - <<'PYEOF'
+import json, sys, os, shutil
+sbom_in  = os.environ['SBOM_PATH_IN']
+versions_file = os.environ['VERSIONS_FILE']
+patched = os.environ['PATCHED_OUT']
+try:
+    with open(versions_file) as f:
+        versions = sorted({line.strip() for line in f if line.strip()})
+    with open(sbom_in) as f:
+        sbom = json.load(f)
+    comps = sbom.get('components', [])
+    added = 0
+    for v in versions:
+        if not any(c.get('name') == 'go' and c.get('version') == v for c in comps):
+            comps.append({
+                'type': 'library',
+                'name': 'go',
+                'version': v,
+                'purl': 'pkg:golang/go@' + v,
+                'description': 'Go toolchain runtime (injected from go:buildinfo)',
+            })
+            added += 1
+    sbom['components'] = comps
+    with open(patched, 'w') as f:
+        json.dump(sbom, f)
+    print(
+        '[cve-bin-tool] SBOM patched: added {} golang:go components ({} unique versions, {} components total)'.format(
+            added, len(versions), len(comps)
+        )
+    )
+except Exception as exc:  # noqa: BLE001
+    print('[cve-bin-tool] WARN: SBOM patching failed: {}'.format(exc), file=sys.stderr)
+    shutil.copy(sbom_in, patched)
+PYEOF
+        inject_rc=$?
+        set -e
+        if [ "$inject_rc" -eq 0 ] && [ -s "$PATCHED_SBOM" ]; then
+          SBOM_PATH="$PATCHED_SBOM"
+        else
+          echo "[cve-bin-tool] WARN: injection script failed (rc=$inject_rc) — using original SBOM" >&2
+        fi
+      else
+        echo "[cve-bin-tool] no Go runtime version detected in target — skipping runtime injection"
+      fi
+    fi
+
     if [ -n "$SBOM_PATH" ] && [ -f "$SBOM_PATH" ]; then
       echo "[cve-bin-tool] SBOM fast-path: format=$SBOM_FORMAT file=$SBOM_PATH"
       echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s (SBOM lookup — much faster than binary scan)"
       set +e
+      # --sbom-file = path to the SBOM (NOT the positional [directory] argument)
+      # --sbom      = format: cyclonedx | spdx | swid
       timeout "$SCAN_TIMEOUT" cve-bin-tool --offline \
-        --sbom "$SBOM_FORMAT" \
-        --format json --output-file "$REPORT_DIR/report.json" \
-        "$SBOM_PATH"
+        --sbom "$SBOM_FORMAT" --sbom-file "$SBOM_PATH" \
+        --format json --output-file "$REPORT_DIR/report.json"
       scan_rc=$?
       set -e
       if [ "$scan_rc" -eq 124 ]; then
@@ -229,7 +373,11 @@ case "$MODE" in
       # available in every Docker base image.
       go_count=0
       native_so_count=0
-      executables=$(find "$EFFECTIVE_TARGET" -maxdepth 6 -type f -perm /111 2>/dev/null | head -30)
+      # -perm /111 works on Linux FS; on Windows NTFS bind-mounts all files
+      # appear as rw------- (no execute bit).  Fallback: also include files
+      # larger than 1 MB, which covers all realistic Go/ELF binary sizes.
+      executables=$(find "$EFFECTIVE_TARGET" -maxdepth 6 -type f \
+        \( -perm /111 -o -size +1M \) 2>/dev/null | head -50)
       for bin in $executables; do
         # Go detection: every Go binary contains a build-info string like "go1.21.0"
         # grep -a = treat binary as text; -q = quiet; -m1 = stop at first match
@@ -242,27 +390,76 @@ case "$MODE" in
 
       echo "[cve-bin-tool] auto-detect: go_binaries=$go_count native_so=$native_so_count"
       if [ "$go_count" -gt 0 ] && [ "$native_so_count" -eq 0 ]; then
-        # Pure Go target — language checkers only (~1-2 min vs 30+ min)
-        CHECKERS="go,dart,env,java,javascript,perl,php,python,r,ruby,rust,swift"
-        echo "[cve-bin-tool] → pure Go target: language checkers only"
-        echo "[cve-bin-tool]   (set CVE_BIN_TOOL_CHECKERS=all to run all 365 checkers)"
+        # Pure Go target — restrict regular checkers to language-relevant ones.
+        #
+        # -r filters REGULAR checkers (the byte-level regex pack).  Language
+        # checkers (go/python/java/…) always run; they parse embedded module
+        # manifests rather than do regex scans, so they're cheap and we
+        # cannot disable them from CLI.
+        #
+        # Pruned from the previous list: php, python, perl.  Their regular
+        # checkers ship the most expensive backtracking patterns and trigger
+        # 10-30 min hangs on big Go binaries (Prometheus, Grafana etc.).
+        # `go` and `rust` cover the relevant signal for Go-only artifacts.
+        CHECKERS="go,rust"
+        echo "[cve-bin-tool] → pure Go target: regular checkers limited to {go,rust}"
+        echo "[cve-bin-tool]   language checkers (12) still run for go/rust/python/... module info"
+        echo "[cve-bin-tool]   (set CVE_BIN_TOOL_CHECKERS=all to run all 365 regular checkers)"
       elif [ "$go_count" -gt 0 ] && [ "$native_so_count" -gt 0 ]; then
-        echo "[cve-bin-tool] → mixed Go+native: running all checkers"
+        echo "[cve-bin-tool] → mixed Go+native: running all regular checkers"
       else
-        echo "[cve-bin-tool] → native/unknown: running all checkers"
+        echo "[cve-bin-tool] → native/unknown: running all regular checkers"
       fi
     fi
 
     CHECKER_FLAGS=""
     if [ -n "$CHECKERS" ] && [ "$CHECKERS" != "all" ]; then
-      CHECKER_FLAGS="--checkers $CHECKERS"
+      # cve-bin-tool 3.4 uses -r / --runs to restrict which checkers run
+      CHECKER_FLAGS="-r $CHECKERS"
       echo "[cve-bin-tool] checkers: $CHECKERS"
+    fi
+
+    # ── Exclude oversize binaries to keep wall-clock predictable ──────────────
+    # Anything larger than CVE_BIN_TOOL_MAX_FILE_MB (default 256 MB) is skipped
+    # via -e EXCLUDE.  Large Go monoliths with bundled assets blow up regex
+    # backtracking budgets — we'd rather miss one outlier than wedge the run.
+    # Set CVE_BIN_TOOL_MAX_FILE_MB=0 to disable the filter entirely.
+    MAX_FILE_MB="${CVE_BIN_TOOL_MAX_FILE_MB:-256}"
+    EXCLUDE_FLAGS=""
+    if [ "$MAX_FILE_MB" -gt 0 ]; then
+      oversize_list=$(find "$EFFECTIVE_TARGET" -type f -size +"${MAX_FILE_MB}"M 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+      if [ -n "$oversize_list" ]; then
+        EXCLUDE_FLAGS="-e $oversize_list"
+        oversize_count=$(echo "$oversize_list" | tr ',' '\n' | wc -l)
+        echo "[cve-bin-tool] excluding $oversize_count file(s) larger than ${MAX_FILE_MB} MB"
+        printf 'excluded_files_larger_than_mb=%s\n%s\n' "$MAX_FILE_MB" "$oversize_list" \
+          > "$REPORT_DIR/excluded.flag"
+      fi
+    fi
+
+    # ── Parallelism ──────────────────────────────────────────────────────────
+    # cve-bin-tool 3.x accepts -n N to run N regex workers in parallel.  On
+    # Windows + WSL2 host CPUs are typically 4-8 cores; we default to half of
+    # them, capped at 8, so a scan never starves Docker Desktop's own helper
+    # processes.  Set CVE_BIN_TOOL_PARALLEL=0 (or 1) to disable parallelism;
+    # set =N to pin a specific worker count.
+    PARALLEL_FLAGS=""
+    PARALLEL_N="${CVE_BIN_TOOL_PARALLEL:-}"
+    if [ -z "$PARALLEL_N" ]; then
+      cores=$(nproc 2>/dev/null || echo 2)
+      PARALLEL_N=$((cores / 2))
+      [ "$PARALLEL_N" -lt 1 ] && PARALLEL_N=1
+      [ "$PARALLEL_N" -gt 8 ] && PARALLEL_N=8
+    fi
+    if [ "$PARALLEL_N" -gt 1 ]; then
+      PARALLEL_FLAGS="-n $PARALLEL_N"
+      echo "[cve-bin-tool] parallel workers: $PARALLEL_N (override via CVE_BIN_TOOL_PARALLEL)"
     fi
 
     echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$EFFECTIVE_TARGET"
     set +e
     # shellcheck disable=SC2086
-    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline $CHECKER_FLAGS --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
+    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline $PARALLEL_FLAGS $CHECKER_FLAGS $EXCLUDE_FLAGS --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
     scan_rc=$?
     set -e
     if [ "$scan_rc" -eq 124 ]; then
@@ -280,4 +477,10 @@ case "$MODE" in
     cve-bin-tool --export "artifacts/mirror/cve-bin-tool-export.json"
     ;;
   import)
-    cve-bin-tool --import "artifacts/
+    cve-bin-tool --import "artifacts/mirror/cve-bin-tool-export.json"
+    ;;
+  *)
+    echo "Unsupported mode: $MODE" >&2
+    exit 2
+    ;;
+esac

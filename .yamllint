@@ -1,0 +1,37 @@
+# yamllint config — keeps configs/feed_sources.yaml, docker-compose.yml,
+# .github/workflows/*.yml etc. consistent.
+
+extends: default
+
+ignore: |
+  artifacts/
+  _el_cvebt_source_research/
+  --exps/
+  -prompts/
+
+rules:
+  # Long lines are common in feed_sources.yaml (URLs); allow up to 160.
+  line-length:
+    max: 160
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+  # docker-compose / GH Actions sometimes need !!str on numeric-looking values;
+  # leave the truthy rule strict but tolerate "on"/"off" YAML quirk.
+  truthy:
+    allowed-values: ["true", "false", "on", "off"]
+    check-keys: false
+  # Two-space indents project-wide.
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+  # Comments don't need a space after `#` for shebang-style lines.
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  # We sometimes leave trailing empty lines in shared YAML anchors files.
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+  document-start: disable

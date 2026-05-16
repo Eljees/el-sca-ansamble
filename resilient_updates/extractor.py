@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -38,10 +38,54 @@ class ExtractLimits:
     max_depth: int = 4
     max_files: int = 20000
     max_bytes: int = 10 * 1024 * 1024 * 1024
+    # Optional member-level pre-filter.  Both are ``None`` by default to keep
+    # the legacy "extract everything" behaviour; the CLI / Python caller
+    # populates them when the operator wants to drop oversize blobs (e.g. big
+    # docs/PDFs/font packs) before they ever land on the slow NTFS path.
+    max_member_size_bytes: int | None = None
+    skip_extensions: tuple[str, ...] | None = None
+
+
+@dataclass
+class ExtractionStats:
+    """Mutable per-run counters; folded into the manifest at the end."""
+
+    skipped_by_extension: int = 0
+    skipped_by_size: int = 0
+    skipped_examples: list[dict[str, Any]] = field(default_factory=list)
+
+    def note_skipped(self, member: str, reason: str, size: int | None) -> None:
+        # Keep the manifest small but useful: log first 20 skipped paths only.
+        if len(self.skipped_examples) < 20:
+            self.skipped_examples.append({"member": member, "reason": reason, "size": size})
 
 
 class ExtractionLimitError(RuntimeError):
     pass
+
+
+def _should_skip_member(
+    member_name: str,
+    member_size: int | None,
+    limits: ExtractLimits,
+    stats: ExtractionStats,
+) -> bool:
+    if limits.skip_extensions:
+        lower = member_name.lower()
+        for ext in limits.skip_extensions:
+            if lower.endswith(ext):
+                stats.note_skipped(member_name, f"extension {ext}", member_size)
+                stats.skipped_by_extension += 1
+                return True
+    if (
+        limits.max_member_size_bytes is not None
+        and member_size is not None
+        and member_size > limits.max_member_size_bytes
+    ):
+        stats.note_skipped(member_name, f"size>{limits.max_member_size_bytes}", member_size)
+        stats.skipped_by_size += 1
+        return True
+    return False
 
 
 def _now_iso() -> str:
@@ -137,23 +181,39 @@ def _enforce_limits(output_root: Path, limits: ExtractLimits) -> None:
             raise ExtractionLimitError(f"extracted size exceeds max_bytes={limits.max_bytes}")
 
 
-def _extract_zip(path: Path, target_dir: Path) -> None:
+def _extract_zip(
+    path: Path,
+    target_dir: Path,
+    limits: ExtractLimits | None = None,
+    stats: ExtractionStats | None = None,
+) -> None:
     # Pre-compute _root once — avoids normpath() call per member inside the loop.
     _root = Path(os.path.normpath(target_dir))
+    limits = limits or ExtractLimits()
+    stats = stats or ExtractionStats()
     with zipfile.ZipFile(path) as archive:
         for member in archive.infolist():
             target = _ensure_safe_member(target_dir, member.filename, _root)
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
+            if _should_skip_member(member.filename, member.file_size, limits, stats):
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(member) as source, target.open("wb") as destination:
                 shutil.copyfileobj(source, destination)
 
 
-def _extract_tar(path: Path, target_dir: Path) -> None:
+def _extract_tar(
+    path: Path,
+    target_dir: Path,
+    limits: ExtractLimits | None = None,
+    stats: ExtractionStats | None = None,
+) -> None:
     # Pre-compute _root once — avoids normpath() call per member inside the loop.
     _root = Path(os.path.normpath(target_dir))
+    limits = limits or ExtractLimits()
+    stats = stats or ExtractionStats()
     with tarfile.open(path) as archive:
         for member in archive.getmembers():
             target = _ensure_safe_member(target_dir, member.name, _root)
@@ -161,6 +221,8 @@ def _extract_tar(path: Path, target_dir: Path) -> None:
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             if not member.isfile():
+                continue
+            if _should_skip_member(member.name, member.size, limits, stats):
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             source = archive.extractfile(member)
@@ -200,6 +262,11 @@ def _extract_external(path: Path, target_dir: Path, kind: str) -> None:
     if kind == "tar-zst":
         temp_tar = target_dir / f"{_safe_name(_strip_archive_suffix(path.name))}.tar"
         _run_checked(["zstd", "-d", "-f", "-o", str(temp_tar), str(path)])
+        # External path bypasses the pre-filter — file size of the *.tar.zst
+        # has already been decompressed, member-level skipping here would
+        # only save downstream disk I/O.  Skip filter intentionally omitted
+        # to keep the external path simple; if needed, run the regular tar
+        # path on the decompressed file instead.
         _extract_tar(temp_tar, target_dir)
         temp_tar.unlink(missing_ok=True)
         return
@@ -217,15 +284,23 @@ def shlex_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def _extract_one(path: Path, target_dir: Path, kind: str) -> str:
+def _extract_one(
+    path: Path,
+    target_dir: Path,
+    kind: str,
+    limits: ExtractLimits | None = None,
+    stats: ExtractionStats | None = None,
+) -> str:
     target_dir.mkdir(parents=True, exist_ok=True)
     if kind == "zip":
-        _extract_zip(path, target_dir)
+        _extract_zip(path, target_dir, limits=limits, stats=stats)
     elif kind in {"tar", "tar-gz", "tgz", "tar-xz", "tar-bz2", "tbz2", "txz"}:
-        _extract_tar(path, target_dir)
+        _extract_tar(path, target_dir, limits=limits, stats=stats)
     elif kind == "gz":
         _extract_gzip(path, target_dir)
     elif kind in {"7z", "rar", "zst", "tar-zst", "rpm", "deb"}:
+        # External tools (7z/zstd/rpm2cpio/dpkg-deb) extract the full archive
+        # in one shot; per-member skipping isn't wired through here yet.
         _extract_external(path, target_dir, kind)
     else:
         raise RuntimeError(f"unsupported archive kind: {kind}")
@@ -256,10 +331,33 @@ def extract_artifacts(
     max_depth: int = 4,
     max_files: int = 20000,
     max_bytes: int = 10 * 1024 * 1024 * 1024,
+    max_member_size_bytes: int | None = None,
+    skip_extensions: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
     source_root = Path(input_path).resolve()
     destination_root = Path(output_root).resolve()
-    limits = ExtractLimits(max_depth=max_depth, max_files=max_files, max_bytes=max_bytes)
+    skip_ext_tuple: tuple[str, ...] | None
+    if skip_extensions:
+        # Normalise: store lowercase, with leading dot, deduplicated.
+        normalised: set[str] = set()
+        for raw in skip_extensions:
+            if not raw:
+                continue
+            lowered = raw.strip().lower()
+            if not lowered.startswith("."):
+                lowered = "." + lowered
+            normalised.add(lowered)
+        skip_ext_tuple = tuple(sorted(normalised)) or None
+    else:
+        skip_ext_tuple = None
+    limits = ExtractLimits(
+        max_depth=max_depth,
+        max_files=max_files,
+        max_bytes=max_bytes,
+        max_member_size_bytes=max_member_size_bytes,
+        skip_extensions=skip_ext_tuple,
+    )
+    stats = ExtractionStats()
     destination_root.mkdir(parents=True, exist_ok=True)
 
     manifest: dict[str, Any] = {
@@ -269,6 +367,8 @@ def extract_artifacts(
         "max_depth": max_depth,
         "max_files": max_files,
         "max_bytes": max_bytes,
+        "max_member_size_bytes": max_member_size_bytes,
+        "skip_extensions": list(skip_ext_tuple) if skip_ext_tuple else [],
         "items": [],
         "failures": [],
         "status": "running",
@@ -297,7 +397,7 @@ def extract_artifacts(
             "status": "pending",
         }
         try:
-            _extract_one(archive_path, target_dir, kind)
+            _extract_one(archive_path, target_dir, kind, limits=limits, stats=stats)
             _enforce_limits(destination_root, limits)
             item["status"] = "extracted"
             if depth < max_depth:
@@ -312,6 +412,11 @@ def extract_artifacts(
     manifest["finished_at_utc"] = _now_iso()
     manifest["status"] = "pass" if not manifest["failures"] else "warn"
     manifest["extracted_count"] = sum(1 for item in manifest["items"] if item["status"] == "extracted")
+    manifest["pre_filter"] = {
+        "skipped_by_extension": stats.skipped_by_extension,
+        "skipped_by_size": stats.skipped_by_size,
+        "examples": stats.skipped_examples,
+    }
     manifest_path = destination_root / "extraction_manifest.json"
     manifest["manifest_path"] = str(manifest_path)
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")

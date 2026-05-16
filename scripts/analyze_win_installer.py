@@ -86,22 +86,61 @@ def find_installer(path: Path) -> Path | None:
 # Extraction
 # ---------------------------------------------------------------------------
 
+def _count_files(d: Path) -> int:
+    """Count all files under directory d (recursive)."""
+    if not d.exists():
+        return 0
+    return sum(1 for _ in d.rglob("*") if _.is_file())
+
+
 def extract_7zip(src: Path, dest: Path) -> bool:
-    """Extract using 7zip. Returns True on success."""
+    """Extract using 7zip.
+    Exit codes on Linux (p7zip / 7zip package):
+      0  — OK
+      1  — Warning (some files skipped, partial extraction)
+      2  — Fatal error (file format not supported, corrupt, etc.)
+    We treat code 0 and 1 as potentially usable if files were actually extracted.
+    """
     dest.mkdir(parents=True, exist_ok=True)
     try:
         result = run(["7z", "x", str(src), f"-o{dest}", "-y", "-aoa"], check=False)
-        if result.returncode == 0:
-            log(f"  7zip extraction OK → {dest}")
+        n = _count_files(dest)
+        if result.returncode == 0 and n > 0:
+            log(f"  7zip extraction OK → {dest} ({n} files)")
             return True
-        # exit code 2 = warning (some files skipped) — still usable
-        if result.returncode == 2:
-            log(f"  7zip extraction with warnings (code 2) — continuing")
+        if result.returncode == 1 and n > 0:
+            log(f"  7zip extraction with warnings (exit 1) → {dest} ({n} files) — continuing")
             return True
-        log(f"  7zip failed (exit {result.returncode}): {result.stderr[:300]}")
+        stderr_snippet = result.stderr.strip()[:400] if result.stderr else "(no stderr)"
+        log(f"  7zip failed or produced no files (exit {result.returncode}, {n} files): {stderr_snippet}")
         return False
     except Exception as e:
         log(f"  7zip error: {e}")
+        return False
+
+
+def extract_innoextract(src: Path, dest: Path) -> bool:
+    """Extract Inno Setup installer using innoextract. Returns True on success."""
+    # First check if this actually is an Inno Setup file
+    try:
+        probe = run(["innoextract", "--list", "--silent", str(src)], check=False)
+        if probe.returncode != 0:
+            return False  # Not an Inno Setup file
+    except FileNotFoundError:
+        log("  innoextract not available")
+        return False
+
+    dest.mkdir(parents=True, exist_ok=True)
+    try:
+        result = run(["innoextract", "--extract", "--output-dir", str(dest), str(src)], check=False)
+        n = _count_files(dest)
+        if result.returncode == 0 and n > 0:
+            log(f"  innoextract OK → {dest} ({n} files)")
+            return True
+        log(f"  innoextract failed (exit {result.returncode}, {n} files): {result.stderr.strip()[:300]}")
+        return False
+    except Exception as e:
+        log(f"  innoextract error: {e}")
         return False
 
 
@@ -110,10 +149,11 @@ def extract_msitools(src: Path, dest: Path) -> bool:
     dest.mkdir(parents=True, exist_ok=True)
     try:
         result = run(["msiextract", "--directory", str(dest), str(src)], check=False)
-        if result.returncode == 0:
-            log(f"  msiextract OK → {dest}")
+        n = _count_files(dest)
+        if result.returncode == 0 and n > 0:
+            log(f"  msiextract OK → {dest} ({n} files)")
             return True
-        log(f"  msiextract failed (exit {result.returncode}): {result.stderr[:300]}")
+        log(f"  msiextract failed (exit {result.returncode}, {n} files): {result.stderr.strip()[:300]}")
         return False
     except FileNotFoundError:
         log("  msiextract not found — falling back to 7zip")
@@ -327,9 +367,17 @@ def main() -> int:
         if not ok:
             ok = extract_7zip(actual_installer, extract_dir)
     else:  # nsis / exe / unknown
-        ok = extract_7zip(actual_installer, extract_dir)
+        # Try Inno Setup first (common for .NET service installers)
+        ok = extract_innoextract(actual_installer, extract_dir)
+        if not ok:
+            ok = extract_7zip(actual_installer, extract_dir)
+        if not ok:
+            log("WARNING: all extraction methods failed — SBOM will be minimal")
+            log("  Tried: innoextract, 7zip")
+            log("  Possible causes: newer NSIS version, InstallShield, encrypted installer")
 
-    if not extract_dir.exists() or not list(extract_dir.iterdir()):
+    extracted_count = _count_files(extract_dir)
+    if extracted_count == 0:
         log("WARNING: extraction produced no files — SBOM will be minimal")
 
     # ── PE scanning ─────────────────────────────────────────────────────────

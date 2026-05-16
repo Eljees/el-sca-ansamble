@@ -17,7 +17,7 @@ param(
   [ValidateSet("auto","apk","win")]
   [string]$Format = "auto",
 
-  # Also pull fresh DB before scanning
+  # Also pull fresh DB before scanning (disabled by default — requires network/proxy)
   [switch]$UpdateDb,
 
   # Unpack archive before scanning
@@ -25,7 +25,22 @@ param(
   [int]$ExtractMaxDepth = 4,
 
   # Clean artifacts/ before this run (recommended between scans)
-  [switch]$Clean
+  [switch]$Clean,
+
+  # Feed Syft-generated SBOM to cve-bin-tool instead of full binary scan.
+  # Much faster (~30s vs 10+ min) but requires correct syft-format support in
+  # cve-bin-tool v3.4. Disabled by default until verified working.
+  [switch]$SbomScan,
+
+  # cve-bin-tool scan timeout in seconds (default 1800 = 30 min)
+  [int]$CveBinToolTimeout = 1800,
+
+  # cve-bin-tool checker filter.
+  # ""    = auto-detect from binary type (default — Go targets get language-only checkers)
+  # "all" = run all 365 binary checkers (slow but thorough)
+  # "go"  = Go language checker only (fast, ~2 min vs 30+ min for Go binaries)
+  # "go,rust,python,javascript" = custom comma-separated list
+  [string]$CveBinToolCheckers = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,7 +67,7 @@ function Invoke-ComposeChecked {
   }
 }
 
-function Invoke-CveBinToolChecked {
+function Invoke-ComposeChecked {
   param([Parameter(Mandatory=$true)][string[]]$Args)
   & docker compose @Args
   # cve-bin-tool exits with 1 when CVEs are found (success state), 0 when none found
@@ -122,11 +137,29 @@ Write-Host ""
 
 if ($Clean) {
   Write-Host "[clean] Removing previous artifacts..." -ForegroundColor Yellow
+  # Remove files first
   Get-ChildItem -Path $ArtifactsDir -Recurse -File |
     Where-Object { $_.Name -ne ".gitkeep" } |
     Remove-Item -Force
+  # Remove empty subdirectories (leaves .gitkeep dirs intact)
+  Get-ChildItem -Path $ArtifactsDir -Recurse -Directory |
+    Sort-Object { $_.FullName.Length } -Descending |
+    Where-Object { (Get-ChildItem $_.FullName -Force).Count -eq 0 } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+  # Clean orphan cve-bin-tool output files left in workspace root
+  Get-ChildItem -Path (Get-Location).Path -Filter "output.cve-bin-tool.*.json" -File -ErrorAction SilentlyContinue |
+    Remove-Item -Force
   Write-Host "[clean] Done." -ForegroundColor Yellow
   Write-Host ""
+}
+
+# Always remove stale SBOM files so Syft writes fresh ones.
+# Windows bind-mounts can leave the file handle open between container runs,
+# preventing overwrite. Explicit delete before the run avoids stale data.
+$SbomDir = Join-Path $ArtifactsDir "sbom"
+foreach ($sbomFile in @("syft.json","cyclonedx.json","spdx.json")) {
+  $p = Join-Path $SbomDir $sbomFile
+  if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
 }
 
 # ── Render Trivy flags (only needed for auto/standard pipeline) ───────────────
@@ -145,7 +178,18 @@ $env:SCAN_TARGET_DISPLAY   = $TargetResolved
 $env:SYFT_TARGET           = "/scan-target"
 $env:SYFT_FROM             = "dir"
 $env:TRIVY_TARGET          = "/scan-target"
-$env:CVE_BIN_TOOL_TARGET   = "/scan-target"
+$env:CVE_BIN_TOOL_TARGET               = "/scan-target"
+$env:CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS = [string]$CveBinToolTimeout
+$env:CVE_BIN_TOOL_CHECKERS              = $CveBinToolCheckers
+# SBOM fast-path — only when -SbomScan flag is explicitly passed
+if ($SbomScan) {
+  $env:CVE_BIN_TOOL_SBOM_PATH   = "/workspace/artifacts/sbom/syft.json"
+  $env:CVE_BIN_TOOL_SBOM_FORMAT = "syft"
+  Write-Host " SbomScan: ENABLED (cve-bin-tool will read syft.json)" -ForegroundColor DarkCyan
+} else {
+  $env:CVE_BIN_TOOL_SBOM_PATH   = ""
+  $env:CVE_BIN_TOOL_SBOM_FORMAT = ""
+}
 # Internal container path for the primary report (picked up by report-collector)
 $env:REPORT_OUTPUT = "/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md"
 
@@ -181,6 +225,14 @@ if ($Format -eq "auto") {
   if ($Format -ne "auto") {
     Write-Host " Format  : $Format (auto-detected)" -ForegroundColor Yellow
   }
+}
+
+# APK analyzer handles its own extraction internally — skip generic extractor
+# (otherwise artifact-extractor unpacks the outer ZIP AND the APK-as-ZIP, leaving
+#  no .apk file for apk-analyzer to find)
+if ($Format -eq "apk") {
+  $Extract = $false
+  Write-Host " Extract : disabled for APK format (apk-analyzer extracts internally)" -ForegroundColor DarkGray
 }
 
 # ── Extract (optional) ────────────────────────────────────────────────────────
@@ -230,7 +282,7 @@ if ($Format -eq "apk") {
       $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/apk-native"
       $env:SCAN_TARGET_HOST    = (Resolve-Path $nativeDir).Path
       Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
-      Invoke-CveBinToolChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+      Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
     }
   }
 
@@ -258,7 +310,7 @@ if ($Format -eq "apk") {
     Write-Host "[win] Running cve-bin-tool binary scan on extracted installer contents…" -ForegroundColor Cyan
     $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/win-installer"
     $env:SCAN_TARGET_HOST    = (Resolve-Path $winExtractDir).Path
-    Invoke-CveBinToolChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 
 } else {
@@ -279,7 +331,7 @@ switch ($Tool) {
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
-    Invoke-CveBinToolChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
   "syft" {
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
@@ -305,7 +357,7 @@ switch ($Tool) {
       Invoke-ComposeChecked -Args @("--profile","update","run","--rm","cve-bin-tool-updater")
     }
     Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
-    Invoke-CveBinToolChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 }
 

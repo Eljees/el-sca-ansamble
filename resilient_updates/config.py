@@ -187,9 +187,17 @@ def parse_proxy_config(config: dict[str, Any]) -> dict[str, str]:
 
 
 def validate_proxy_config(config: dict[str, Any]) -> list[str]:
-    """Return validation errors for the proxy section (non-fatal; collected by validate_config_data)."""
+    """Return validation errors for the proxy section (non-fatal; collected by validate_config_data).
+
+    Validates both styles:
+    - flat: ``proxy.http`` / ``proxy.https`` (scheme check);
+    - chained: ``proxy.chains`` / ``proxy.policies`` / ``proxy.per_source``
+      (scheme check per hop URL, cross-reference of chain names).
+    """
     errors: list[str] = []
     section = config.get("proxy") or {}
+
+    # Flat-form checks (unchanged).
     for key in ("http", "https"):
         val = (section.get(key) or "").strip()
         if not val:
@@ -201,4 +209,15 @@ def validate_proxy_config(config: dict[str, Any]) -> list[str]:
                 f"proxy.{key}: unsupported scheme '{parsed.scheme}'. "
                 f"Allowed: {sorted(_ALLOWED_PROXY_SCHEMES)}"
             )
+
+    # Chained-form checks.  Imported lazily so the package keeps importing
+    # cleanly even when the new module is missing during partial deploys.
+    if section.get("chains") is not None or section.get("policies") is not None:
+        try:
+            from .proxy_chain import validate_chains
+        except Exception as exc:  # pragma: no cover - import error surfaces only on broken installs
+            errors.append(f"proxy.chains: cannot load validator ({exc!r})")
+        else:
+            errors.extend(validate_chains(section))
+
     return errors

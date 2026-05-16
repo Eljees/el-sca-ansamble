@@ -57,7 +57,7 @@ services:
 
   trivy-scanner:
     image: aquasec/trivy:0.64.1
-    profiles: ["default", "scan", "offline"]
+    profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
     command: ["scan", "${TRIVY_TARGET:-alpine:latest}"]
@@ -97,7 +97,7 @@ services:
 
   grype-db-importer:
     image: ghcr.io/anchore/grype:v0.112.0
-    profiles: ["default", "update", "offline"]
+    profiles: ["default", "update", "offline", "airgap"]
     environment:
       GRYPE_DB_CACHE_DIR: /grype-db-cache
       GRYPE_DB_AUTO_UPDATE: "false"
@@ -110,7 +110,7 @@ services:
 
   grype-static:
     image: python:3.12-slim
-    profiles: ["default", "scan", "test-failover", "offline"]
+    profiles: ["default", "scan", "test-failover", "offline", "airgap"]
     working_dir: /var/lib/resilient-db/grype/active
     command: ["python", "-m", "http.server", "8080"]
     volumes:
@@ -128,7 +128,7 @@ services:
 
   grype-scanner:
     image: ghcr.io/anchore/grype:v0.112.0
-    profiles: ["default", "scan", "offline"]
+    profiles: ["default", "scan", "offline", "airgap"]
     depends_on:
       grype-static:
         condition: service_healthy
@@ -149,7 +149,7 @@ services:
 
   syft-sbom:
     image: ghcr.io/anchore/syft:v1.20.0
-    profiles: ["default", "scan", "offline"]
+    profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     environment:
       <<: *proxy-env
@@ -180,7 +180,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.extractor
-    profiles: ["default", "extract", "scan", "offline"]
+    profiles: ["default", "extract", "scan", "offline", "airgap"]
     working_dir: /workspace
     command:
       [
@@ -194,7 +194,13 @@ services:
         "${EXTRACT_MAX_FILES:-20000}",
         "--max-bytes",
         "${EXTRACT_MAX_BYTES:-10737418240}",
+        "--max-member-size-mb",
+        "${EXTRACT_MAX_MEMBER_SIZE_MB:-0}",
       ]
+    # Note: --skip-ext is per-call (repeatable flag).  Compose YAML lists can't
+    # expand a comma-separated env var into N flags, so pass them via override:
+    #   docker compose run --rm artifact-extractor --skip-ext .png --skip-ext .ttf
+    # See docs/network-design.md / operations.md for examples.
     volumes:
       - ./:/workspace
       - ./artifacts:/workspace/artifacts
@@ -233,7 +239,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.cve-bin-tool
-    profiles: ["default", "scan", "offline"]
+    profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
@@ -244,6 +250,9 @@ services:
       # Checker filter: empty = auto-detect, "all" = run all 365 checkers,
       # "go" or "go,rust,python" = language-only (fast, for Go/JVM/Rust targets)
       CVE_BIN_TOOL_CHECKERS: ${CVE_BIN_TOOL_CHECKERS:-}
+      # Parallel workers: empty = auto (half of nproc, capped at 8); 0/1 = serial;
+      # any positive integer = pin that many workers.  See scripts/update_cve_bin_tool.sh.
+      CVE_BIN_TOOL_PARALLEL: ${CVE_BIN_TOOL_PARALLEL:-}
     volumes:
       - ./:/workspace
       - cve-bin-tool-cache:/root/.cache
@@ -259,7 +268,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
-    profiles: ["default", "update", "scan", "report", "offline", "test-failover"]
+    profiles: ["default", "update", "scan", "report", "offline", "test-failover", "airgap"]
     working_dir: /workspace
     command: ["validate-config"]
     volumes:
@@ -288,7 +297,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
-    profiles: ["default", "scan", "report", "update", "test-failover", "offline"]
+    profiles: ["default", "scan", "report", "update", "test-failover", "offline", "airgap"]
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/collect_reports.sh"]
     environment:
@@ -345,6 +354,46 @@ services:
         source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST to the .exe/.msi file or directory}
         target: /scan-target
         read_only: true
+    networks: [scanner-net]
+
+  # ── OSV-Scanner (opt-in, profile "osv") ──────────────────────────────────
+  #
+  # Phase 5.4.  Google's OSV-Scanner is a second matching engine over
+  # google/osv.dev data.  It complements Grype/Trivy because the OSV
+  # database surfaces ecosystem advisories (Go, npm, pypi, Maven, …) faster
+  # than the upstream-aggregated feeds that drive Grype.  Activate alongside
+  # the regular scan profile:
+  #
+  #   COMPOSE_PROFILES=scan,osv docker compose up --abort-on-container-exit
+  #
+  # The scanner is given the artifacts/sbom/ directory and reads Syft's
+  # CycloneDX / SPDX output (osv-scanner has native support for both).
+  # Output: artifacts/reports/osv-scanner/report.json (and .sarif if you
+  # add --format sarif via the OSV_SCANNER_ARGS env hook below).
+
+  osv-scanner:
+    image: ghcr.io/google/osv-scanner:latest
+    profiles: ["osv"]
+    working_dir: /workspace
+    environment:
+      <<: *proxy-env
+      # User-extensible.  Examples:
+      #   OSV_SCANNER_ARGS="--licenses --recursive --format sarif --output /workspace/artifacts/reports/osv-scanner/report.sarif"
+      OSV_SCANNER_ARGS: ${OSV_SCANNER_ARGS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mkdir -p /workspace/artifacts/reports/osv-scanner &&
+        osv-scanner scan source
+          --sbom /workspace/artifacts/sbom/cyclonedx.json
+          --format json
+          --output /workspace/artifacts/reports/osv-scanner/report.json
+          $${OSV_SCANNER_ARGS}
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
     networks: [scanner-net]
 
   # ── Network sidecars (opt-in, profile "proxy") ───────────────────────────
@@ -426,4 +475,8 @@ volumes:
   grype-db:
   grype-cache:
   cve-bin-tool-cache:
-  int
+  internal-mirror-data:
+
+networks:
+  scanner-net:
+    driver: bridge

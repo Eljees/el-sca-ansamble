@@ -185,19 +185,77 @@ def _required_report_paths(root: Path) -> dict[str, Path]:
 
 
 def _markdown_table(findings: list[dict[str, Any]]) -> str:
+    """Render High/Critical findings as a Markdown table.
+
+    The legacy columns (Tool / CVE / Severity / Score / Vendor / Product /
+    Version / Source) are always rendered.  When EPSS or KEV data is
+    available for at least one row (rows enriched by
+    ``resilient_updates.enrichment.enrich_findings``), two extra columns —
+    EPSS and KEV — are appended so triagers can sort by exploit likelihood
+    and known-exploited status at a glance.
+    """
     if not findings:
         return "High/Critical findings не обнаружены.\n"
-    lines = [
-        "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Source |",
-        "|---|---|---|---:|---|---|---|---|",
-    ]
-    for item in sorted(findings, key=lambda row: (SEVERITY_ORDER.get(row["severity"], 9), row["id"], row["tool"])):
-        lines.append(
-            "| {tool} | {id} | {severity} | {score} | {vendor} | {product} | {version} | {source} |".format(
-                **{key: str(value).replace("|", "\\|") for key, value in item.items()}
-            )
+
+    has_enrichment = any(item.get("epss") not in (None, "") or item.get("kev") for item in findings)
+    if has_enrichment:
+        header = (
+            "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | "
+            "Source | EPSS | KEV |"
         )
+        rule = "|---|---|---|---:|---|---|---|---|---:|:---:|"
+    else:
+        header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Source |"
+        rule = "|---|---|---|---:|---|---|---|---|"
+    lines: list[str] = [header, rule]
+    for item in sorted(findings, key=lambda row: (SEVERITY_ORDER.get(row["severity"], 9), row["id"], row["tool"])):
+        cells = {key: str(value).replace("|", "\\|") for key, value in item.items()}
+        # Provide blank defaults so .format() never raises KeyError.
+        for fallback in ("tool", "id", "severity", "score", "vendor", "product", "version", "source"):
+            cells.setdefault(fallback, "")
+        if has_enrichment:
+            epss_raw = item.get("epss", "")
+            try:
+                epss_display = f"{float(epss_raw):.3f}" if epss_raw not in (None, "") else ""
+            except (TypeError, ValueError):
+                epss_display = str(epss_raw)
+            cells["epss"] = epss_display
+            cells["kev"] = "yes" if item.get("kev") in ("yes", True, "true", "True") else ""
+            lines.append(
+                "| {tool} | {id} | {severity} | {score} | {vendor} | {product} | {version} | "
+                "{source} | {epss} | {kev} |".format(**cells)
+            )
+        else:
+            lines.append(
+                "| {tool} | {id} | {severity} | {score} | {vendor} | {product} | "
+                "{version} | {source} |".format(**cells)
+            )
     return "\n".join(lines) + "\n"
+
+
+def _dedup_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove duplicate findings that differ only by artifact location.
+
+    When a target contains multiple executables built from the same source
+    (e.g. Prometheus ships both `prometheus` and `promtool`), every scanner
+    reports the same CVE once per binary.  We deduplicate on the tuple
+    (id, product, version, tool) — keeping the first occurrence — so the
+    final report counts and table reflect unique vulnerabilities, not
+    occurrences-per-binary.
+    """
+    seen: set[tuple[str, str, str, str]] = set()
+    result: list[dict[str, Any]] = []
+    for item in findings:
+        key = (
+            str(item.get("id", "")),
+            str(item.get("product", "")),
+            str(item.get("version", "")),
+            str(item.get("tool", "")),
+        )
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
 
 
 def build_report(
@@ -243,7 +301,16 @@ def build_report(
         except Exception:  # noqa: BLE001
             pass
 
-    all_findings = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
+    all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
+    all_findings = _dedup_findings(all_findings_raw)
+    # Phase 5.2 — annotate with EPSS exploit-likelihood scores and CISA KEV flag
+    # when the on-disk feeds are available.  Best-effort; missing feeds leave
+    # the columns blank and the legacy table format is rendered.
+    try:
+        from .enrichment import enrich_findings
+        enrich_findings(all_findings)
+    except Exception:  # noqa: BLE001 — never let enrichment block a report
+        pass
     high_critical = [item for item in all_findings if item["severity"] in {"CRITICAL", "HIGH"}]
     severity_counts = Counter(item["severity"] for item in all_findings)
     syft_count = _get_nested(summary, ["coverage", "sbom_components"], _syft_count(syft))

@@ -1,4 +1,23 @@
 #!/usr/bin/env sh
+# ---------------------------------------------------------------------------
+# run_scan.sh  (underscore!)  — NATIVE per-tool wrapper.
+#
+# This script invokes scanners (trivy / grype / syft / cve-bin-tool) that are
+# installed DIRECTLY on the current host — no Docker, no compose, no
+# resilient_updates orchestration.  Intended for ad-hoc smoke tests inside
+# the resilient-updater container or on a developer machine where the tools
+# are already on PATH.
+#
+# If you want the full pipeline (docker compose, profiles, MD/HTML reports,
+# proxy support, provenance) — use the sibling script:
+#
+#       scripts/run-scan.sh        ← dash, full Linux pipeline
+#       scripts/windows/run-scan.ps1  ← PowerShell equivalent
+#
+# Sibling-name disambiguation:
+#       run-scan.sh   dash      = full pipeline, docker compose, reports
+#       run_scan.sh   underscore = native per-tool wrapper, no docker
+# ---------------------------------------------------------------------------
 set -eu
 
 TOOL="${1:-grype}"

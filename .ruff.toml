@@ -1,0 +1,61 @@
+# Ruff config for el-sca-ansamble.
+#
+# We use ruff both as a linter and as a formatter; CI runs both `ruff check`
+# and `ruff format --check`.  When iterating locally:
+#
+#   ruff check --fix .
+#   ruff format .
+#
+# Target the same Python version that runs in the resilient-updater image.
+
+target-version = "py312"
+line-length    = 110
+src            = ["resilient_updates", "tests", "scripts"]
+extend-exclude = [
+  "artifacts",
+  "_el_cvebt_source_research",
+  ".pytest_cache",
+  "-prompts",
+  "--exps",
+]
+
+[lint]
+# Curated, opinionated baseline.  Add rules incrementally as the codebase
+# stabilises — avoid blanket "ALL" so contributors aren't drowned in churn.
+select = [
+  "E",    # pycodestyle errors
+  "F",    # pyflakes
+  "W",    # pycodestyle warnings
+  "I",    # isort (import order)
+  "UP",   # pyupgrade
+  "B",    # bugbear (common pitfalls)
+  "C4",   # comprehension hygiene
+  "SIM",  # simplifiable code
+  "PIE",  # misc lints
+  "RUF",  # ruff-specific
+]
+ignore = [
+  "E501",   # long lines — handled by `ruff format`, not by `ruff check`
+  "B008",   # default arg call — used intentionally in argparse helpers
+  "SIM108", # if/else vs ternary — case by case
+]
+
+[lint.per-file-ignores]
+"tests/**" = [
+  "S101",   # asserts are fine in tests
+  "B017",   # broad pytest.raises is fine in tests
+  "PT011",
+]
+"scripts/**.py" = [
+  "T201",   # print() is the point of a script
+]
+
+[lint.isort]
+known-first-party = ["resilient_updates"]
+combine-as-imports = true
+
+[format]
+quote-style              = "double"
+indent-style             = "space"
+docstring-code-format    = true
+docstring-code-line-length = 90

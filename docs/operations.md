@@ -63,27 +63,74 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 `scripts/windows/run-scan.ps1` теперь включает `-Extract` автоматически для архивных целей, но флаг
 по-прежнему можно передать явно, если хочется зафиксировать поведение.
 
-### Windows (PowerShell)
+### Windows (PowerShell) — `run-scan.ps1`
+
+Основной параметр `-Target` обязателен, остальные опциональны. Отчёты создаются
+рядом с целевым файлом по схеме `{FILENAME}_report_{DATE}.md/.html`.
 
 ```powershell
-# Полный цикл: extract → scan → отчёт
-.\scripts\windows\run-scan.ps1 `
-  -Target "D:\path\to\prometheus-3.11.0.linux-amd64.tar.gz" `
-  -Extract `
-  -CaseId "CYBERSEC-11531" `
-  -ReportOutput "artifacts\reports\final\cve_analysis_report_generated_ru.md"
+# Стандартный скан (авто-extract для архивов, авто-определение формата)
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\prometheus-3.11.0.linux-amd64.tar.gz" -Clean
 
-# С обновлением БД перед сканом:
-.\scripts\windows\run-scan.ps1 -Target "D:\path\to\archive.tar.gz" -Extract -UpdateDb
+# Android APK (внутри ZIP)
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\app.zip" -Format apk -Clean
+
+# Windows NSIS/MSI установщик
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\Setup.exe" -Format win -Clean
+
+# С обновлением БД перед сканом (требует сеть/прокси)
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\archive.tar.gz" -UpdateDb -Clean
+
+# Только Grype (пропустить Trivy и cve-bin-tool)
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\target" -Tool grype -Clean
+
+# SBOM fast-path для cve-bin-tool (экспериментально, см. ниже)
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\target" -SbomScan -Clean
+
+# Увеличенный таймаут cve-bin-tool (по умолчанию 1800 сек)
+.\scripts\windows\run-scan.ps1 -Target "D:\path\to\big-binary" -CveBinToolTimeout 3600 -Clean
 ```
 
-Флаг `-Extract` запускает `artifact-extractor`, перемонтирует `SCAN_TARGET_HOST` на
-`artifacts\extracted\current\` и передаёт её всем сканерам через `/scan-target`.
+**Все параметры `run-scan.ps1`:**
 
-### Linux / Shell
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `-Target` | string | **обязателен** | Путь к файлу или директории |
+| `-Profile` | string | `scan` | Docker Compose профиль |
+| `-Tool` | ValidateSet | `all` | `all\|syft\|grype\|trivy\|cve-bin-tool` |
+| `-Format` | ValidateSet | `auto` | `auto\|apk\|win` |
+| `-UpdateDb` | switch | off | Обновить CVE-базы (требует сеть) |
+| `-Extract` | switch | auto | Распаковать архив перед сканом |
+| `-Clean` | switch | off | Удалить предыдущие артефакты |
+| `-SbomScan` | switch | off | cve-bin-tool читает syft.json вместо бинарного скана |
+| `-CveBinToolTimeout` | int | `1800` | Таймаут cve-bin-tool в секундах |
+
+### Linux / macOS — `run-scan.sh`
 
 ```sh
-# Полный цикл: extract → scan → отчёт
+# Стандартный скан
+./scripts/run-scan.sh -t /path/to/prometheus-3.11.0.linux-amd64.tar.gz -c
+
+# Android APK
+./scripts/run-scan.sh -t /path/to/app.zip --format apk -c
+
+# Windows installer
+./scripts/run-scan.sh -t /path/to/Setup.exe --format win -c
+
+# С обновлением БД
+./scripts/run-scan.sh -t /path/to/archive.tar.gz -u -c
+
+# Только Grype, увеличенный таймаут
+./scripts/run-scan.sh -t /path/to/target --tool grype --timeout 3600 -c
+```
+
+Флаг `-c/--clean` удаляет артефакты предыдущего прогона, `-u/--update-db` требует
+активный прокси/сеть. Остальные флаги совпадают с PowerShell-версией.
+
+### Linux / Shell (legacy)
+
+```sh
+# Полный цикл через старый скрипт (устарел, используйте run-scan.sh)
 CASE_ID=CYBERSEC-11531 ./scripts/scan_archive.sh /path/to/prometheus-3.11.0.linux-amd64.tar.gz
 
 # С обновлением БД:

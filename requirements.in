@@ -1,0 +1,18 @@
+# requirements.in — human-curated source of truth for Python dependencies.
+#
+# `requirements.txt` is treated as the LOCKFILE (fully pinned, deterministic).
+# Regenerate it from this file with pip-tools:
+#
+#     pip install "pip-tools>=7.4"
+#     pip-compile --strip-extras --generate-hashes \
+#                 --output-file requirements.txt requirements.in
+#
+# Always commit both files together.  Dockerfiles install from
+# `requirements.txt` so they stay reproducible.
+#
+# Loose constraints below are the minimum versions we support; the lockfile
+# nails the exact build.
+PyYAML>=6.0
+requests>=2.31.0
+PySocks>=1.7.1
+pytest>=8.0.0

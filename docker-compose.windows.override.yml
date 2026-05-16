@@ -1,0 +1,69 @@
+# ---------------------------------------------------------------------------
+# Windows / WSL2 acceleration overlay
+# ---------------------------------------------------------------------------
+#
+# Activate with:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.windows.override.yml ...
+#
+# or set COMPOSE_FILE in .env:
+#
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.windows.override.yml
+#
+# What it does
+# ------------
+# On Windows Docker Desktop, every read of a bind-mounted NTFS path goes
+# through the WSL2 9P/virtio layer.  Extractor + cve-bin-tool + Syft together
+# perform tens of thousands of stat()/open()/read() per scan, and 9P
+# round-trips dominate wall-clock.
+#
+# This overlay does two things to keep the slow path off NTFS:
+#
+# 1. Mounts a `tmpfs` (size=4 GB) at `/tmp` inside scan-heavy services.  The
+#    cve-bin-tool wrapper already copies its target into `/tmp/cbt-scan-local`
+#    for fast I/O — without tmpfs that copy lands on the regular ext4 layer
+#    of the container, which is itself stored in the WSL VHDX and still
+#    faster than NTFS, but tmpfs is faster still.
+#
+# 2. Adds a dedicated named volume `extracted-staging` that the extractor
+#    uses for in-flight staging directories.  The final extraction output
+#    stays on the host NTFS path (so reports remain visible to the user
+#    outside Docker), but per-archive scratch directories never leave the
+#    Linux VHDX.
+#
+# Both changes are additive; the base compose file works unchanged without
+# this overlay.
+#
+# Hot path mapping after the overlay is loaded:
+#
+#     scan-target (NTFS, read-only)    →  bind, unchanged
+#     artifact-extractor staging       →  named volume on ext4
+#     cve-bin-tool /tmp/cbt-scan-local →  tmpfs (RAM)
+#     final reports under artifacts/   →  bind, unchanged (so the user sees them)
+#
+# ---------------------------------------------------------------------------
+
+services:
+  artifact-extractor:
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    volumes:
+      - extracted-staging:/workspace/artifacts/extracted/.staging
+
+  cve-bin-tool-scanner:
+    tmpfs:
+      # cbt-scan-local lives here (see scripts/update_cve_bin_tool.sh).
+      # 4 GB covers all realistic single-archive Go monoliths.
+      - /tmp:size=4g,mode=1777
+
+  cve-bin-tool-updater:
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+
+  syft-sbom:
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+
+volumes:
+  extracted-staging:
+    # Docker named volume — lives inside the WSL2 ext4 VHDX, never crosses 9P.

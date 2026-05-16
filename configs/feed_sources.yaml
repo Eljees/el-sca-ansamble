@@ -1,32 +1,73 @@
 # ---------------------------------------------------------------------------
-# Proxy settings (optional)
+# Proxy settings
 #
-# Leave all values empty to inherit from environment variables:
-#   HTTP_PROXY / http_proxy   -- for plain HTTP requests
-#   HTTPS_PROXY / https_proxy -- for HTTPS requests (most scanners use this)
-#   NO_PROXY / no_proxy       -- comma-separated list of hosts that bypass proxy
-#   ALL_PROXY / all_proxy     -- fallback for both schemes; supports SOCKS5
+# Two configuration styles are supported.  Pick ONE; the loader detects which
+# you used.  Both are optional — leaving the whole section blank inherits from
+# HTTP_PROXY / HTTPS_PROXY / NO_PROXY / ALL_PROXY env vars.
 #
-# Set explicit values here to override env vars just for the Python layer
-# (resilient_updates CLI, healthcheck, grype DB download).
-# Docker containers get proxy vars passed through docker-compose x-proxy-env.
+# --- Style A: flat (legacy, simplest) --------------------------------------
+# proxy:
+#   http:     "socks5h://host.docker.internal:1080"
+#   https:    "socks5h://host.docker.internal:1080"
+#   no_proxy: "localhost,127.0.0.1,grype-static"
 #
-# SOCKS5 example (host.docker.internal reaches the Windows/Linux host from
-# inside Docker when extra_hosts: [host.docker.internal:host-gateway] is set):
-#   http:  "socks5h://host.docker.internal:1080"
-#   https: "socks5h://host.docker.internal:1080"
+# --- Style B: named chains with failover (recommended) ----------------------
+# Multiple proxy paths are declared as "chains".  Each chain is a list of
+# hops; the actual requests.Session is built from the last reachable hop
+# (the entry the scanner connects to first).  ProxyRouter pings every chain
+# in `policies.failover_order`, picks the first healthy one, and pins it
+# until the cached state expires (TTL = healthcheck_ttl seconds).
 #
-# HTTP/HTTPS proxy example:
-#   http:  "http://proxy.corp.example:3128"
-#   https: "http://proxy.corp.example:3128"
-#
-# Supported schemes: http, https, socks4, socks4a, socks5, socks5h
-# socks5h = SOCKS5 with remote DNS resolution (recommended for corporate proxies)
+# Schemes accepted on each hop: http, https, socks4, socks4a, socks5, socks5h.
+# Special role "vpn" is metadata for ProxyRouter — it expects the WG sidecar
+# (profile "vpn") to be up; ProxyRouter does NOT bring WG itself.
 # ---------------------------------------------------------------------------
 proxy:
   http: ""
   https: ""
-  no_proxy: "localhost,127.0.0.1,grype-static"
+  no_proxy: "localhost,127.0.0.1,grype-static,tinyproxy,proxy-xray"
+
+  # Default chain when nothing else dictates a choice.  Override per-source
+  # below in proxy.per_source[*].chain.
+  default_chain: corp
+
+  chains:
+    direct:
+      description: "No proxy — goes straight out the docker bridge."
+      hops: []
+    corp:
+      description: "Sidecar tinyproxy ⟶ xray ⟶ whatever xray's outbound chains to."
+      hops:
+        - role: front
+          url: "http://tinyproxy:8888"
+        - role: socks
+          url: "socks5h://proxy-xray:1080"
+    via-vpn:
+      description: "WireGuard sidecar carries the egress; SOCKS5 enters via xray."
+      hops:
+        - role: vpn
+          interface: wg0
+        - role: socks
+          url: "socks5h://proxy-xray:1080"
+
+  policies:
+    healthcheck_url: "https://www.google.com/generate_204"
+    healthcheck_timeout_seconds: 5
+    healthcheck_ttl_seconds: 60
+    failover_order: ["corp", "via-vpn", "direct"]
+    retry_per_chain: 2
+
+  # Pin specific upstream sources to specific chains.  Anything not listed
+  # uses default_chain.  `source` is the `name:` from any of the
+  # trivy.*_repositories / grype.upstream_update_urls / cve_bin_tool.mirrors /
+  # custom_sources.entries lists.
+  per_source:
+    - source: anchore-public-db
+      chain: corp
+    - source: ghcr-trivy-db
+      chain: corp
+    - source: primary-mirror
+      chain: corp
 
 trivy:
   db_repositories:

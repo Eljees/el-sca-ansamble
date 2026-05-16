@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 
-from resilient_updates.reporting import build_report
+from resilient_updates.reporting import build_report, _dedup_findings
 
 
 def test_build_report_aggregates_scanner_outputs(tmp_path: Path):
@@ -240,3 +240,89 @@ def test_build_report_summarizes_extraction_manifest_without_listing_payload(tmp
     assert "Extracted archives: `2`" in text
     assert "extraction_manifest.json" in text
     assert "large.bin" not in text
+
+
+# ── _dedup_findings tests ─────────────────────────────────────────────────────
+
+def _make_finding(cve_id: str, product: str, version: str = "1.0", tool: str = "grype") -> dict:
+    return {"id": cve_id, "product": product, "version": version, "tool": tool,
+            "severity": "HIGH", "score": 7.5, "vendor": "test", "source": tool}
+
+
+def test_dedup_findings_removes_exact_duplicates():
+    """Same CVE for same product/version/tool appears twice → deduplicated to one."""
+    findings = [
+        _make_finding("CVE-2026-001", "prometheus"),
+        _make_finding("CVE-2026-001", "prometheus"),  # duplicate from promtool
+    ]
+    result = _dedup_findings(findings)
+    assert len(result) == 1
+    assert result[0]["id"] == "CVE-2026-001"
+
+
+def test_dedup_findings_keeps_different_cves():
+    """Different CVE IDs are not deduplicated."""
+    findings = [
+        _make_finding("CVE-2026-001", "prometheus"),
+        _make_finding("CVE-2026-002", "prometheus"),
+    ]
+    result = _dedup_findings(findings)
+    assert len(result) == 2
+
+
+def test_dedup_findings_keeps_different_versions():
+    """Same CVE but different versions are not deduplicated (different packages)."""
+    findings = [
+        _make_finding("CVE-2026-001", "openssl", version="1.0"),
+        _make_finding("CVE-2026-001", "openssl", version="1.1"),
+    ]
+    result = _dedup_findings(findings)
+    assert len(result) == 2
+
+
+def test_dedup_findings_keeps_different_tools():
+    """Same CVE found by two different tools is kept from each tool separately."""
+    findings = [
+        _make_finding("CVE-2026-001", "curl", tool="grype"),
+        _make_finding("CVE-2026-001", "curl", tool="cve-bin-tool"),
+    ]
+    result = _dedup_findings(findings)
+    assert len(result) == 2
+
+
+def test_dedup_findings_empty_input():
+    assert _dedup_findings([]) == []
+
+
+def test_dedup_findings_realistic_prometheus_scenario():
+    """Prometheus + promtool both trigger the same CVEs — should halve the count."""
+    cves = ["CVE-2026-001", "CVE-2026-002", "CVE-2026-003"]
+    findings = []
+    for cve in cves:
+        findings.append(_make_finding(cve, "stdlib", version="go1.26.1"))
+        findings.append(_make_finding(cve, "stdlib", version="go1.26.1"))  # second binary
+    assert len(findings) == 6
+    result = _dedup_findings(findings)
+    assert len(result) == 3
+
+
+def test_build_report_deduplicates_multi_binary_findings(tmp_path: Path):
+    """End-to-end: build_report deduplicates same CVE reported for both binaries."""
+    reports = tmp_path / "artifacts"
+    _make_minimal_reports(reports, syft_artifacts=[{"name": "prometheus"}, {"name": "promtool"}])
+    # Grype reports same CVE twice (once per binary)
+    (reports / "reports" / "grype" / "report.json").write_text(
+        json.dumps({
+            "matches": [
+                {"vulnerability": {"id": "CVE-2026-001", "severity": "Critical"},
+                 "artifact": {"name": "stdlib", "version": "go1.26.1", "type": "go-module"}},
+                {"vulnerability": {"id": "CVE-2026-001", "severity": "Critical"},
+                 "artifact": {"name": "stdlib", "version": "go1.26.1", "type": "go-module"}},
+            ]
+        }),
+        encoding="utf-8",
+    )
+    output = build_report(reports, tmp_path / "report.md", None, "prometheus", "CASE")
+    text = output.read_text(encoding="utf-8")
+    # CVE-2026-001 should appear exactly once in the findings table
+    assert text.count("CVE-2026-001") == 1

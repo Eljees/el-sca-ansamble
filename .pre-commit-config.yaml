@@ -1,0 +1,88 @@
+# pre-commit hooks for el-sca-ansamble.
+#
+# One-time setup (inside the repo root):
+#   pip install pre-commit
+#   pre-commit install              # registers hooks for `git commit`
+#   pre-commit install --hook-type pre-push
+#
+# Run on every staged file before commit; CI re-runs the same hooks on PRs
+# via the `pre-commit/action` workflow (see .github/workflows/ci.yml — added
+# in a follow-up commit if you want pre-commit-in-CI as well).
+#
+# Manual run across the whole repo:
+#   pre-commit run --all-files
+
+default_language_version:
+  python: python3.12
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  # ── Generic hygiene ───────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=5000"]
+      - id: check-yaml
+        args: ["--allow-multiple-documents"]
+        exclude: |
+          (?x)^(
+            artifacts/.*
+            |_el_cvebt_source_research/.*
+            |--exps/.*
+            |-prompts/.*
+          )$
+      - id: check-json
+      - id: check-toml
+
+  # ── Python: ruff lint + format ─────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # ── Shell scripts ──────────────────────────────────────────────────────
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        # Match the CI severity so contributors see the same diagnostics.
+        args: ["-S", "warning"]
+        exclude: ^scripts/windows/
+
+  # ── YAML ───────────────────────────────────────────────────────────────
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args: ["-s", "-c", ".yamllint"]
+        exclude: |
+          (?x)^(
+            artifacts/.*
+            |_el_cvebt_source_research/.*
+            |--exps/.*
+            |-prompts/.*
+          )$
+
+  # ── Dockerfiles ────────────────────────────────────────────────────────
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.1-beta
+    hooks:
+      - id: hadolint-docker
+        # hadolint reads .hadolint.yaml from repo root automatically.
+
+  # ── Local-only hook: byte-compile python (catches truncated files etc.) ─
+  - repo: local
+    hooks:
+      - id: python-compileall
+        name: byte-compile python sources
+        entry: python -m compileall -q resilient_updates tests
+        language: system
+        pass_filenames: false
+        types: [python]

@@ -1,0 +1,31 @@
+# hadolint config for el-sca-ansamble Dockerfiles.
+#
+# We pin BuildKit syntax `# syntax=docker/dockerfile:1.7` in every Dockerfile
+# and use `--mount=type=cache` for pip/apt — hadolint sometimes warns about
+# these constructs; the ignores below keep the signal-to-noise ratio sane.
+
+failure-threshold: warning
+
+ignored:
+  # DL3008: pin apt versions explicitly.  We deliberately don't; package
+  #         versions are pinned at the layer above (python:3.12-slim) and
+  #         apt-listed below get rebuild-cached via BuildKit.  Pinning every
+  #         transitive .deb breaks distroless rebuilds.
+  - DL3008
+  # DL3009: rm -rf /var/lib/apt/lists/* — irrelevant with BuildKit cache mounts.
+  - DL3009
+  # DL3013: pin pip packages — we manage that via requirements.in / lockfile,
+  #         not inline Dockerfile pins.
+  - DL3013
+  # DL3015: --no-install-recommends — we already pass it; hadolint sometimes
+  #         flags multi-line RUN structures incorrectly.
+  - DL3018
+  # SC2086: word splitting inside RUN — intentional for the trivy flags
+  #         renderer (TRIVY_RENDERED_FLAGS is space-separated arg list).
+  - SC2086
+
+trustedRegistries:
+  - docker.io
+  - ghcr.io
+  - public.ecr.aws
+  - registry.example.invalid

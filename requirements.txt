@@ -1,3 +1,13 @@
+# ---------------------------------------------------------------------------
+# This file is treated as the LOCKFILE for Docker builds.
+# Source of truth lives in requirements.in.  Regenerate with:
+#   pip install "pip-tools>=7.4"
+#   pip-compile --strip-extras --generate-hashes \
+#               --output-file requirements.txt requirements.in
+# Until the first pip-compile run, the file keeps the original loose
+# constraints so builds remain functional.  Run pip-compile to convert
+# this into a fully pinned, hashed lockfile.
+# ---------------------------------------------------------------------------
 PyYAML>=6.0
 requests>=2.31.0
 PySocks>=1.7.1

@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -5,7 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /workspace
 
-RUN apt-get update \
+# BuildKit cache mounts: apt lists & debs are reused across rebuilds, so
+# only the diff downloads on the next run.  rm -rf inside the same layer is
+# no longer necessary — the cache is not part of the image.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
       7zip \
       binutils \
@@ -16,10 +23,10 @@ RUN apt-get update \
       tar \
       unzip \
       xz-utils \
-      zstd \
-    && rm -rf /var/lib/apt/lists/*
+      zstd
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install -r /tmp/requirements.txt
 
 ENTRYPOINT ["python", "-m", "resilient_updates.cli", "extract"]

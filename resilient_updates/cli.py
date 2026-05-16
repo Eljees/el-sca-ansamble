@@ -438,10 +438,50 @@ def main() -> int:
     extract.add_argument("--max-depth", type=int, default=4)
     extract.add_argument("--max-files", type=int, default=20000)
     extract.add_argument("--max-bytes", type=int, default=10 * 1024 * 1024 * 1024)
+    # Phase 3.5 pre-filter — both default to disabled to keep legacy parity.
+    extract.add_argument(
+        "--max-member-size-mb",
+        type=int,
+        default=0,
+        help="Skip archive members larger than this many MB (0 = no limit).",
+    )
+    extract.add_argument(
+        "--skip-ext",
+        action="append",
+        default=[],
+        help="Skip archive members with this extension (e.g. --skip-ext .png --skip-ext .ttf). "
+             "Pass multiple times.",
+    )
     render_flags = subparsers.add_parser("render-flags")
     render_flags.add_argument("tool", choices=["trivy"])
     update = subparsers.add_parser("update")
     update.add_argument("tool", choices=["trivy", "grype", "cve-bin-tool"])
+    proxy_status = subparsers.add_parser(
+        "proxy-status",
+        help="Healthcheck every declared proxy chain and write artifacts/provenance/proxy.json",
+    )
+    proxy_status.add_argument("--force", action="store_true", help="Bypass the TTL cache")
+    proxy_status.add_argument(
+        "--provenance-path",
+        default="artifacts/provenance/proxy.json",
+    )
+    scanner_diff = subparsers.add_parser(
+        "scanner-diff",
+        help="Compare two artifacts/ directories and show added/removed components and findings",
+    )
+    scanner_diff.add_argument("--before", required=True, help="Path to the older artifacts/ root")
+    scanner_diff.add_argument("--after", required=True, help="Path to the newer artifacts/ root")
+    scanner_diff.add_argument(
+        "--output",
+        default="-",
+        help="Output path (default: stdout); '.json' or '.md' picks the writer",
+    )
+    scanner_diff.add_argument(
+        "--format",
+        choices=["json", "md"],
+        default="json",
+        help="Force output format regardless of --output extension",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -503,12 +543,15 @@ def main() -> int:
         print(json.dumps({"status": "ok", "report": str(output)}, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS
     if args.command == "extract":
+        max_member_bytes = (args.max_member_size_mb * 1024 * 1024) if args.max_member_size_mb > 0 else None
         payload = extract_artifacts(
             args.input,
             args.output,
             max_depth=args.max_depth,
             max_files=args.max_files,
             max_bytes=args.max_bytes,
+            max_member_size_bytes=max_member_bytes,
+            skip_extensions=tuple(args.skip_ext) if args.skip_ext else None,
         )
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS if payload["status"] in {"pass", "warn"} else EXIT_VALIDATION_FAILED
@@ -543,6 +586,58 @@ def main() -> int:
         )
         print(json.dumps(payload, indent=2))
         return code
+    if args.command == "scanner-diff":
+        from .scanner_diff import diff_runs, to_markdown
+        summary = diff_runs(args.before, args.after)
+        fmt = args.format
+        if args.output != "-" and not args.format:
+            fmt = "md" if args.output.lower().endswith(".md") else "json"
+        if fmt == "md":
+            payload = to_markdown(
+                summary,
+                before_label=str(args.before),
+                after_label=str(args.after),
+            )
+        else:
+            payload = json.dumps(summary.to_dict(), indent=2, ensure_ascii=False)
+        if args.output == "-":
+            print(payload)
+        else:
+            out = Path(args.output)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(payload + ("\n" if fmt == "json" else ""), encoding="utf-8")
+            print(json.dumps({"status": "ok", "output": str(out)}, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS
+    if args.command == "proxy-status":
+        # Import lazily so users on older configs (no proxy.chains) never load
+        # the new module just to run the legacy CLI commands.
+        from .proxy_chain import ProxyRouter
+        router = ProxyRouter.from_config(config)
+        if router is None:
+            print(json.dumps(
+                {
+                    "status": "no-chains-configured",
+                    "message": "feed_sources.yaml uses the legacy flat proxy: block. "
+                               "Add proxy.chains / proxy.policies to enable the router.",
+                    "active_session_proxies": dict(_session.proxies),
+                },
+                indent=2, ensure_ascii=False,
+            ))
+            return EXIT_SUCCESS
+        payload = {
+            "status": "ok",
+            "chains": router.healthcheck_all(force=args.force),
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        try:
+            router.write_provenance(args.provenance_path)
+        except Exception as exc:  # pragma: no cover - filesystem-level failure surfaces in logs
+            print(f"[proxy-status] WARN: failed to write provenance: {exc}", flush=True)
+        # Exit non-zero only when EVERY chain is down — partial outages stay 0
+        # so a scheduled healthcheck doesn't page on a single flaky route.
+        if all(item["status"] != "ok" for item in payload["chains"].values()):
+            return EXIT_ALL_SOURCES_FAILED
+        return EXIT_SUCCESS
     return EXIT_SUCCESS
 
 

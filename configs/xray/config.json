@@ -1,0 +1,96 @@
+{
+  "_comment": "Sidecar Xray-core config for el-sca-ansamble. Inbound: SOCKS5:1080 and HTTP:8118 inside the docker network 'scanner-net'. Outbound: forwards all traffic to a v2rayN-like SOCKS5 server on the Windows/Linux host at host.docker.internal:1080 (override XRAY_UPSTREAM_HOST/PORT in .env). Replace the 'upstream' outbound block with VLESS/Shadowsocks/Trojan settings to chain through a remote endpoint.",
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "socks-in",
+      "listen": "0.0.0.0",
+      "port": 1080,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": true,
+        "ip": "127.0.0.1"
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    },
+    {
+      "tag": "http-in",
+      "listen": "0.0.0.0",
+      "port": 8118,
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    },
+    {
+      "tag": "health-in",
+      "listen": "127.0.0.1",
+      "port": 18080,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 18080,
+        "network": "tcp"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "upstream",
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "host.docker.internal",
+            "port": 1080
+          }
+        ]
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["health-in"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": ["geoip:private"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": ["geosite:private"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "outboundTag": "upstream",
+        "network": "tcp,udp"
+      }
+    ]
+  }
+}
