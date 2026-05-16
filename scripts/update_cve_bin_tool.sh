@@ -225,13 +225,15 @@ case "$MODE" in
       # Auto-detect binary type to choose relevant checkers.
       # Strategy: look for Go version strings ("go1.X.Y") embedded in ELF binaries.
       # All Go binaries (even stripped ones) embed the Go toolchain version string.
-      # `file` command is unreliable for stripped Go binaries — use `strings` instead.
+      # Use `grep -a` (treat binary as text) — works without binutils/strings,
+      # available in every Docker base image.
       go_count=0
       native_so_count=0
       executables=$(find "$EFFECTIVE_TARGET" -maxdepth 6 -type f -perm /111 2>/dev/null | head -30)
       for bin in $executables; do
-        # Go detection: every Go binary contains a string like "go1.21.0" or "go1.26.1"
-        if strings "$bin" 2>/dev/null | grep -qm1 '^go[0-9]\+\.[0-9]'; then
+        # Go detection: every Go binary contains a build-info string like "go1.21.0"
+        # grep -a = treat binary as text; -q = quiet; -m1 = stop at first match
+        if grep -qam1 'go1\.[0-9][0-9]*\.' "$bin" 2>/dev/null; then
           go_count=$((go_count + 1))
         fi
       done
@@ -278,10 +280,4 @@ case "$MODE" in
     cve-bin-tool --export "artifacts/mirror/cve-bin-tool-export.json"
     ;;
   import)
-    cve-bin-tool --import "artifacts/mirror/cve-bin-tool-export.json"
-    ;;
-  *)
-    echo "Unsupported mode: $MODE" >&2
-    exit 2
-    ;;
-esac
+    cve-bin-tool --import "artifacts/

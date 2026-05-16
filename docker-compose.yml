@@ -117,15 +117,26 @@ services:
       - ./:/workspace
       - grype-db:/var/lib/resilient-db/grype
     networks: [scanner-net]
+    healthcheck:
+      # python:3.12-slim has no curl/wget — use python urllib directly.
+      # Pings the directory index served by http.server; 2xx/3xx is treated as healthy.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/', timeout=2).status<400 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
 
   grype-scanner:
     image: ghcr.io/anchore/grype:v0.112.0
     profiles: ["default", "scan", "offline"]
+    depends_on:
+      grype-static:
+        condition: service_healthy
     environment:
       GRYPE_DB_UPDATE_URL: http://grype-static:8080
       GRYPE_DB_VALIDATE_BY_HASH_ON_START: "true"
-      GRYPE_DB_VALIDATE_AGE: "true"
-      GRYPE_DB_MAX_ALLOWED_BUILT_AGE: 72h
+      GRYPE_DB_VALIDATE_AGE: "${GRYPE_DB_VALIDATE_AGE:-true}"
+      GRYPE_DB_MAX_ALLOWED_BUILT_AGE: "${GRYPE_DB_MAX_ALLOWED_BUILT_AGE:-168h}"
       GRYPE_DB_CACHE_DIR: /grype-db-cache
       GRYPE_DB_AUTO_UPDATE: "false"
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
@@ -226,14 +237,20 @@ services:
     working_dir: /workspace
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
-      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-600}
+      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}
+      # SBOM fast-path: set to a Syft JSON path to skip binary scanning.
+      CVE_BIN_TOOL_SBOM_PATH: ${CVE_BIN_TOOL_SBOM_PATH:-}
+      CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-syft}
+      # Checker filter: empty = auto-detect, "all" = run all 365 checkers,
+      # "go" or "go,rust,python" = language-only (fast, for Go/JVM/Rust targets)
+      CVE_BIN_TOOL_CHECKERS: ${CVE_BIN_TOOL_CHECKERS:-}
     volumes:
       - ./:/workspace
       - cve-bin-tool-cache:/root/.cache
       - ./artifacts:/workspace/artifacts
       - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
       - type: bind
-        source: ${SCAN_TARGET_HOST:-.}
+        source: ${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST in .env to the path of the archive or directory to scan. See .env.example}
         target: /scan-target
         read_only: true
     networks: [scanner-net]
@@ -330,13 +347,83 @@ services:
         read_only: true
     networks: [scanner-net]
 
+  # ── Network sidecars (opt-in, profile "proxy") ───────────────────────────
+  #
+  # See docs/network-design.md.  These sidecars form the chain
+  #   scanner ──► tinyproxy:8888 ──► proxy-xray:1080 ──► (corp proxy / VPN / direct)
+  # so every scanner has a single, stable proxy endpoint inside the docker
+  # network — regardless of whether the host runs v2rayN, a corporate proxy
+  # or nothing at all.  Disabled by default; enable with:
+  #
+  #   COMPOSE_PROFILES=scan,update,proxy docker compose up -d
+  #
+  # plus HTTP_PROXY=http://tinyproxy:8888  ALL_PROXY=socks5h://proxy-xray:1080
+  # in .env so the existing x-proxy-env anchor sends scanners through them.
+
+  proxy-xray:
+    image: ghcr.io/xtls/xray-core:latest
+    profiles: ["proxy"]
+    restart: unless-stopped
+    volumes:
+      - ./configs/xray:/etc/xray:ro
+    command: ["run", "-c", "/etc/xray/config.json"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [scanner-net]
+    healthcheck:
+      # dokodemo-door inbound on 127.0.0.1:18080 just echoes TCP; a probe with
+      # python urllib that gets ANY response (incl. ConnectionReset on close)
+      # is enough to confirm the runtime is up.
+      test: ["CMD", "sh", "-c", "echo > /dev/tcp/127.0.0.1/1080"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  tinyproxy:
+    image: kalaksi/tinyproxy:1.11.2
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      proxy-xray:
+        condition: service_healthy
+    volumes:
+      - ./configs/tinyproxy/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
+    networks: [scanner-net]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "echo > /dev/tcp/127.0.0.1/8888"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 3s
+
+  # ── VPN sidecar (opt-in, profile "vpn") ──────────────────────────────────
+  #
+  # When end-mirrors are only reachable from a VPN, enable this profile and
+  # drop a wg0.conf into configs/wireguard/.  Then point xray's "upstream"
+  # outbound at WG-tunnelled targets, or attach a scanner directly via
+  #   network_mode: "service:wireguard"
+  # in a docker-compose.override.yml.
+
+  wireguard:
+    image: linuxserver/wireguard:latest
+    profiles: ["vpn"]
+    restart: unless-stopped
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: 1
+    volumes:
+      - ./configs/wireguard:/config
+      - /lib/modules:/lib/modules:ro
+    environment:
+      PUID: ${LOCAL_UID:-1000}
+      PGID: ${LOCAL_GID:-1000}
+      TZ:   ${TZ:-Etc/UTC}
+    networks: [scanner-net]
+
 volumes:
   trivy-cache:
   grype-db:
   grype-cache:
   cve-bin-tool-cache:
-  internal-mirror-data:
-
-networks:
-  scanner-net:
-    driver: bridge
+  int
