@@ -454,6 +454,16 @@ def main() -> int:
     )
     render_flags = subparsers.add_parser("render-flags")
     render_flags.add_argument("tool", choices=["trivy"])
+    write_summary = subparsers.add_parser(
+        "write-run-summary",
+        help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
+    )
+    write_summary.add_argument("--reports-dir", default="artifacts")
+    write_summary.add_argument(
+        "--no-overwrite",
+        action="store_true",
+        help="Leave existing sidecar JSONs untouched (default: regenerate every run)",
+    )
     update = subparsers.add_parser("update")
     update.add_argument("tool", choices=["trivy", "grype", "cve-bin-tool"])
     proxy_status = subparsers.add_parser(
@@ -586,6 +596,14 @@ def main() -> int:
         )
         print(json.dumps(payload, indent=2))
         return code
+    if args.command == "write-run-summary":
+        from .run_summary import write_to_disk
+        written = write_to_disk(args.reports_dir, overwrite=not args.no_overwrite)
+        print(json.dumps(
+            {"status": "ok", "written": {k: str(v) for k, v in written.items()}},
+            indent=2, ensure_ascii=False,
+        ))
+        return EXIT_SUCCESS
     if args.command == "scanner-diff":
         from .scanner_diff import diff_runs, to_markdown
         summary = diff_runs(args.before, args.after)

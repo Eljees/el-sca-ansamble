@@ -29,6 +29,13 @@ _ensure_report "artifacts/reports/trivy/report.json"        "trivy"        '{"Re
 _ensure_report "artifacts/sbom/syft.json"                   "syft"         '{"artifacts":[],"source":{},"schema":{}}'
 _ensure_report "artifacts/reports/grype/report.json"        "grype"        '{"matches":[]}'
 
+# Phase 5.8 — derive summary.json / status.json / run_manifest.json /
+# db_snapshot.json from existing artefacts so the report header stops
+# showing "UNKNOWN".  Best-effort: failure here doesn't block the report.
+python -m resilient_updates.cli --config "${CONFIG_PATH:-configs/feed_sources.yaml}" \
+  write-run-summary --reports-dir "$REPORTS_DIR" \
+  || echo "[collect_reports] WARN: write-run-summary failed, header may show UNKNOWN fields" >&2
+
 python -m resilient_updates.cli collect-report \
   --reports-dir "$REPORTS_DIR" \
   --output "$REPORT_OUTPUT" \

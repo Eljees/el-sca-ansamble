@@ -152,6 +152,44 @@ EXTRACT_OUTPUT_REL=artifacts/extracted/my-run \
   ./scripts/scan_archive.sh /path/to/archive.rpm
 ```
 
+### Batch: несколько артефактов за один запуск
+
+Когда нужно прогнать пачку кейсов подряд — не копируйте foreach из чата,
+используйте `batch-scan.ps1` (Phase 5.15). Он сам делает `try/catch` на
+каждой цели, пишет цветную сводку, ставит `-CaseId` правильно и опционально
+обновляет БД ровно один раз.
+
+```powershell
+.\scripts\windows\batch-scan.ps1 -Jobs @(
+  @{ Case='CYBERSEC-12103'; Target='D:\__tests\_SCA\CYBERSEC-12103\avandoc-client-1.0.0.4.tar.gz' }
+  @{ Case='CYBERSEC-12104'; Target='D:\__tests\_SCA\CYBERSEC-12104\DMS_AvandocClientServiceSetup1.zip' }
+  @{ Case='CYBERSEC-12080'; Target='D:\__tests\_SCA\CYBERSEC-12080\iDocs11c2781f2-android-build-release-signed.zip' }
+) -UpdateDbOnce
+```
+
+Или загрузить список из CSV/JSON — удобно для CI:
+
+```powershell
+.\scripts\windows\batch-scan.ps1 -JobsCsv .\batches\daily.csv
+.\scripts\windows\batch-scan.ps1 -JobsJson .\batches\daily.json
+```
+
+Формат CSV: первая строка `Case,Target`, дальше пары. Строки, начинающиеся
+с `#` в колонке `Case`, игнорируются. JSON — массив объектов вида
+`[{"case":"…","target":"…"}, …]`.
+
+Логика:
+
+- Без `-UpdateDbOnce`/`-UpdateDbEvery` — обновление БД полностью выключено,
+  используется уже установленный кэш (см. DB freshness banner в начале
+  каждого `run-scan`).
+- `-UpdateDbOnce` — `-UpdateDb` уходит только в **первый** job; остальные
+  пользуются свежим кэшем. Это самый дешёвый способ освежить базы.
+- `-UpdateDbEvery` — `-UpdateDb` на каждом job. Не рекомендуется (по
+  5–15 минут на job), оставлено для строгой повторяемости.
+- Exit code: `0` если все ok, `2` если хотя бы один job упал. Удобно для
+  CI / scheduled-tasks.
+
 ### Почему 0 findings без `-Extract`
 
 Syft в режиме `--from dir` перечисляет манифесты пакетных менеджеров (go.sum, package-lock.json, etc.).

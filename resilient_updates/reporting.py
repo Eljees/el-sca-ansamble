@@ -305,6 +305,22 @@ def build_report(
     run_manifest = _collect_json(root, ["run_manifest.json"]) or {}
     db_snapshot = _collect_json(root, ["db_snapshot.json"]) or {}
     extraction_manifest = _collect_json(root, ["extraction_manifest.json"]) or {}
+
+    # Phase 5.8 — when the sidecar JSONs aren't on disk (the historical
+    # default — no stage writes them) derive them in-memory from the
+    # artefacts that DO exist so the report header stops showing UNKNOWN.
+    # The derive call is cheap (one Path.read_text per scanner output) and
+    # never raises: missing inputs leave fields blank.
+    if not (status and summary and run_manifest and db_snapshot):
+        try:
+            from .run_summary import derive as _derive_run_summary
+            _auto = _derive_run_summary(root)
+            if not summary:       summary       = _auto["summary"]
+            if not status:        status        = _auto["status"]
+            if not run_manifest:  run_manifest  = _auto["run_manifest"]
+            if not db_snapshot:   db_snapshot   = _auto["db_snapshot"]
+        except Exception:  # noqa: BLE001 — never let derivation block a report
+            pass
     provenance = sorted({*(root / "provenance").glob("*.json"), *root.rglob("provenance/*.json")})
 
     # Detect whether cve-bin-tool scan was cut short by the timeout wrapper.

@@ -6,6 +6,14 @@
 `Wrapper-first` означает, что логика отказоустойчивости и orchestration вынесена во внешние скрипты и Python-модули, а не реализована форком upstream-инструментов.  
 `Provenance` означает машинно-читаемую фиксацию происхождения результата: какие источники обновления были опрошены, какой источник выбран, какие ошибки были до fallback.
 
+## Что нового (2026-05-17)
+
+- **Batch-runner для нескольких артефактов.** Готовый запуск пачки тикетов одной командой — см. `scripts/windows/batch-scan.ps1` / `scripts/batch-scan.sh` и шаблоны в `batches/`. Подробности — `docs/operations.md` секция «Batch».
+- **Шапка отчёта больше не `UNKNOWN`.** Поля `DB snapshot`, `DB drift`, `Tool failures`, `Update policy`, `Input archive SHA-256` теперь вычисляются автоматически из существующих провенансов и манифестов через `python -m resilient_updates.cli write-run-summary` (вызывается из `collect_reports.sh`); если файлы отсутствуют, `reporting.py` делает то же in-memory.
+- **DB freshness banner.** `scripts/windows/run-scan.ps1` показывает большой цветной баннер с возрастом каждой DB перед сканом и после — `OK` (зелёный) / `STALE — older than 24h` (жёлтый) / `MISSING` (красный). Если что-то stale — рядом инструкция, как обновить.
+- **No-update-by-default.** Updater-сервисы (`trivy-updater`, `grype-updater`, `cve-bin-tool-updater`) теперь только в профиле `update` / `test-failover`. Чистый `docker compose up` больше не пытается обновлять БД, профили `offline` и `airgap` действительно означают «без сети».
+- **`-UpdateDb` теперь громко предупреждает** про 5–15 минут ожидания и `.env.local` NVD ключи.
+
 ## 1. Что входит в комплекс
 
 ### Сканеры и вспомогательные компоненты
@@ -55,23 +63,54 @@
   - тестовый контейнер для сценариев отказа источников;
   - нужен для failover-тестов, а не для обычного сканирования.
 
+- `apk-analyzer` *(специализированный pipeline)*
+  - анализ Android APK через androguard: разбор `AndroidManifest.xml` и DEX, генерация synthetic SBOM;
+  - запускается только при `-Format apk` (auto-detect для `.apk` и `.zip` с `.apk` внутри);
+  - пишет `artifacts/reports/apk/apk_analysis.txt` и `artifacts/sbom/syft.json`.
+
+- `win-analyzer` *(специализированный pipeline)*
+  - анализ Windows-installer'ов (NSIS `.exe`, MSI, обёртки в `.zip`): распаковка через innoextract/msitools, PE-метаданные через pefile;
+  - запускается только при `-Format win`;
+  - пишет `artifacts/reports/win/win_analysis.txt` и `artifacts/sbom/syft.json`.
+
+- `osv-scanner` *(опционально, profile `osv`)*
+  - дополнительный матчинг по google/osv.dev — комплементарен Grype/Trivy для ecosystem-advisories (Go/npm/pypi/Maven);
+  - пишет `artifacts/reports/osv-scanner/report.json`.
+
+- `proxy-xray` + `tinyproxy` *(опционально, profile `proxy`)*
+  - sidecar-стек для сложной сети: единая точка `tinyproxy:8888` (HTTP front) → `proxy-xray:1080` (SOCKS5 + routing) → upstream chain;
+  - конфигурация в `configs/xray/config.json` и `configs/tinyproxy/tinyproxy.conf`;
+  - подробности — `docs/network-design.md` и `docs/adr/0002-proxy-sidecar.md`.
+
+- `wireguard` *(опционально, profile `vpn`)*
+  - VPN-туннель для случаев, когда конечные зеркала доступны только из VPN;
+  - конфиг в `configs/wireguard/wg0.conf` (gitignored).
+
 ### Контейнерные сервисы
 
 Состав сервисов описан в [docker-compose.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.yml):
 
 - `stack-info` — минимальная проверка стека и конфигурации;
-- `trivy-updater` — прогрев Trivy DB cache;
+- `trivy-updater` — прогрев Trivy DB cache *(profile `update`)*;
 - `trivy-scanner` — запуск Trivy scan-stage;
-- `grype-updater` — загрузка и активация Grype DB archive;
+- `grype-updater` — загрузка и активация Grype DB archive *(profile `update` + `test-failover`)*;
 - `grype-db-importer` — импорт активного Grype DB archive в runtime cache для scan-stage;
-- `grype-static` — статическая HTTP-раздача активной Grype DB;
+- `grype-static` — статическая HTTP-раздача активной Grype DB (с healthcheck);
 - `grype-scanner` — запуск Grype по SBOM;
 - `syft-sbom` — построение SBOM;
 - `artifact-extractor` — рекурсивная распаковка входного архива или каталога с артефактами;
-- `cve-bin-tool-updater` — обновление и audit DB `cve-bin-tool`;
+- `cve-bin-tool-updater` — обновление и audit DB `cve-bin-tool` *(profile `update`)*;
 - `cve-bin-tool-scanner` — запуск `cve-bin-tool` по целевому каталогу;
+- `db-admin` — общий runner для `validate-config`, `db-status`, `audit`, `proxy-status`, `write-run-summary`;
 - `report-collector` — сборка итогового Markdown-отчёта;
-- `mock-feed-server` — имитация отказов источников.
+- `mock-feed-server` — имитация отказов источников *(profile `test-failover`)*;
+- `apk-analyzer` *(profile `apk`)* — анализ Android APK;
+- `win-analyzer` *(profile `win`)* — анализ Windows-installer'ов;
+- `osv-scanner` *(profile `osv`)* — google/osv.dev matcher;
+- `proxy-xray`, `tinyproxy` *(profile `proxy`)* — sidecar proxy chain;
+- `wireguard` *(profile `vpn`)* — VPN-туннель.
+
+**Профильная политика:** updater-сервисы (`*-updater`) присутствуют **только** в профиле `update`, чтобы голый `docker compose up` не пытался обновлять БД. Профили `offline` и `airgap` означают «сканирование без сети». См. `docs/airgap.md`.
 
 ### Основные каталоги артефактов
 

@@ -28,6 +28,14 @@ docker-auth.json
 .docker/
 credentials/
 secrets/
+
+# Batch job lists.  batches/example.* are committed templates;
+# anything else (daily.csv, weekly.json etc.) typically contains
+# local CYBERSEC ticket paths and stays out of git.
+batches/*
+!batches/README.md
+!batches/example.csv
+!batches/example.json
 tmp/
 temp/
 *.tmp

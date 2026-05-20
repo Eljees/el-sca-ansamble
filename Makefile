@@ -74,6 +74,23 @@ full:  ## Full cycle: update → scan → report.
 	@[ -n "$(TARGET)" ] || { echo "ERROR: set TARGET=/path/to/artifact" >&2; exit 2; }
 	./scripts/run-scan.sh -t "$(TARGET)" -u -c
 
+.PHONY: batch
+batch:  ## Batch-scan multiple targets.  JOBS_JSON=/path.json or JOBS_CSV=/path.csv.
+	@[ -n "$(JOBS_JSON)$(JOBS_CSV)" ] || { echo "ERROR: set JOBS_JSON=/path/to/jobs.json (or JOBS_CSV=/path)" >&2; exit 2; }
+	@if [ -n "$(JOBS_JSON)" ]; then \
+	  ./scripts/batch-scan.sh --jobs-json "$(JOBS_JSON)" $(if $(UPDATE_DB_ONCE),--update-db-once); \
+	else \
+	  ./scripts/batch-scan.sh --jobs-csv "$(JOBS_CSV)" $(if $(UPDATE_DB_ONCE),--update-db-once); \
+	fi
+
+.PHONY: bench
+bench:  ## Wall-clock benchmark: TARGET=/path RUNS=3 [INCLUDE_COLD=1].
+	@[ -n "$(TARGET)" ] || { echo "ERROR: set TARGET=/path/to/artifact" >&2; exit 2; }
+	./scripts/benchmark.sh --target "$(TARGET)" \
+	  --runs $(if $(RUNS),$(RUNS),3) \
+	  $(if $(INCLUDE_COLD),--include-cold) \
+	  $(if $(UPDATE_DB_ONCE),--update-db-once)
+
 # ─────────────────────────────────────────────────────────────────────────
 # Tests
 # ─────────────────────────────────────────────────────────────────────────

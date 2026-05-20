@@ -234,6 +234,21 @@ Write-Host ""
 # passed we still show it (afterwards it'll be re-shown with new ages).
 Show-DbFreshnessBanner -Title 'DATABASE FRESHNESS (PRE-SCAN)'
 
+# Loud warning when -UpdateDb is requested: this is an explicit opt-in that
+# reaches out to NVD / GHCR / AWS / Anchore, takes 5-15 minutes on the
+# first run, and is the source of most "scan hangs" support tickets.  The
+# user already saw the freshness banner above, so this is a deliberate
+# second pause-point.
+if ($UpdateDb) {
+  Write-Host ""
+  Write-Host "⚠  -UpdateDb requested" -ForegroundColor Yellow
+  Write-Host "    Will refresh trivy / grype / cve-bin-tool databases from upstream."
+  Write-Host "    Expect 5-15 minutes on the first run (NVD JSON-mirror ≈ 2 GB)."
+  Write-Host "    To skip and use the existing (cached) DBs, re-run WITHOUT -UpdateDb."
+  Write-Host "    To make sure NVD calls have credentials, fill NVD_API_KEY in .env.local."
+  Write-Host ""
+}
+
 # ── Clean artifacts from previous run ────────────────────────────────────────
 
 if ($Clean) {

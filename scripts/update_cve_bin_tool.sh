@@ -247,25 +247,63 @@ PYEOF
           done < "$GO_VERSIONS_FILE"
         fi
       fi
-      if [ -s "$GO_VERSIONS_FILE" ]; then
-        PATCHED_SBOM="/tmp/cbt-sbom-patched.json"
-        set +e
-        SBOM_PATH_IN="$SBOM_PATH" VERSIONS_FILE="$GO_VERSIONS_FILE" PATCHED_OUT="$PATCHED_SBOM" \
-        python3 - <<'PYEOF'
-import json, sys, os, shutil
-sbom_in  = os.environ['SBOM_PATH_IN']
+      # ── Always-on SBOM patch: filter UNKNOWN-versioned components + inject Go runtime ──
+      # cve-bin-tool 3.4 raises UnknownVersion('version string = UNKNOWN')
+      # on parse_version when a SBOM component carries `version: "UNKNOWN"`
+      # — it aborts the entire SBOM scan partway through.  Filter such
+      # components before passing the SBOM in.  We run the patcher
+      # unconditionally (even with no Go versions to inject) so the same
+      # sanitised file is always the one consumed by cve-bin-tool.
+      PATCHED_SBOM="/tmp/cbt-sbom-patched.json"
+      set +e
+      SBOM_PATH_IN="$SBOM_PATH" VERSIONS_FILE="${GO_VERSIONS_FILE:-/dev/null}" PATCHED_OUT="$PATCHED_SBOM" \
+      python3 - <<'PYEOF'
+import json
+import os
+import shutil
+import sys
+
+sbom_in = os.environ['SBOM_PATH_IN']
 versions_file = os.environ['VERSIONS_FILE']
 patched = os.environ['PATCHED_OUT']
+
+_BAD_VERSIONS = {'', 'unknown', 'none', 'null'}
+
+
+def _is_bad_version(value):
+    if value is None:
+        return True
+    return str(value).strip().lower() in _BAD_VERSIONS
+
+
 try:
-    with open(versions_file) as f:
-        versions = sorted({line.strip() for line in f if line.strip()})
-    with open(sbom_in) as f:
-        sbom = json.load(f)
-    comps = sbom.get('components', [])
+    versions = []
+    if versions_file != '/dev/null':
+        try:
+            with open(versions_file) as fh:
+                versions = sorted({line.strip() for line in fh if line.strip()})
+        except OSError:
+            versions = []
+
+    with open(sbom_in) as fh:
+        sbom = json.load(fh)
+
+    comps_in = sbom.get('components') or []
+    comps_filtered = []
+    dropped = 0
+    for comp in comps_in:
+        if isinstance(comp, dict) and _is_bad_version(comp.get('version')):
+            dropped += 1
+            continue
+        comps_filtered.append(comp)
+
     added = 0
     for v in versions:
-        if not any(c.get('name') == 'go' and c.get('version') == v for c in comps):
-            comps.append({
+        if not any(
+            isinstance(c, dict) and c.get('name') == 'go' and c.get('version') == v
+            for c in comps_filtered
+        ):
+            comps_filtered.append({
                 'type': 'library',
                 'name': 'go',
                 'version': v,
@@ -273,27 +311,27 @@ try:
                 'description': 'Go toolchain runtime (injected from go:buildinfo)',
             })
             added += 1
-    sbom['components'] = comps
-    with open(patched, 'w') as f:
-        json.dump(sbom, f)
+
+    sbom['components'] = comps_filtered
+    with open(patched, 'w') as fh:
+        json.dump(sbom, fh)
+
     print(
-        '[cve-bin-tool] SBOM patched: added {} golang:go components ({} unique versions, {} components total)'.format(
-            added, len(versions), len(comps)
+        '[cve-bin-tool] SBOM patched: dropped {} unknown-version components, '
+        'added {} golang:go entries ({} unique Go versions, {} components total)'.format(
+            dropped, added, len(versions), len(comps_filtered)
         )
     )
 except Exception as exc:  # noqa: BLE001
     print('[cve-bin-tool] WARN: SBOM patching failed: {}'.format(exc), file=sys.stderr)
     shutil.copy(sbom_in, patched)
 PYEOF
-        inject_rc=$?
-        set -e
-        if [ "$inject_rc" -eq 0 ] && [ -s "$PATCHED_SBOM" ]; then
-          SBOM_PATH="$PATCHED_SBOM"
-        else
-          echo "[cve-bin-tool] WARN: injection script failed (rc=$inject_rc) — using original SBOM" >&2
-        fi
+      inject_rc=$?
+      set -e
+      if [ "$inject_rc" -eq 0 ] && [ -s "$PATCHED_SBOM" ]; then
+        SBOM_PATH="$PATCHED_SBOM"
       else
-        echo "[cve-bin-tool] no Go runtime version detected in target — skipping runtime injection"
+        echo "[cve-bin-tool] WARN: SBOM patching failed (rc=$inject_rc) — using original SBOM" >&2
       fi
     fi
 

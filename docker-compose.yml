@@ -39,7 +39,11 @@ services:
 
   trivy-updater:
     image: aquasec/trivy:0.64.1
-    profiles: ["default", "update"]
+    # Updater services are opt-in only.  `update` is the explicit refresh
+    # profile.  They are deliberately NOT in `default` (so `docker compose
+    # up` without any profile never reaches out to upstream DB sources) and
+    # NOT in `offline` / `airgap` (those mean "scan only with local DB").
+    profiles: ["update"]
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
     command: ["update", "${TRIVY_TARGET:-alpine:latest}"]
@@ -81,7 +85,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
-    profiles: ["default", "update", "test-failover", "offline"]
+    # Opt-in only.  `test-failover` keeps it (suite drives updater explicitly).
+    # Removed from `default` and `offline` — see comment on trivy-updater.
+    profiles: ["update", "test-failover"]
     working_dir: /workspace
     command: ["update", "grype"]
     environment:
@@ -123,8 +129,11 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/', timeout=2).status<400 else 1)"]
       interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 3s
+      # Stretched on 2026-05-17: docs/runbook.md §3.4 observed 5-20 s
+      # stabilisation on cold Docker Desktop starts.  10 retries × 5s + 10s
+      # start_period = up to ~60 s grace before grype-scanner blocks.
+      retries: 10
+      start_period: 10s
 
   grype-scanner:
     image: ghcr.io/anchore/grype:v0.112.0
@@ -214,7 +223,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.cve-bin-tool
-    profiles: ["default", "update", "offline"]
+    # Opt-in only.  Removed from `default` and `offline` — see comment on
+    # trivy-updater.  Use `update` profile or `run-scan.ps1 -UpdateDb` to
+    # trigger this explicitly.
+    profiles: ["update"]
     working_dir: /workspace
     command: ["update", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:

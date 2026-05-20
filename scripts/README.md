@@ -3,6 +3,8 @@
 | Script | Purpose | Runs Docker? | Mirror on Windows |
 |---|---|---|---|
 | `run-scan.sh` *(dash)* | Full SCA pipeline: extract → scan (syft/trivy/grype/cve-bin-tool) → MD + HTML report. Recommended entry point on Linux/macOS. | Yes (`docker compose`) | `windows/run-scan.ps1` |
+| `batch-scan.sh` | Run `run-scan.sh` against multiple `{case, target}` pairs in one go. Loads jobs from `--case/--target`, `--jobs-json`, or `--jobs-csv`; tolerates per-job failures; prints SUMMARY; exit 2 if any job failed. | Yes (delegates) | `windows/batch-scan.ps1` |
+| `benchmark.sh` | N consecutive runs of `run-scan.sh` against the same target with wall-clock timing.  Writes `artifacts/provenance/benchmark.json` (host snapshot + per-run timings + summary stats). Use to validate Phase-3 optimisations (`COMPOSE_FILE`, BuildKit cache, SBOM fast-path). | Yes (delegates) | `windows/benchmark.ps1` |
 | `run_scan.sh` *(underscore)* | Native per-tool wrapper for the resilient-updater container or a developer host with tools already installed. Not the full pipeline. | No | — |
 | `scan_archive.sh` | Stripped-down full pipeline focused on archive-style targets (extract → scan → report). Mostly superseded by `run-scan.sh`; kept for backward compatibility. | Yes | — |
 | `update_trivy.sh` | Trivy update / scan stage entrypoint used by the `trivy-updater` / `trivy-scanner` services. Renders DB-repository flags via Python. | Inside container | `windows/update-trivy.ps1` |
