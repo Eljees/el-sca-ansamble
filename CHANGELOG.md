@@ -6,6 +6,122 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — 2026-05-25 audit + DRY refactor (docs/audit/)
+
+- **`docs/audit/` (5 files)** — independent audit of architecture, defects,
+  tests, tooling, documentation.  Entry point: `docs/audit/00-overview.md`.
+- **`resilient_updates/_io.py`** — shared `sha1_file` / `sha256_file` /
+  `sha512_file` / `sha256_dir` / `read_json` / `first_json` /
+  `collect_json` / `short_hash` / `hash_pair`.  Replaces three
+  duplicated copies across `reporting.py` / `run_summary.py` /
+  `extractor.py` / `scanner_diff.py`.
+- **`resilient_updates/_retry.py`** — `RetryPolicy` dataclass plus
+  `from_yaml_node` / `from_tool_config` factories.  Eliminates the
+  hardcoded `retry_count=1, backoff_seconds=1` in `cli.update_grype`.
+- **`resilient_updates/_logging.py`** — `setup_logging()` with optional
+  `LOG_FORMAT=json` for structured logs in CI.  Wired into `cli.main`.
+- **`resilient_updates/manifest.py`** — `derive_manifest` + `write_manifest`
+  produce a single root `artifacts/MANIFEST.json` linking the eight-or-so
+  per-run provenance files.
+- **`python -m resilient_updates.cli manifest`** — new CLI subcommand.
+- **`configs/wireguard/wg0.conf.example`** — VPN profile no longer fails
+  on missing bind-mount source.
+- **`docs/INDEX.md`** — sitemap of all documentation organised by audience.
+- **`docs/adr/README.md`** — ADR index.
+- **`CONTRIBUTING.md`**, **`SECURITY.md`** — root-level dev / disclosure docs.
+- **`versions.env`** — single source of truth for upstream scanner /
+  sidecar image tags.
+- **`pytest.ini`** — markers (`smoke`, `slow`) and strict-marker mode.
+- **`requirements.lock`** — placeholder, populated by `make lock`.
+- **Tests:** `test_io.py`, `test_retry_policy.py`, `test_logging_setup.py`,
+  `test_manifest.py`, `test_fallback_windows_file_url.py`.
+
+### Fixed — 2026-05-25 audit hot-fixes
+
+- **`fallback.fetch_bytes` `file://` URLs on Windows.**  `urlparse` leaves
+  `/C:/x/y` as the path; `Path()` fails.  Now routed through
+  `urllib.request.url2pathname`.  See `docs/audit/10-defects.md` section 4.
+- **`proxy_chain._do_probe`: 4xx no longer counted as `ok`.**  Changed
+  `< 500` to `< 400`; corp proxies that return 401/403/404 on
+  `generate_204` now correctly trip failover.  See section 3.
+- **`Dockerfile.cve-bin-tool` deduplicated pip install.**  Two separate
+  `pip install` lines could let the second silently upgrade pins from
+  the first; merged into one resolver pass.  Section 6.
+- **`scripts/update_trivy.sh` FLAGS array.**  `$FLAGS` is now spread into
+  POSIX positional parameters via `set -- $FLAGS`; subsequent trivy
+  invocations use the correctly-quoted `"$@"` instead of a single
+  unquoted variable.  Section 8.
+- **`extractor` uses `shlex.quote` from stdlib** instead of an inline
+  custom implementation that missed edge cases.  Section 11.
+
+### Changed — 2026-05-25 DRY refactor
+
+- `reporting.py` / `run_summary.py` / `extractor.py` / `scanner_diff.py`
+  now import from `resilient_updates._io`; the inlined hash/JSON
+  helpers were removed.  See `docs/audit/20-architecture.md` section 1.
+- `configs/feed_sources.yaml` gained a `grype.retry_backoff_policy`
+  section.  Previously the listing-fetch retry was hardcoded as
+  `retry_count=1, backoff_seconds=1` in `cli.update_grype`.
+- `DEPLOYMENT_GUIDE_FINAL.md` renamed to `DEPLOYMENT_GUIDE_EXAMPLE.md`
+  with a header disclaimer pointing to the canonical
+  `docs/operations.md` / `docs/windows-powershell.md`.
+- `docs/architecture.md` profile and CLI tables now match the actual
+  `docker-compose.yml` (19 services, 12 profiles) and `cli.py --help`
+  (15 subcommands incl. the new `manifest`).
+- `docs/status-and-roadmap.md` section 2f no longer claims that
+  `security-notes.md` / `windows-powershell.md` / `custom-sources.md`
+  are stubs — they have been full documents since Phase 4.
+
+### CI — 2026-05-25
+
+- New job `pre-commit` runs `pre-commit run --all-files` so hooks and
+  per-tool CI cannot drift apart.
+- New matrix job `docker-build` exercises `docker compose build` for
+  every Dockerfile (catches breakages hadolint can't see).
+- `pytest` job adds `--cov-fail-under=75` and uploads `coverage.xml`.
+
+### Security — 2026-05-25 audit
+
+- **NVD API keys moved out of `.env`.**  `.env` lived under a synced
+  cloud-drive folder (`D:\!ya_drive_sync\YandexDisk\...`) so the
+  plaintext keys it contained were being uploaded to Yandex Disk.
+  `.env` now contains only non-secret defaults; the actual key values
+  live in `.env.local` (also gitignored).  Rotate both keys in NVD
+  to be safe.  See `docs/audit/10-defects.md` section 1.
+
+### Pending user-action
+
+- `git rm --cached deep-research-report(4).md "Исследование контейнеризации*.docx"`
+  (these are tracked but listed in `.gitignore`).
+- Rotate `NVD_API_KEY` and `NVD_API_KEY_FALLBACK` in the NVD console;
+  install new values in `.env.local`.
+
+---
+
+### Added — 2026-05-20 batch-time digest
+
+- **#5.32 `scripts/windows/make-high-critical-report.ps1`** — standalone
+  PowerShell helper that parses an existing run-scan markdown report
+  (`*_report_<DATE>.md`) and writes a sibling digest
+  `*_high_critical_<DATE>_ru.md` in the CYBERSEC-11531 reference format:
+  archive SHA-256, scanner counts, severity totals, Critical findings
+  (with originating tool), High findings grouped by scanner.  Accepts a
+  single `-Target`/`-ReportPath` or a batch `-Jobs @(...)` array; emits
+  a small SUMMARY at the end.
+- **#5.33 `scripts/windows/batch-scan.ps1`** — after each successful
+  scan, invokes the new helper automatically.  New
+  `-SkipHighCriticalDigest` switch turns this off.  When the job
+  triggered a `-UpdateDb`, the digest header is annotated «с
+  принудительным online-обновлением перед прогоном» so triagers don't
+  read it as a stale-DB result.
+- **#5.34 `scripts/make-high-critical-report.sh`** — POSIX mirror of
+  the PowerShell helper.  Uses `sha256sum` for the archive hash and an
+  inline Python heredoc for the markdown walk (regex + table reader is
+  hard to keep tidy in pure bash).  Accepts `--target`, `--report`,
+  `--jobs-json`, or `--jobs-csv`.  `scripts/batch-scan.sh` calls it
+  after each successful job unless `--skip-high-critical-digest` is
+  passed.
+
 ### Added — Delta from 2026-05-17 (PLAN_2026-05-17.md)
 
 - **#22 Run-summary derivation.** New module

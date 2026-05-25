@@ -1,0 +1,14 @@
+# ---------------------------------------------------------------------------
+# This is a placeholder.  The actual lockfile is produced by `make lock`
+# (pip-compile --strip-extras --generate-hashes ...) on the host that
+# performs the release build.  Until that runs, this file simply mirrors
+# requirements.txt so CI `pip install -r requirements.lock` works as a
+# fallback.
+#
+# DO NOT hand-edit this file.  Edit requirements.in instead and run
+# `make lock` to regenerate.
+# ---------------------------------------------------------------------------
+PyYAML>=6.0
+requests>=2.31.0
+PySocks>=1.7.1
+pytest>=8.0.0

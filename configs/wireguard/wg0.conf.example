@@ -1,0 +1,25 @@
+# WireGuard configuration template for el-sca-ansamble (profile `vpn`).
+#
+# Copy this file to wg0.conf in the SAME directory and fill in real values.
+# wg0.conf itself is ignored by .gitignore (configs/wireguard/wg0.conf).
+#
+# Usage:
+#   COMPOSE_PROFILES=scan,update,proxy,vpn docker compose up -d
+#
+# After the container starts, route xray's "upstream" outbound through
+# the WG tunnel (configs/xray/config.json — set its outbound to use the
+# scanner-net DNS name `wireguard` as a SOCKS or via network_mode trick).
+#
+# See docs/network-design.md and docs/adr/0002-proxy-sidecar.md.
+
+[Interface]
+PrivateKey = <YOUR_PRIVATE_KEY_HERE>
+Address    = 10.0.0.2/32
+DNS        = 1.1.1.1
+
+[Peer]
+PublicKey           = <UPSTREAM_PEER_PUBLIC_KEY_HERE>
+PresharedKey        = <OPTIONAL_PSK_OR_REMOVE_LINE>
+Endpoint            = vpn.example.com:51820
+AllowedIPs          = 0.0.0.0/0
+PersistentKeepalive = 25

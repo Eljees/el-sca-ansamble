@@ -18,6 +18,7 @@ Used from ``reporting.build_report()`` once Phase 5.2 wires it in.
 from __future__ import annotations
 
 import csv
+import datetime
 import json
 import os
 from pathlib import Path
@@ -78,7 +79,9 @@ def load_epss_scores(roots: Iterable[Path] | None = None) -> dict[str, dict[str,
                 pct_idx = col_map.get("percentile")
                 if cve_idx is None or epss_idx is None:
                     return out
-                date_value = candidate.stat().st_mtime
+                date_value = datetime.datetime.fromtimestamp(
+                    candidate.stat().st_mtime, tz=datetime.timezone.utc
+                ).isoformat()
                 for row in reader:
                     if len(row) <= max(cve_idx, epss_idx):
                         continue

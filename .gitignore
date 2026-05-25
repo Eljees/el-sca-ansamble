@@ -21,6 +21,10 @@ artifacts/internal/*
 artifacts/reports/*
 artifacts/provenance/*
 artifacts/sbom/*
+# Runtime JSON outputs written by resilient_updates.run_summary / manifest
+# (db_snapshot.json, run_manifest.json, status.json, summary.json, …).
+# These are per-run artefacts and must not be committed.
+artifacts/*.json
 !artifacts/extracted/.gitkeep
 !artifacts/**/.gitkeep
 
@@ -28,6 +32,10 @@ docker-auth.json
 .docker/
 credentials/
 secrets/
+
+# WireGuard configuration — actual wg0.conf is host-specific and contains
+# private keys.  Keep the example template, ignore the real config.
+configs/wireguard/wg0.conf
 
 # Batch job lists.  batches/example.* are committed templates;
 # anything else (daily.csv, weekly.json etc.) typically contains

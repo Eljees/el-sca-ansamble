@@ -22,6 +22,7 @@ from .healthcheck import run_healthcheck
 from .provenance import write_provenance
 from .reporting import build_report
 from .source_policy import build_sources
+from ._retry import RetryPolicy
 
 EXIT_SUCCESS = 0
 EXIT_CONFIG_ERROR = 1
@@ -250,7 +251,12 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
     validation_cfg = config["grype"]["validation"]
     atomic_cfg = config["grype"]["atomic_activation_policy"]
     lkg_cfg = config["grype"]["last_known_good"]
-    retry_codes = [429, 500, 502, 503, 504]
+    # Listing-fetch retry policy.  Lives in feed_sources.yaml under
+    # grype.retry_backoff_policy; defaults match the original hardcoded
+    # 1/1/[429,5xx] for forward compatibility with YAML files that
+    # predate the section.  See docs/audit/20-architecture.md §2.
+    grype_retry = RetryPolicy.from_tool_config(config, "grype")
+    retry_codes = list(grype_retry.retry_status_codes)
 
     active_dir = Path(atomic_cfg["active_dir"])
     previous_dir = Path(atomic_cfg["previous_dir"])
@@ -265,9 +271,14 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
     for source in build_sources(config, "grype", "grype-db"):
         candidate_source, listing_payload, source_attempts = attempt_sources(
             [source],
+            # timeout for the listing probe lives in `timeout_policy` (not
+            # retry_backoff_policy), because grype splits "how long do I
+            # wait for the listing endpoint" from "how long do I wait for
+            # the actual archive download".  retry_count / backoff /
+            # status codes come from the shared RetryPolicy above.
             timeout=int(timeout_cfg["update_available_timeout"]),
-            retry_count=1,
-            backoff_seconds=1,
+            retry_count=grype_retry.retry_count,
+            backoff_seconds=int(grype_retry.backoff_seconds),
             retry_status_codes=retry_codes,
             session=session,
         )
@@ -478,6 +489,18 @@ def main() -> int:
         "--provenance-path",
         default="artifacts/provenance/proxy.json",
     )
+    manifest_parser = subparsers.add_parser(
+        "manifest",
+        help="Build artifacts/MANIFEST.json tying together all per-run artefacts",
+    )
+    manifest_parser.add_argument("--artifacts-dir", default="artifacts")
+    manifest_parser.add_argument("--output", default="artifacts/MANIFEST.json")
+    manifest_parser.add_argument("--case-id", default=None)
+    manifest_parser.add_argument("--target-host", default=None)
+    manifest_parser.add_argument("--target-container", default=None)
+    manifest_parser.add_argument("--run-id", default=None,
+                                 help="Override run_id; default derives one deterministically from target+case+timestamp")
+
     scanner_diff = subparsers.add_parser(
         "scanner-diff",
         help="Compare two artifacts/ directories and show added/removed components and findings",
@@ -496,6 +519,12 @@ def main() -> int:
         help="Force output format regardless of --output extension",
     )
     args = parser.parse_args()
+
+    # Configure the root logger before any module does work.  LOG_LEVEL and
+    # LOG_FORMAT (text|json) are read from environment.  See
+    # docs/audit/20-architecture.md section 3.
+    from ._logging import setup_logging  # local import keeps top-level fast
+    setup_logging()
 
     config = load_config(args.config)
     # Build a shared HTTP session honoring proxy settings from config and env vars.
@@ -604,6 +633,23 @@ def main() -> int:
         written = write_to_disk(args.reports_dir, overwrite=not args.no_overwrite)
         print(json.dumps(
             {"status": "ok", "written": {k: str(v) for k, v in written.items()}},
+            indent=2, ensure_ascii=False,
+        ))
+        return EXIT_SUCCESS
+    if args.command == "manifest":
+        # Single root file connecting all per-run artefacts.  See
+        # docs/audit/20-architecture.md section 4.
+        from .manifest import derive_manifest, write_manifest
+        payload = derive_manifest(
+            args.artifacts_dir,
+            case_id=args.case_id,
+            target_host=args.target_host,
+            target_container=args.target_container,
+            run_id=args.run_id,
+        )
+        out_path = write_manifest(payload, args.output)
+        print(json.dumps(
+            {"status": "ok", "output": str(out_path), "run_id": payload["run_id"]},
             indent=2, ensure_ascii=False,
         ))
         return EXIT_SUCCESS

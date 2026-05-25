@@ -38,7 +38,7 @@ services:
     networks: [scanner-net]
 
   trivy-updater:
-    image: aquasec/trivy:0.64.1
+    image: aquasec/trivy:${TRIVY_VERSION:-0.64.1}
     # Updater services are opt-in only.  `update` is the explicit refresh
     # profile.  They are deliberately NOT in `default` (so `docker compose
     # up` without any profile never reaches out to upstream DB sources) and
@@ -60,7 +60,7 @@ services:
     networks: [scanner-net]
 
   trivy-scanner:
-    image: aquasec/trivy:0.64.1
+    image: aquasec/trivy:${TRIVY_VERSION:-0.64.1}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
@@ -102,7 +102,7 @@ services:
     networks: [scanner-net]
 
   grype-db-importer:
-    image: ghcr.io/anchore/grype:v0.112.0
+    image: ghcr.io/anchore/grype:${GRYPE_VERSION:-v0.112.0}
     profiles: ["default", "update", "offline", "airgap"]
     environment:
       GRYPE_DB_CACHE_DIR: /grype-db-cache
@@ -136,7 +136,7 @@ services:
       start_period: 10s
 
   grype-scanner:
-    image: ghcr.io/anchore/grype:v0.112.0
+    image: ghcr.io/anchore/grype:${GRYPE_VERSION:-v0.112.0}
     profiles: ["default", "scan", "offline", "airgap"]
     depends_on:
       grype-static:
@@ -157,7 +157,7 @@ services:
     networks: [scanner-net]
 
   syft-sbom:
-    image: ghcr.io/anchore/syft:v1.20.0
+    image: ghcr.io/anchore/syft:${SYFT_VERSION:-v1.20.0}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     environment:
@@ -386,7 +386,7 @@ services:
   # add --format sarif via the OSV_SCANNER_ARGS env hook below).
 
   osv-scanner:
-    image: ghcr.io/google/osv-scanner:latest
+    image: ghcr.io/google/osv-scanner:${OSV_SCANNER_VERSION:-latest}
     profiles: ["osv"]
     working_dir: /workspace
     environment:
@@ -424,7 +424,7 @@ services:
   # in .env so the existing x-proxy-env anchor sends scanners through them.
 
   proxy-xray:
-    image: ghcr.io/xtls/xray-core:latest
+    image: ghcr.io/xtls/xray-core:${XRAY_VERSION:-latest}
     profiles: ["proxy"]
     restart: unless-stopped
     volumes:
@@ -444,7 +444,7 @@ services:
       start_period: 5s
 
   tinyproxy:
-    image: kalaksi/tinyproxy:1.11.2
+    image: kalaksi/tinyproxy:${TINYPROXY_VERSION:-1.11.2}
     profiles: ["proxy"]
     restart: unless-stopped
     depends_on:
@@ -469,7 +469,7 @@ services:
   # in a docker-compose.override.yml.
 
   wireguard:
-    image: linuxserver/wireguard:latest
+    image: linuxserver/wireguard:${WIREGUARD_VERSION:-latest}
     profiles: ["vpn"]
     restart: unless-stopped
     cap_add: [NET_ADMIN, SYS_MODULE]

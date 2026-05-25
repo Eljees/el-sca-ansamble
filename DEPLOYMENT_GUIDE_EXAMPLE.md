@@ -1,6 +1,16 @@
-# SCA Pipeline - Complete Deployment & Operations Guide
+# SCA Pipeline - Deployment & Operations EXAMPLE
 
-**Version:** 3.0 (Final)  
+> [!IMPORTANT]
+> This document is an **example** of how one specific organisation
+> deployed el-sca-ansamble.  It contains real IP addresses, cloud-drive
+> paths and other host-specific values.  Treat every value below as a
+> placeholder and replace it for your environment.
+>
+> The canonical, host-agnostic deployment guides are
+> `docs/operations.md` (Linux) and `docs/windows-powershell.md`
+> (Windows).  See `docs/INDEX.md` for the full document map.
+
+**Example baseline:** Version 3.0  
 **Date:** 2026-05-15  
 **Status:** ✅ Production Ready
 

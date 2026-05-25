@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -33,6 +34,24 @@ SEV_STYLE = {
 def load_json(path: str | os.PathLike[str] | None):
     if not path or not os.path.exists(path):
         return None
+
+
+def hash_target(path: str | os.PathLike[str] | None) -> dict[str, str]:
+    if not path:
+        return {}
+    candidate = Path(path)
+    if not candidate.exists() or not candidate.is_file():
+        return {}
+    sha1_digest = hashlib.sha1()
+    sha256_digest = hashlib.sha256()
+    with candidate.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            sha1_digest.update(chunk)
+            sha256_digest.update(chunk)
+    return {
+        "sha1": sha1_digest.hexdigest(),
+        "sha256": sha256_digest.hexdigest(),
+    }
     try:
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
@@ -223,6 +242,51 @@ def build_page_paths(output_path: str | os.PathLike[str]):
     }
 
 
+def load_report_metadata(artifacts_dir: str | os.PathLike[str], target_display: str):
+    artifacts = Path(artifacts_dir)
+    summary = load_json(artifacts / "summary.json") or {}
+    run_manifest = load_json(artifacts / "run_manifest.json") or {}
+    db_snapshot = load_json(artifacts / "db_snapshot.json") or {}
+    status = load_json(artifacts / "status.json") or {}
+    target_hashes = hash_target(target_display)
+    input_hashes = summary.get("input_hashes") or run_manifest.get("input_hashes") or {}
+    tools = {}
+    raw_tools = db_snapshot.get("tools") or {}
+    if isinstance(raw_tools, dict):
+        for tool_name, payload in raw_tools.items():
+            if not isinstance(payload, dict):
+                continue
+            tools[tool_name] = {
+                "db_version": str(payload.get("db_version") or "UNKNOWN"),
+                "db_source": str(payload.get("db_source") or "UNKNOWN"),
+                "updated_at": str(payload.get("updated_at") or "UNKNOWN"),
+                "built_at": str(payload.get("built_at") or "UNKNOWN"),
+                "update_state": str(payload.get("update_state") or "UNKNOWN"),
+            }
+    for tool_name, key in (("trivy", "update_trivy_db"), ("grype", "update_grype_db"), ("cve-bin-tool", "update_cve_db")):
+        tools.setdefault(tool_name, {})
+        tools[tool_name].setdefault("update_state", str(summary.get(key) or "UNKNOWN"))
+        tools[tool_name].setdefault("db_version", "UNKNOWN")
+        tools[tool_name].setdefault("db_source", "UNKNOWN")
+        tools[tool_name].setdefault("updated_at", "UNKNOWN")
+        tools[tool_name].setdefault("built_at", "UNKNOWN")
+    return {
+        "db_snapshot_id": str(summary.get("db_snapshot_id") or run_manifest.get("db_snapshot_id") or db_snapshot.get("snapshot_id") or "UNKNOWN"),
+        "db_drift": str(status.get("db_drift") or summary.get("db_drift") or "UNKNOWN"),
+        "tool_failures": str(status.get("tool_failures") or summary.get("tool_failures") or "UNKNOWN"),
+        "input_sha256": str(summary.get("input_sha256") or (run_manifest.get("input") or {}).get("sha256") or "UNKNOWN"),
+        "input_hashes": {
+            "sha1": str(input_hashes.get("sha1") or "UNKNOWN"),
+            "sha256": str(input_hashes.get("sha256") or summary.get("input_sha256") or "UNKNOWN"),
+        },
+        "target_hashes": {
+            "sha1": str(target_hashes.get("sha1") or "UNKNOWN"),
+            "sha256": str(target_hashes.get("sha256") or "UNKNOWN"),
+        },
+        "tools": tools,
+    }
+
+
 def nav_html(page_paths, active_key):
     items = [
         ("overview", "Overview"),
@@ -337,6 +401,52 @@ def render_tool_breakdown(tool_counts):
             f'<div class="tool-item"><span style="color:{TOOL_COLOR[tool]};font-weight:700">{escape(TOOL_LABEL[tool])}</span><span class="tool-cnt">{count}</span></div>'
         )
     return "".join(rows)
+
+
+def render_metadata(metadata):
+    tool_rows = []
+    for tool_name in ("trivy", "grype", "cve-bin-tool"):
+        tool = metadata["tools"].get(tool_name, {})
+        tool_rows.append(
+            f"""
+          <div class="stat-row"><span class="stat-label">{escape(tool_name)} state</span><span class="stat-value">{escape(tool.get('update_state', 'UNKNOWN'))}</span></div>
+          <div class="stat-row"><span class="stat-label">{escape(tool_name)} version</span><span class="stat-value mono">{escape(tool.get('db_version', 'UNKNOWN'))}</span></div>
+          <div class="stat-row"><span class="stat-label">{escape(tool_name)} updated</span><span class="stat-value mono">{escape(tool.get('updated_at', 'UNKNOWN'))}</span></div>
+        """
+        )
+        if tool.get("built_at", "UNKNOWN") != "UNKNOWN":
+            tool_rows.append(
+                f'<div class="stat-row"><span class="stat-label">{escape(tool_name)} built</span><span class="stat-value mono">{escape(tool.get("built_at", "UNKNOWN"))}</span></div>'
+            )
+    return f"""
+  <div class="section">
+    <div class="section-title">Hashes and DB metadata</div>
+    <div class="charts-row">
+      <div class="section" style="margin-bottom:0">
+        <div class="section-title">Artifact hashes</div>
+        <div class="stats-block">
+          <div class="stat-row"><span class="stat-label">Final target SHA-1</span><span class="stat-value mono">{escape(metadata['target_hashes']['sha1'])}</span></div>
+          <div class="stat-row"><span class="stat-label">Final target SHA-256</span><span class="stat-value mono">{escape(metadata['target_hashes']['sha256'])}</span></div>
+          <div class="stat-row"><span class="stat-label">Input artifact SHA-1</span><span class="stat-value mono">{escape(metadata['input_hashes']['sha1'])}</span></div>
+          <div class="stat-row"><span class="stat-label">Input artifact SHA-256</span><span class="stat-value mono">{escape(metadata['input_hashes']['sha256'])}</span></div>
+        </div>
+      </div>
+      <div class="section" style="margin-bottom:0">
+        <div class="section-title">DB snapshot</div>
+        <div class="stats-block">
+          <div class="stat-row"><span class="stat-label">Snapshot ID</span><span class="stat-value mono">{escape(metadata['db_snapshot_id'])}</span></div>
+          <div class="stat-row"><span class="stat-label">DB drift</span><span class="stat-value">{escape(metadata['db_drift'])}</span></div>
+          <div class="stat-row"><span class="stat-label">Tool failures</span><span class="stat-value">{escape(metadata['tool_failures'])}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="section" style="margin-bottom:0">
+      <div class="section-title">Tool database versions and update times</div>
+      <div class="stats-block">
+        {''.join(tool_rows)}
+      </div>
+    </div>
+  </div>"""
 
 
 def page_template(title, target_display, date_str, nav, body_html, base_name):
@@ -662,7 +772,7 @@ def page_template(title, target_display, date_str, nav, body_html, base_name):
 </html>"""
 
 
-def build_finding_page(page_key, page_title, findings, target_display, page_paths, components_total, tool_counts):
+def build_finding_page(page_key, page_title, findings, target_display, page_paths, components_total, tool_counts, metadata):
     deduped = sort_findings(dedupe_findings(findings))
     severity_counts = {}
     for finding in deduped:
@@ -670,6 +780,7 @@ def build_finding_page(page_key, page_title, findings, target_display, page_path
     total = len(deduped)
     body = (
         render_summary_cards(total, severity_counts, components_total)
+        + render_metadata(metadata)
         + f"""
   <div class="charts-row">
     <div class="section">
@@ -735,12 +846,13 @@ def build_finding_page(page_key, page_title, findings, target_display, page_path
     page_paths[page_key].write_text(html, encoding="utf-8")
 
 
-def build_syft_page(page_paths, target_display, components, all_findings):
+def build_syft_page(page_paths, target_display, components, all_findings, metadata):
     severity_counts = {}
     for finding in all_findings:
         severity_counts[finding["severity"]] = severity_counts.get(finding["severity"], 0) + 1
     body = (
         render_summary_cards(len(all_findings), severity_counts, len(components))
+        + render_metadata(metadata)
         + f"""
   <div class="charts-row">
     <div class="section">
@@ -790,7 +902,8 @@ def generate_html_site(findings, target_display, artifacts_dir, output_path, com
     page_paths = build_page_paths(output_path)
     deduped_all = sort_findings(dedupe_findings(findings))
     tool_counts = {tool: sum(1 for item in deduped_all if item["tool"] == tool) for tool in TOOL_ORDER}
-    build_finding_page("overview", "SCA report overview", deduped_all, target_display, page_paths, len(components), tool_counts)
+    metadata = load_report_metadata(artifacts_dir, target_display)
+    build_finding_page("overview", "SCA report overview", deduped_all, target_display, page_paths, len(components), tool_counts, metadata)
     for tool in TOOL_ORDER:
         build_finding_page(
             tool,
@@ -800,8 +913,9 @@ def generate_html_site(findings, target_display, artifacts_dir, output_path, com
             page_paths,
             len(components),
             tool_counts,
+            metadata,
         )
-    build_syft_page(page_paths, target_display, components, deduped_all)
+    build_syft_page(page_paths, target_display, components, deduped_all, metadata)
     print(f"HTML report → {page_paths['overview']}")
     for key in ("grype", "trivy", "cve-bin-tool", "syft"):
         print(f"HTML page   → {page_paths[key]}")

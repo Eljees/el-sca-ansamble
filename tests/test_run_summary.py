@@ -13,7 +13,7 @@ from resilient_updates.run_summary import derive, write_to_disk
 
 
 def _seed_root(root: Path, *, syft=None, grype=None, trivy=None, cve=None,
-               extraction=None, prov_grype=None, prov_cve=None,
+               extraction=None, prov_grype=None, prov_cve=None, prov_trivy=None,
                timeout_flag=False) -> Path:
     """Build a minimal artifacts/ tree."""
     (root / "sbom").mkdir(parents=True, exist_ok=True)
@@ -39,6 +39,8 @@ def _seed_root(root: Path, *, syft=None, grype=None, trivy=None, cve=None,
         (root / "provenance" / "grype.json").write_text(json.dumps(prov_grype), encoding="utf-8")
     if prov_cve is not None:
         (root / "provenance" / "cve-bin-tool-db.json").write_text(json.dumps(prov_cve), encoding="utf-8")
+    if prov_trivy is not None:
+        (root / "provenance" / "trivy.json").write_text(json.dumps(prov_trivy), encoding="utf-8")
     if timeout_flag:
         (root / "reports" / "cve-bin-tool" / "timeout.flag").write_text("timed_out_after=1800\n", encoding="utf-8")
     return root
@@ -111,6 +113,37 @@ def test_derive_db_snapshot_id_combines_provenance(tmp_path: Path):
     s = derive(root)["summary"]
     assert s["db_snapshot_id"]
     assert len(s["db_snapshot_id"]) == 12  # 12-char hex prefix
+
+
+def test_derive_exposes_db_tool_metadata(tmp_path: Path):
+    root = _seed_root(
+        tmp_path / "artifacts",
+        syft={"artifacts": []},
+        grype={"matches": []},
+        prov_grype={
+            "checksum": "sha256:deadbeef",
+            "freshness_metadata": {"built": "2026-05-16T07:00:00Z"},
+            "timestamp_utc": "2026-05-16T08:00:00Z",
+            "selected_source": {"name": "mirror-a"},
+            "activation_status": "active",
+        },
+        prov_cve={
+            "selected_source": "/var/lib/.../active",
+            "timestamp_utc": "2026-05-16T19:38:00Z",
+            "activation_status": "active",
+        },
+        prov_trivy={
+            "artifact_type": "trivy-db",
+            "selected_source": {"name": "ghcr"},
+            "timestamp_utc": "2026-05-16T06:00:00Z",
+            "activation_status": "active",
+        },
+    )
+    snapshot = derive(root)["db_snapshot"]
+    assert snapshot["tools"]["grype"]["db_version"] == "sha256:deadbeef"
+    assert snapshot["tools"]["grype"]["built_at"] == "2026-05-16T07:00:00Z"
+    assert snapshot["tools"]["cve-bin-tool"]["updated_at"] == "2026-05-16T19:38:00Z"
+    assert snapshot["tools"]["trivy"]["db_source"] == "ghcr"
 
 
 # ---------------------------------------------------------------------------

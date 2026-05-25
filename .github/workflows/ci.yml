@@ -17,7 +17,29 @@ permissions:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────
-  # Static checks — fast feedback, run first.
+  # Single source of truth for hooks: run pre-commit against the whole
+  # tree.  If this passes, every lint job below should pass too.
+  # Decoupling the per-tool jobs is still useful because pre-commit
+  # collapses output and matrix builds give per-tool status badges.
+  # ─────────────────────────────────────────────────────────────────────
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install pre-commit
+        run: |
+          python -m pip install --upgrade pip
+          pip install "pre-commit>=3"
+      - name: Run all hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Static checks — fast feedback, run first.  Kept independent of
+  # pre-commit so badges show which specific lint family is red.
   # ─────────────────────────────────────────────────────────────────────
   lint-python:
     runs-on: ubuntu-latest
@@ -66,7 +88,6 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: ${{ matrix.dockerfile }}
-          # The shared config controls which rules and rule overrides apply.
           config: .hadolint.yaml
 
   lint-yaml:
@@ -110,7 +131,33 @@ jobs:
         run: docker compose -f docker-compose.yml -f docker-compose.windows.override.yml config -q
 
   # ─────────────────────────────────────────────────────────────────────
+  # docker build for every Dockerfile we ship.  hadolint catches
+  # surface-level mistakes; this catches real build failures.
+  # ─────────────────────────────────────────────────────────────────────
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [lint-docker]
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - resilient-updater
+          - extractor
+          - cve-bin-tool
+          - apk-analyzer
+          - win-analyzer
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose build ${{ matrix.service }}
+        env:
+          SCAN_TARGET_HOST: ${{ github.workspace }}
+          EXTRACT_INPUT_HOST: ${{ github.workspace }}
+        run: docker compose build ${{ matrix.service }}
+
+  # ─────────────────────────────────────────────────────────────────────
   # Unit + integration tests.
+  # Coverage gate keeps regressions visible.  Tune --cov-fail-under as
+  # purpose-built tests grow.  See docs/audit/30-tests.md section 4.
   # ─────────────────────────────────────────────────────────────────────
   pytest:
     runs-on: ubuntu-latest
@@ -124,20 +171,26 @@ jobs:
       - name: Install runtime + test deps
         run: |
           python -m pip install --upgrade pip
-          # Prefer the lockfile when it exists.
           if [ -f requirements.lock ]; then
             pip install -r requirements.lock
           else
             pip install -r requirements.txt
           fi
           pip install "pytest>=8" "pytest-cov>=5"
-      - name: pytest
-        run: pytest -q --maxfail=1 --disable-warnings --cov=resilient_updates --cov-report=term-missing
+      - name: pytest with coverage gate
+        run: |
+          pytest -q --maxfail=1 --disable-warnings \
+            --cov=resilient_updates \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=75
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-coverage
-          path: .coverage
+          path: |
+            .coverage
+            coverage.xml
           if-no-files-found: ignore
           retention-days: 14

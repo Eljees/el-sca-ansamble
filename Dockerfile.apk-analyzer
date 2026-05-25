@@ -19,12 +19,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       file \
       unzip
 
+# Create a non-root user (CIS Docker Benchmark 4.1).
+RUN useradd --no-create-home --shell /usr/sbin/nologin --uid 1001 appuser \
+    && mkdir -p /workspace /scripts /home/appuser/.cache \
+    && chown -R appuser:appuser /workspace /scripts /home/appuser/.cache
+
 # androguard: parses DEX, binary AndroidManifest.xml, identifies libraries.
 # Pin to 4.1.x — API 3.x and 4.x are incompatible; analyze_apk.py handles both
 # import paths but a version drift mid-run would break silently.
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=cache,target=/home/appuser/.cache/pip,sharing=locked,uid=1001 \
     pip install "androguard==4.1.2"
 
-COPY scripts/analyze_apk.py /scripts/analyze_apk.py
+COPY --chown=appuser:appuser scripts/analyze_apk.py /scripts/analyze_apk.py
+
+USER appuser
 
 ENTRYPOINT ["python", "/scripts/analyze_apk.py"]

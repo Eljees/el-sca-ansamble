@@ -32,20 +32,14 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-import json
+
+from ._io import read_json as _read_json
 
 
 # ---------------------------------------------------------------------------
-# JSON loaders (mirror reporting._read_json / _collect_json_from_paths)
+# JSON loaders moved to resilient_updates._io (shared with reporting.py /
+# run_summary.py / extractor.py).  See docs/audit/20-architecture.md §1.
 # ---------------------------------------------------------------------------
-
-def _read_json(path: Path) -> Any:
-    if not path.exists() or path.is_dir():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
 
 
 def _first_json(root: Path, relpaths: list[str]) -> Any:

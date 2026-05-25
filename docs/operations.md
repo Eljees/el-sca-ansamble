@@ -41,7 +41,7 @@ Pre-pull scanner images when registry timeouts are expected:
 
 ```powershell
 docker pull anchore/syft:v1.20.0
-docker pull anchore/grype:v0.82.0
+docker pull anchore/grype:v0.112.0
 docker pull aquasec/trivy:0.64.1
 ```
 
@@ -189,6 +189,35 @@ EXTRACT_OUTPUT_REL=artifacts/extracted/my-run \
   5–15 минут на job), оставлено для строгой повторяемости.
 - Exit code: `0` если все ok, `2` если хотя бы один job упал. Удобно для
   CI / scheduled-tasks.
+
+#### High/Critical digest рядом с каждым отчётом
+
+После каждого успешного job `batch-scan.ps1` (5.33) автоматически зовёт
+`scripts\windows\make-high-critical-report.ps1` (5.32) и пишет рядом со
+сканер-отчётом компактный документ `*_high_critical_<DATE>_ru.md` в
+формате эталона CYBERSEC-11531: SHA-256 архива, краткая методика,
+severity totals, и поимённый список Critical + High (с группировкой
+High по сканеру). Этот digest предназначен для прикрепления к тикетам
+и отправки заинтересованным сторонам — он короче полного scan-отчёта
+и не требует знаний о структуре пайплайна.
+
+Отключить шаг можно `-SkipHighCriticalDigest`. POSIX-зеркало —
+`scripts/make-high-critical-report.sh`, флаг для `batch-scan.sh` —
+`--skip-high-critical-digest`.
+
+Запустить digest standalone (без re-scan) против уже существующих
+отчётов:
+
+```powershell
+.\scripts\windows\make-high-critical-report.ps1 -Jobs @(
+  @{ Target='D:\__tests\_SCA\CYBERSEC-12103\avandoc-client-1.0.0.4.tar.gz' }
+  @{ Target='D:\__tests\_SCA\CYBERSEC-12104\DMS_AvandocClientServiceSetup1.zip' }
+  @{ Target='D:\__tests\_SCA\CYBERSEC-12080\iDocs11c2781f2-android-build-release-signed.zip' }
+)
+```
+
+Если последний прогон шёл с `-UpdateDb`, передайте `-OnlineDb` — digest
+явно отметит, что базы были принудительно обновлены перед прогоном.
 
 ### Почему 0 findings без `-Extract`
 

@@ -3,44 +3,24 @@ from __future__ import annotations
 from collections import Counter
 from datetime import date
 import re
-from hashlib import sha256
 from pathlib import Path
-import json
 from typing import Any
+
+from ._io import (
+    sha256_file as _sha256_file,
+    sha256_dir as _sha256_dir,
+    read_json as _read_json,
+)
 
 
 DEFAULT_CASE_ID = "CYBERSEC-UNKNOWN"
 _CASE_ID_RE = re.compile(r"\b(CYBERSEC-\d+)\b", re.IGNORECASE)
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
 
-
-def _read_json(path: Path) -> Any:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-
-
-def _sha256_file(path: Path) -> str:
-    digest = sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _sha256_dir(path: Path) -> str:
-    digest = sha256()
-    for item in sorted(p for p in path.rglob("*") if p.is_file()):
-        digest.update(str(item.relative_to(path)).replace("\\", "/").encode("utf-8"))
-        digest.update(b"\0")
-        with item.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        digest.update(b"\0")
-    return digest.hexdigest()
+# Hash + JSON helpers used to be inlined here; they were duplicated across
+# reporting.py / run_summary.py / extractor.py / scanner_diff.py.  Moved to
+# resilient_updates._io for shared use.  Module-level aliases above keep
+# call sites unchanged.  See docs/audit/20-architecture.md section 1.
 
 
 def target_digest(path: str | Path) -> str | None:

@@ -142,6 +142,16 @@ grype:
   timeout_policy:
     update_available_timeout: 10
     update_download_timeout: 30
+  # retry_backoff_policy used by update_grype for the listing-fetch phase
+  # (probing each source quickly).  Short retry on purpose: if source N's
+  # listing endpoint stalls, we want to fall through to source N+1 rather
+  # than burn time on the same probe.  See docs/audit/20-architecture.md
+  # section 2.
+  retry_backoff_policy:
+    retry_count: 1
+    timeout_seconds: 10
+    backoff_seconds: 1
+    retry_status_codes: [429, 500, 502, 503, 504]
   last_known_good:
     enabled: true
     max_age: "168h"

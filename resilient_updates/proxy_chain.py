@@ -353,7 +353,13 @@ class ProxyRouter:
         try:
             response = sess.get(url, timeout=timeout, allow_redirects=False)
             elapsed_ms = round((time.monotonic() - started) * 1000.0, 1)
-            if response.status_code < 500:
+            # Healthcheck OK only on 2xx/3xx.  4xx (401/403 from a corp
+            # proxy that rejects our generate_204 probe, 404 from a
+            # misconfigured tinyproxy) is NOT healthy; failover must
+            # try the next chain.  5xx stays in "degraded" because the
+            # chain itself is reachable, just upstream is broken.
+            # See docs/audit/10-defects.md.
+            if response.status_code < 400:
                 return _HealthState(status="ok", latency_ms=elapsed_ms)
             return _HealthState(
                 status="degraded",

@@ -73,7 +73,13 @@ param(
 
   [switch]$UpdateDbOnce,
   [switch]$UpdateDbEvery,
-  [switch]$SkipCaseRewrite
+  [switch]$SkipCaseRewrite,
+
+  # After each successful scan, also produce a compact CYBERSEC-11531-style
+  # digest with only Critical/High findings + SHA-256 of the source archive.
+  # See scripts/windows/make-high-critical-report.ps1 for the format.
+  # Enabled by default — pass -SkipHighCriticalDigest to turn off.
+  [switch]$SkipHighCriticalDigest
 )
 
 $ErrorActionPreference = "Stop"
@@ -140,7 +146,7 @@ $firstJob = $true
 foreach ($job in $loaded) {
   $case   = $job.Case
   $target = $job.Target
-  $label  = if ($case) { $case } else { "(auto-case)" }
+  if ($case) { $label = $case } else { $label = "(auto-case)" }
   Write-Host ""
   Write-Host ("========== {0}  ({1}) ==========" -f $label, (Split-Path $target -Leaf)) -ForegroundColor Cyan
 
@@ -164,10 +170,18 @@ foreach ($job in $loaded) {
     continue
   }
 
-  $scanArgs = @('-Target', $target, '-Clean')
-  if ($case) { $scanArgs += @('-CaseId', $case) }
+  # Hashtable splat — robust against PS parameter-binding quirks where an
+  # array splat like @('-CaseId', $val) sometimes gets bound positionally
+  # to a different parameter (e.g. -Tool).  With @hash the param names
+  # come from the keys, not from string elements, so the binder cannot
+  # misclassify them.
+  $scanParams = @{
+    Target = $target
+    Clean  = $true
+  }
+  if ($case) { $scanParams.CaseId = $case }
   if ($UpdateDbEvery -or ($UpdateDbOnce -and $firstJob)) {
-    $scanArgs += '-UpdateDb'
+    $scanParams.UpdateDb = $true
   }
   $firstJob = $false
 
@@ -175,7 +189,7 @@ foreach ($job in $loaded) {
   $oldEAP = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & $runScan @scanArgs
+    & $runScan @scanParams
     $record.ExitCode = $LASTEXITCODE
   } catch {
     $record.Status = "exception"
@@ -187,7 +201,11 @@ foreach ($job in $loaded) {
   }
 
   if (-not $record.Status) {
-    $record.Status = if ($record.ExitCode -eq 0) { "ok" } else { "failed" }
+    if ($record.ExitCode -eq 0) {
+      $record.Status = "ok"
+    } else {
+      $record.Status = "failed"
+    }
   }
   if ($record.Status -ne 'ok') {
     Write-Host ("   ! exit " + $record.ExitCode) -ForegroundColor Red
@@ -218,6 +236,23 @@ foreach ($job in $loaded) {
     $record.Grype    = ([regex]::Match($md,'Grype findings:\s*`(\d+)`')).Groups[1].Value
     $record.Cbt      = ([regex]::Match($md,'cve-bin-tool findings:\s*`(\d+)`')).Groups[1].Value
     $record.Severity = ([regex]::Match($md,'Severity counts:\s*`([^`]+)`')).Groups[1].Value
+
+    # Compact high/critical digest in the CYBERSEC-11531 reference format,
+    # written next to the scan report.  Skip with -SkipHighCriticalDigest.
+    if (-not $SkipHighCriticalDigest) {
+      $hcScript = Join-Path $repoRoot "scripts\windows\make-high-critical-report.ps1"
+      if (Test-Path $hcScript) {
+        try {
+          $hcParams = @{ Target = $target }
+          # If this job triggered an explicit DB update, surface that fact in
+          # the digest header so triagers don't think we used stale local DBs.
+          if ($scanParams.ContainsKey('UpdateDb')) { $hcParams.OnlineDb = $true }
+          & $hcScript @hcParams | Out-Null
+        } catch {
+          Write-Host ("   ! make-high-critical-report.ps1 упал: " + $_.Exception.Message) -ForegroundColor Yellow
+        }
+      }
+    }
   } else {
     $record.Status = "no-report"
     Write-Host ("   ! сегодняшнего отчёта нет в " + (Split-Path $target -Parent)) -ForegroundColor Yellow
@@ -237,8 +272,11 @@ foreach ($r in $results) {
     'exception'      { 'Red' }
     default          { 'White' }
   }
+  # PS 5.1 doesn't support `if` as an inline expression inside -f args;
+  # use a statement-form assignment instead.
+  if ($r.Case) { $caseLabel = $r.Case } else { $caseLabel = '(auto)' }
   $line = "{0,-25} {1,-12} syft={2,4} grype={3,4} cbt={4,4} sev={5}" -f `
-            (if ($r.Case) { $r.Case } else { '(auto)' }),
+            $caseLabel,
             $r.Status,
             $r.Syft,
             $r.Grype,
@@ -249,4 +287,4 @@ foreach ($r in $results) {
 
 # Exit codes for CI: 0 if every job ok, 2 if any failed.
 $bad = @($results | Where-Object { $_.Status -ne 'ok' })
-exit $(if ($bad.Count -gt 0) { 2 } else { 0 })
+if ($bad.Count -gt 0) { exit 2 } else { exit 0 }

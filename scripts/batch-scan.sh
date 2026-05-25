@@ -18,6 +18,10 @@
 #   --update-db-every   Pass -u to every run-scan.sh.
 #   --skip-case-rewrite Don't overwrite "# CYBERSEC-…" header in the produced MD.
 #   --no-clean          Don't pass -c (skip clean step in run-scan.sh).
+#   --skip-high-critical-digest
+#                       Don't run scripts/make-high-critical-report.sh after each
+#                       successful scan.  By default the digest is produced
+#                       next to the run-scan markdown.
 #   -h | --help         Print this help.
 #
 # Job formats:
@@ -47,6 +51,7 @@ UPDATE_DB_ONCE=0
 UPDATE_DB_EVERY=0
 SKIP_REWRITE=0
 DO_CLEAN=1
+SKIP_HC_DIGEST=0
 INLINE_CASES=()
 INLINE_TARGETS=()
 
@@ -60,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --update-db-every) UPDATE_DB_EVERY=1; shift ;;
     --skip-case-rewrite) SKIP_REWRITE=1; shift ;;
     --no-clean)        DO_CLEAN=0; shift ;;
+    --skip-high-critical-digest) SKIP_HC_DIGEST=1; shift ;;
     -h|--help)
       sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
@@ -229,6 +235,21 @@ p.write_text(text, encoding="utf-8")
   RESULT_GRYPE[$idx]="${GRYPE:-}"
   RESULT_CBT[$idx]="${CBT:-}"
   RESULT_SEV[$idx]="${SEV:-}"
+
+  # Compact high/critical digest in CYBERSEC-11531 reference format.  Skip
+  # with --skip-high-critical-digest.
+  if [[ $SKIP_HC_DIGEST -eq 0 ]]; then
+    HC_SCRIPT="$REPO_ROOT/scripts/make-high-critical-report.sh"
+    if [[ -x "$HC_SCRIPT" ]]; then
+      HC_ARGS=(--target "$TARGET")
+      if [[ $UPDATE_DB_EVERY -eq 1 ]] || { [[ $UPDATE_DB_ONCE -eq 1 ]] && [[ $idx -eq 0 ]]; }; then
+        HC_ARGS+=(--online-db)
+      fi
+      "$HC_SCRIPT" "${HC_ARGS[@]}" || \
+        echo "   ! make-high-critical-report.sh упал (job продолжается)" >&2
+    fi
+  fi
+
   idx=$((idx + 1))
 done
 

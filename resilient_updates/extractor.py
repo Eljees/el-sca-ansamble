@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path, PurePosixPath
 import gzip
 import json
@@ -12,6 +11,8 @@ import subprocess
 import tarfile
 import zipfile
 from typing import Any
+
+from ._io import sha256_file as _sha256_file
 
 
 ARCHIVE_SUFFIXES = (
@@ -90,14 +91,6 @@ def _should_skip_member(
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _safe_name(value: str) -> str:
@@ -271,17 +264,17 @@ def _extract_external(path: Path, target_dir: Path, kind: str) -> None:
         temp_tar.unlink(missing_ok=True)
         return
     if kind == "rpm":
-        script = f"rpm2cpio {shlex_quote(str(path))} | cpio -idmu"
+        # shlex.quote() handles the surprising cases (newlines, embedded
+        # quotes, unicode) that the previous custom implementation missed.
+        # See docs/audit/10-defects.md §11.
+        from shlex import quote as _shquote
+        script = f"rpm2cpio {_shquote(str(path))} | cpio -idmu"
         _run_checked(["sh", "-c", script], cwd=target_dir)
         return
     if kind == "deb":
         _run_checked(["dpkg-deb", "-x", str(path), str(target_dir)])
         return
     raise RuntimeError(f"unsupported external archive kind: {kind}")
-
-
-def shlex_quote(value: str) -> str:
-    return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
 def _extract_one(

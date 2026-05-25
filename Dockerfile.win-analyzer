@@ -19,9 +19,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       file \
       python3-pefile
 
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+# Create a non-root user (CIS Docker Benchmark 4.1).
+RUN useradd --no-create-home --shell /usr/sbin/nologin --uid 1001 appuser \
+    && mkdir -p /workspace /scripts /home/appuser/.cache \
+    && chown -R appuser:appuser /workspace /scripts /home/appuser/.cache
+
+RUN --mount=type=cache,target=/home/appuser/.cache/pip,sharing=locked,uid=1001 \
     pip install "pefile>=2023.2.7"
 
-COPY scripts/analyze_win_installer.py /scripts/analyze_win_installer.py
+COPY --chown=appuser:appuser scripts/analyze_win_installer.py /scripts/analyze_win_installer.py
+
+USER appuser
 
 ENTRYPOINT ["python", "/scripts/analyze_win_installer.py"]

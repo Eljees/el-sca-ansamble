@@ -8,6 +8,7 @@ import socket
 import time
 from typing import Callable
 from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 import requests
 
@@ -108,7 +109,12 @@ def fetch_bytes(
 ) -> tuple[int, bytes]:
     parsed = urlparse(url)
     if parsed.scheme == "file":
-        payload = Path(parsed.path).read_bytes()
+        # urlparse leaves the path as '/C:/x/y' on Windows, which Path()
+        # does not handle.  url2pathname() from urllib.request handles
+        # the platform-specific quirks (drive letters, percent-decoding,
+        # forward-vs-back slashes).  See docs/audit/10-defects.md.
+        local_path = Path(url2pathname(parsed.path))
+        payload = local_path.read_bytes()
         return 200, payload
     sess = session or build_session()
     response = sess.get(url, timeout=timeout, headers=headers)

@@ -37,6 +37,37 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `artifact_store.py` | Управление last-known-good снапшотами |
 | `cve_db_audit.py` | Аудит качества cve-bin-tool DB |
 | `extractor.py` | Python-обёртка над artifact-extractor контейнером |
+| `proxy_chain.py` | Маршрутизация через named-chain прокси (tinyproxy / xray / vpn) + failover |
+| `scanner_diff.py` | Сравнение двух прогонов: added/removed components и findings |
+| `enrichment.py` | EPSS + CISA KEV обогащение findings |
+| `run_summary.py` | Сборка `summary.json`/`status.json`/`db_snapshot.json`/`run_manifest.json` |
+| `manifest.py` | Единый `MANIFEST.json` со ссылками на все артефакты прогона |
+| `_io.py` | Общие hash- и JSON-утилиты для четырёх модулей выше |
+| `_retry.py` | `RetryPolicy` dataclass — единая точка истины для retry/backoff |
+| `_logging.py` | Setup root logger; `LOG_LEVEL` + `LOG_FORMAT=json` из env |
+
+#### CLI subcommands
+
+`python -m resilient_updates.cli <команда>` — список ниже соответствует
+тому, что показывает `--help` на 2026-05-25:
+
+| Команда | Назначение |
+|---|---|
+| `validate-config` | Проверить `feed_sources.yaml` на валидность схемы |
+| `healthcheck` | Опросить все источники и записать provenance |
+| `provenance` | Распечатать собранную provenance из `artifacts/provenance/` |
+| `db-status` | Текущее состояние всех DB (возраст, источник, источник-кандидат) |
+| `audit` | Аудит cve-bin-tool DB (sources, counts, age) |
+| `activate` | Принудительная активация выбранного DB-кандидата |
+| `seed` | Заполнение `internal-mirror` (EPSS / RSD / OSV ecosystems) |
+| `collect-report` | Сборка финального Markdown-отчёта |
+| `extract` | Распаковка через `artifact-extractor` контейнер |
+| `render-flags` | Рендеринг Trivy CLI-флагов из YAML-конфига |
+| `write-run-summary` | Деривация sidecar JSON-ов (summary/status/db_snapshot/run_manifest) |
+| `update <tool>` | Обновление DB для trivy / grype / cve-bin-tool |
+| `proxy-status` | Healthcheck всех proxy-цепочек, запись `artifacts/provenance/proxy.json` |
+| `scanner-diff` | Сравнение двух `artifacts/` директорий |
+| `manifest` | Сборка корневого `MANIFEST.json` со ссылками на все артефакты прогона |
 
 ---
 
@@ -114,16 +145,29 @@ grype-scanner: GRYPE_DB_UPDATE_URL=http://grype-static:8080
 
 ## Docker Compose профили
 
+Состояние профилей на 2026-05-25 (источник истины — `docker-compose.yml`):
+
 | Профиль | Для чего | Сервисы |
 |---|---|---|
-| `update` | Обновление баз | trivy-updater, grype-updater, grype-db-importer, cve-bin-tool-updater |
-| `scan` | Сканирование | syft-sbom, trivy-scanner, grype-scanner, grype-static, cve-bin-tool-scanner |
-| `extract` | Распаковка архива | artifact-extractor |
-| `report` | Сборка отчёта | report-collector |
-| `offline` | Все сервисы без интернета | все scan + offline варианты |
-| `test-failover` | Тестирование сценариев отказа | mock-feed-server, grype-updater |
+| `default` | Базовый набор для голого `docker compose up` (без updater-ов) | stack-info, trivy-scanner, grype-db-importer, grype-static, grype-scanner, syft-sbom, artifact-extractor, cve-bin-tool-scanner, db-admin, report-collector |
+| `update` | Обновление баз | trivy-updater, grype-updater, grype-db-importer, cve-bin-tool-updater, db-admin, report-collector |
+| `scan` | Сканирование артефакта | trivy-scanner, grype-scanner, grype-static, syft-sbom, artifact-extractor, cve-bin-tool-scanner, db-admin, report-collector |
+| `extract` | Только распаковка | artifact-extractor |
+| `report` | Только сборка финального Markdown / HTML | db-admin, report-collector |
+| `offline` | Сканирование без сети (только локальные DB) | grype-db-importer, grype-static, grype-scanner, syft-sbom, artifact-extractor, trivy-scanner, cve-bin-tool-scanner, db-admin, report-collector |
+| `airgap` | Жёсткий air-gap (никаких updater-ов вообще) | то же, что `offline`, без `*-updater` |
+| `test-failover` | Failover-тесты | mock-feed-server, grype-updater, grype-static, db-admin, report-collector |
+| `apk` | Специализированный APK pipeline | apk-analyzer |
+| `win` | Специализированный Windows-installer pipeline | win-analyzer |
+| `osv` | Дополнительный OSV-Scanner over SBOM | osv-scanner |
+| `proxy` | Sidecar proxy chain (tinyproxy + xray) | proxy-xray, tinyproxy |
+| `vpn` | WireGuard-туннель для случаев VPN-only зеркал | wireguard |
 
-Сервисы `grype-static` и `grype-scanner` связаны напрямую внутри Docker-сети `scanner-net` и не нуждаются в прокси.
+Сервисы `grype-static` и `grype-scanner` связаны напрямую внутри
+Docker-сети `scanner-net` и не нуждаются в прокси.
+
+См. `docs/audit/40-tooling-docs.md` section 3 — там зафиксирована
+история, что эта таблица раньше показывала только 6 профилей из 12.
 
 ---
 

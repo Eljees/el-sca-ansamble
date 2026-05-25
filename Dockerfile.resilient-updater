@@ -7,13 +7,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /opt/app
 
+# Create a non-root user (CIS Docker Benchmark 4.1).
+# Done before COPY so chown can be applied in the same layer.
+RUN useradd --no-create-home --shell /usr/sbin/nologin --uid 1001 appuser \
+    && mkdir -p /opt/app /home/appuser/.cache \
+    && chown -R appuser:appuser /opt/app /home/appuser/.cache
+
 COPY requirements.txt /tmp/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+RUN --mount=type=cache,target=/home/appuser/.cache/pip,sharing=locked,uid=1001 \
     pip install -r /tmp/requirements.txt
 
-COPY resilient_updates /opt/app/resilient_updates
-COPY scripts /opt/app/scripts
+COPY --chown=appuser:appuser resilient_updates /opt/app/resilient_updates
+COPY --chown=appuser:appuser scripts /opt/app/scripts
 
 RUN chmod +x /opt/app/scripts/*.sh 2>/dev/null || true
+
+USER appuser
 
 ENTRYPOINT ["python", "-m", "resilient_updates.cli"]

@@ -83,6 +83,53 @@ def _make_artifacts(root: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (root / "summary.json").write_text(
+        json.dumps(
+            {
+                "input_sha256": "feedface",
+                "input_hashes": {"sha1": "abc123", "sha256": "feedface"},
+                "db_snapshot_id": "snap123456789",
+                "db_drift": "fresh-or-reused",
+                "update_trivy_db": "unknown",
+                "update_grype_db": "refreshed-this-run",
+                "update_cve_db": "reused-cached",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "status.json").write_text(
+        json.dumps({"tool_failures": "none", "db_drift": "fresh-or-reused"}),
+        encoding="utf-8",
+    )
+    (root / "db_snapshot.json").write_text(
+        json.dumps(
+            {
+                "snapshot_id": "snap123456789",
+                "tools": {
+                    "grype": {
+                        "db_version": "sha256:deadbeef",
+                        "db_source": "mirror-a",
+                        "updated_at": "2026-05-16T08:00:00Z",
+                        "built_at": "2026-05-16T07:00:00Z",
+                        "update_state": "refreshed-this-run",
+                    },
+                    "trivy": {
+                        "db_version": "trivy-db",
+                        "db_source": "ghcr",
+                        "updated_at": "2026-05-16T06:00:00Z",
+                        "update_state": "unknown",
+                    },
+                    "cve-bin-tool": {
+                        "db_version": "/var/lib/.../active",
+                        "db_source": "/var/lib/.../active",
+                        "updated_at": "2026-05-16T19:38:00Z",
+                        "update_state": "reused-cached",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_generate_html_site_creates_overview_and_tool_pages(tmp_path: Path):
@@ -127,3 +174,5 @@ def test_overview_page_links_to_tool_pages_and_syft(tmp_path: Path):
     assert 'href="report_cve-bin-tool.html"' in text
     assert 'href="report_syft.html"' in text
     assert "SCA report overview" in text
+    assert "Final target SHA-256" in text
+    assert "Tool database versions and update times" in text

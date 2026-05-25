@@ -29,50 +29,30 @@ input never raises, the corresponding field is left blank instead.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from hashlib import sha1, sha256
+import json
 from pathlib import Path
 from typing import Any
-import json
+
+from ._io import (
+    hash_pair as _hash_path,
+    read_json as _read_json,
+    short_hash as _short_hash,
+)
 
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
+#
+# `_read_json`, `_short_hash` and `_hash_path` used to be inlined here; they
+# now come from resilient_updates._io to remove the duplication across
+# reporting.py / run_summary.py / extractor.py / scanner_diff.py.
+# See docs/audit/20-architecture.md §1.
 # ---------------------------------------------------------------------------
-
-def _read_json(path: Path) -> Any:
-    try:
-        if not path.exists() or path.is_dir():
-            return None
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
 
 def _count_list(value: Any) -> int:
     if isinstance(value, list):
         return len(value)
     return 0
-
-
-def _short_hash(*parts: str) -> str:
-    digest = sha256()
-    for part in parts:
-        digest.update(part.encode("utf-8", errors="replace"))
-        digest.update(b"\0")
-    return digest.hexdigest()[:12]
-
-
-def _hash_path(path: Path) -> dict[str, str]:
-    sha1_digest = sha1()
-    sha256_digest = sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            sha1_digest.update(chunk)
-            sha256_digest.update(chunk)
-    return {
-        "sha1": sha1_digest.hexdigest(),
-        "sha256": sha256_digest.hexdigest(),
-    }
 
 
 # ---------------------------------------------------------------------------

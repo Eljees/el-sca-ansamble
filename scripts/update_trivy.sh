@@ -23,20 +23,22 @@ if [ "${TRIVY_WRAPPER_HEALTHCHECK:-0}" = "1" ]; then
   python -m resilient_updates.cli --config "$CONFIG_PATH" update trivy >/dev/null
 fi
 
+# Convert the rendered flag string into POSIX positional parameters so that
+# every subsequent invocation can use the correctly-quoted "$@" instead of
+# the unquoted FLAGS variable.  Reference: docs/audit/10-defects.md section 8.
+# shellcheck disable=SC2086
+set -- $FLAGS
+
 case "$MODE" in
   update)
-    # shellcheck disable=SC2086
-    trivy image --cache-dir "$CACHE_DIR" --download-db-only $FLAGS
-    # shellcheck disable=SC2086
-    trivy image --cache-dir "$CACHE_DIR" --download-java-db-only $FLAGS
+    trivy image --cache-dir "$CACHE_DIR" --download-db-only "$@"
+    trivy image --cache-dir "$CACHE_DIR" --download-java-db-only "$@"
     ;;
   scan)
-    # shellcheck disable=SC2086
-    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" $FLAGS --skip-db-update --skip-java-db-update --skip-check-update --format json --output "$REPORT_DIR/report.json" "$TARGET"
+    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --format json --output "$REPORT_DIR/report.json" "$TARGET"
     ;;
   offline)
-    # shellcheck disable=SC2086
-    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" $FLAGS --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
+    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
     ;;
   *)
     echo "Unsupported mode: $MODE" >&2
