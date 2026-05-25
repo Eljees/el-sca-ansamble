@@ -55,6 +55,10 @@ validate:  ## Validate feed_sources.yaml + compose schema.
 	$(COMPOSE) -f $(COMPOSE_FILE) config -q
 	$(PYTHON) -m resilient_updates.cli validate-config
 
+.PHONY: preflight
+preflight:  ## Validate env + render compose with strict guards.
+	./scripts/preflight_compose.sh
+
 # ─────────────────────────────────────────────────────────────────────────
 # Pipeline shortcuts (Linux/macOS).  TARGET= must be set or compose fails.
 # ─────────────────────────────────────────────────────────────────────────
@@ -73,6 +77,17 @@ report:  ## Generate the final aggregated report.
 full:  ## Full cycle: update → scan → report.
 	@[ -n "$(TARGET)" ] || { echo "ERROR: set TARGET=/path/to/artifact" >&2; exit 2; }
 	./scripts/run-scan.sh -t "$(TARGET)" -u -c
+
+.PHONY: cvebt-export-bundle cvebt-import-bundle cvebt-diagnose
+cvebt-export-bundle:  ## Export cve-bin-tool DB bundle (+manifest +sha256) from container cache.
+	./scripts/cvebt_export_bundle.sh
+
+cvebt-import-bundle:  ## Import a cve-bin-tool DB bundle archive. Use BUNDLE=path/to/*.tar.zst.
+	@[ -n "$(BUNDLE)" ] || { echo "ERROR: set BUNDLE=/path/to/cvebt-db-*.tar.zst" >&2; exit 2; }
+	./scripts/cvebt_import_bundle.sh "$(BUNDLE)"
+
+cvebt-diagnose:  ## Print cve-bin-tool update capabilities and optional online attempts.
+	./scripts/diagnose_cvebt_update.sh
 
 .PHONY: batch
 batch:  ## Batch-scan multiple targets.  JOBS_JSON=/path.json or JOBS_CSV=/path.csv.

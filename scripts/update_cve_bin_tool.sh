@@ -10,11 +10,17 @@ STAGING_ROOT="${CVE_BIN_TOOL_STAGING_ROOT:-/var/lib/resilient-db/cve-bin-tool}"
 ATTEMPTS_DIR="$REPORT_DIR/attempts"
 UPDATE_TIMEOUT_SECONDS="${CVE_BIN_TOOL_UPDATE_TIMEOUT_SECONDS:-420}"
 SEED_TIMEOUT_SECONDS="${CVE_BIN_TOOL_SEED_TIMEOUT_SECONDS:-120}"
-CVE_DISABLE_ARGS="--disable-data-source OSV --disable-data-source EPSS"
+CVE_DISABLE_SOURCES="${CVE_BIN_TOOL_DISABLE_SOURCES:-}"
+CVE_DISABLE_SOURCES_ON_RETRY="${CVE_BIN_TOOL_DISABLE_SOURCES_ON_RETRY:-OSV}"
 CVE_UPDATE_MODES="${CVE_BIN_TOOL_UPDATE_MODES:-json-mirror json-nvd api2}"
 CVE_OSV_ECOSYSTEMS="${CVE_BIN_TOOL_OSV_ECOSYSTEMS:-Debian Ubuntu Alpine Go PyPI Maven npm Rust}"
 NVD_API_KEY_PRIMARY="${NVD_API_KEY:-}"
 NVD_API_KEY_SECONDARY="${NVD_API_KEY_FALLBACK:-}"
+DB_POLICY="${CVE_BIN_TOOL_DB_POLICY:-strict}"
+BUNDLE_PATH="${CVE_BIN_TOOL_BUNDLE_PATH:-}"
+USE_INTERNAL_MIRROR="${CVE_BIN_TOOL_USE_INTERNAL_MIRROR:-0}"
+INTERNAL_MIRROR_URL="${CVE_BIN_TOOL_MIRROR_URL:-}"
+STATUS_PATH="${CVE_BIN_TOOL_STATUS_PATH:-artifacts/provenance/cve-bin-tool-update-status.json}"
 
 mkdir -p "$REPORT_DIR" "$ATTEMPTS_DIR" "artifacts/provenance" "artifacts/mirror" "$STAGING_ROOT/candidates" "$STAGING_ROOT/tmp" "$STAGING_ROOT/previous"
 if [ "${CVE_BIN_TOOL_WRAPPER_HEALTHCHECK:-0}" = "1" ]; then
@@ -26,10 +32,90 @@ if ! command -v cve-bin-tool >/dev/null 2>&1; then
   exit 3
 fi
 
+_disable_sources_to_args() {
+  _ds_raw="$1"
+  _ds_result=""
+  for source in $_ds_raw; do
+    [ -n "$source" ] || continue
+    _ds_result="$_ds_result --disable-data-source $source"
+  done
+  printf '%s' "$_ds_result"
+}
+
+BASE_DISABLE_ARGS="$(_disable_sources_to_args "$CVE_DISABLE_SOURCES")"
+RETRY_DISABLE_ARGS="$(_disable_sources_to_args "$CVE_DISABLE_SOURCES_ON_RETRY")"
+
+write_status() {
+  status="$1"
+  reason="$2"
+  mkdir -p "$(dirname "$STATUS_PATH")"
+  python - "$STATUS_PATH" "$status" "$reason" "$DB_POLICY" <<'PY'
+from __future__ import annotations
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+payload = {
+    "tool": "cve-bin-tool",
+    "db_policy": sys.argv[4],
+    "status": sys.argv[2],
+    "reason": sys.argv[3],
+    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+}
+path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+}
+
+import_bundle_if_present() {
+  _bundle_candidate_home="$1"
+  [ -n "$BUNDLE_PATH" ] || return 1
+  [ -f "$BUNDLE_PATH" ] || return 1
+  mkdir -p "$_bundle_candidate_home/.cache"
+  echo "[bundle] importing DB bundle from $BUNDLE_PATH"
+  set +e
+  HOME="$_bundle_candidate_home" XDG_CACHE_HOME="$_bundle_candidate_home/.cache" cve-bin-tool --import "$BUNDLE_PATH"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo "[bundle] import failed with code $rc" >&2
+    return "$rc"
+  fi
+  return 0
+}
+
+import_from_internal_mirror() {
+  _mirror_candidate_home="$1"
+  [ "$USE_INTERNAL_MIRROR" = "1" ] || return 1
+  [ -n "$INTERNAL_MIRROR_URL" ] || return 1
+  _mirror_bundle="$_mirror_candidate_home/internal-mirror-bundle.json"
+  mkdir -p "$_mirror_candidate_home/.cache"
+  echo "[mirror] fetching bundle from $INTERNAL_MIRROR_URL"
+  set +e
+  curl -fsSL "$INTERNAL_MIRROR_URL" -o "$_mirror_bundle"
+  curl_rc=$?
+  set -e
+  if [ "$curl_rc" -ne 0 ]; then
+    echo "[mirror] download failed with code $curl_rc" >&2
+    return "$curl_rc"
+  fi
+  set +e
+  HOME="$_mirror_candidate_home" XDG_CACHE_HOME="$_mirror_candidate_home/.cache" cve-bin-tool --import "$_mirror_bundle"
+  import_rc=$?
+  set -e
+  if [ "$import_rc" -ne 0 ]; then
+    echo "[mirror] import failed with code $import_rc" >&2
+    return "$import_rc"
+  fi
+  return 0
+}
+
 attempt_update() {
   nvd_mode="$1"
   api_label="$2"
   api_key="${3:-}"
+  disable_args="${4:-$BASE_DISABLE_ARGS}"
   attempt_id="${nvd_mode}-${api_label}"
   candidate_home="$STAGING_ROOT/candidates/$attempt_id"
   candidate_root="$candidate_home/.cache/cve-bin-tool"
@@ -40,7 +126,7 @@ attempt_update() {
   {
     echo "[attempt] mode=$nvd_mode api_label=$api_label started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     set +e
-    HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" NVD_MODE="$nvd_mode" ATTEMPT_API_KEY="$api_key" CVE_DISABLE_ARGS="$CVE_DISABLE_ARGS" UPDATE_TIMEOUT_SECONDS="$UPDATE_TIMEOUT_SECONDS" \
+    HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" NVD_MODE="$nvd_mode" ATTEMPT_API_KEY="$api_key" CVE_DISABLE_ARGS="$disable_args" UPDATE_TIMEOUT_SECONDS="$UPDATE_TIMEOUT_SECONDS" \
       python - <<'PY'
 import os
 import shlex
@@ -85,8 +171,10 @@ PY
 
 case "$MODE" in
   update)
+    write_status "failed" "update started"
     updated=0
     candidate_count=0
+    last_attempt_log=""
     set --
     for nvd_mode in $CVE_UPDATE_MODES; do
       if [ "$nvd_mode" = "api" ] || [ "$nvd_mode" = "api2" ]; then
@@ -99,9 +187,25 @@ case "$MODE" in
           candidate_root="$STAGING_ROOT/candidates/${nvd_mode}-${api_label}/.cache/cve-bin-tool"
           candidate_count=$((candidate_count + 1))
           set -- "$@" --candidate-root "$candidate_root"
-          if attempt_update "$nvd_mode" "$api_label" "$api_key"; then
+          if attempt_update "$nvd_mode" "$api_label" "$api_key" "$BASE_DISABLE_ARGS"; then
             updated=1
             break
+          fi
+          last_attempt_log="$ATTEMPTS_DIR/${nvd_mode}-${api_label}.log"
+          if [ "$nvd_mode" = "json-mirror" ] \
+             && [ -n "$RETRY_DISABLE_ARGS" ] \
+             && [ -f "$last_attempt_log" ] \
+             && grep -q "KeyError: 'type'" "$last_attempt_log"; then
+            mkdir -p artifacts/debug/cve-bin-tool
+            cp "$last_attempt_log" "artifacts/debug/cve-bin-tool/json-mirror-keyerror-type.log" 2>/dev/null || true
+            retry_label="${api_label}-retry-disabled-sources"
+            retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
+            candidate_count=$((candidate_count + 1))
+            set -- "$@" --candidate-root "$retry_root"
+            if attempt_update "$nvd_mode" "$retry_label" "$api_key" "$BASE_DISABLE_ARGS $RETRY_DISABLE_ARGS"; then
+              updated=1
+              break
+            fi
           fi
         done
         if [ "$updated" -eq 1 ]; then
@@ -111,29 +215,122 @@ case "$MODE" in
           candidate_root="$STAGING_ROOT/candidates/${nvd_mode}-no-key/.cache/cve-bin-tool"
           candidate_count=$((candidate_count + 1))
           set -- "$@" --candidate-root "$candidate_root"
-          if attempt_update "$nvd_mode" "no-key"; then
+          if attempt_update "$nvd_mode" "no-key" "" "$BASE_DISABLE_ARGS"; then
             updated=1
             break
+          fi
+          last_attempt_log="$ATTEMPTS_DIR/${nvd_mode}-no-key.log"
+          if [ "$nvd_mode" = "json-mirror" ] \
+             && [ -n "$RETRY_DISABLE_ARGS" ] \
+             && [ -f "$last_attempt_log" ] \
+             && grep -q "KeyError: 'type'" "$last_attempt_log"; then
+            mkdir -p artifacts/debug/cve-bin-tool
+            cp "$last_attempt_log" "artifacts/debug/cve-bin-tool/json-mirror-keyerror-type.log" 2>/dev/null || true
+            retry_label="no-key-retry-disabled-sources"
+            retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
+            candidate_count=$((candidate_count + 1))
+            set -- "$@" --candidate-root "$retry_root"
+            if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_DISABLE_ARGS $RETRY_DISABLE_ARGS"; then
+              updated=1
+              break
+            fi
           fi
         fi
       else
         candidate_root="$STAGING_ROOT/candidates/${nvd_mode}-default/.cache/cve-bin-tool"
         candidate_count=$((candidate_count + 1))
         set -- "$@" --candidate-root "$candidate_root"
-        if attempt_update "$nvd_mode" "default"; then
+        if attempt_update "$nvd_mode" "default" "" "$BASE_DISABLE_ARGS"; then
           updated=1
           break
         fi
+        last_attempt_log="$ATTEMPTS_DIR/${nvd_mode}-default.log"
+        if [ "$nvd_mode" = "json-mirror" ] \
+           && [ -n "$RETRY_DISABLE_ARGS" ] \
+           && [ -f "$last_attempt_log" ] \
+           && grep -q "KeyError: 'type'" "$last_attempt_log"; then
+          mkdir -p artifacts/debug/cve-bin-tool
+          cp "$last_attempt_log" "artifacts/debug/cve-bin-tool/json-mirror-keyerror-type.log" 2>/dev/null || true
+          retry_label="default-retry-disabled-sources"
+          retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
+          candidate_count=$((candidate_count + 1))
+          set -- "$@" --candidate-root "$retry_root"
+          if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_DISABLE_ARGS $RETRY_DISABLE_ARGS"; then
+            updated=1
+            break
+          fi
+        fi
+        if [ "$nvd_mode" = "json-nvd" ] \
+           && [ -f "$last_attempt_log" ] \
+           && grep -qi "SHAMismatch" "$last_attempt_log"; then
+          mkdir -p artifacts/debug/cve-bin-tool
+          cp "$last_attempt_log" "artifacts/debug/cve-bin-tool/json-nvd-sha-mismatch.log" 2>/dev/null || true
+          sleep 5
+          retry_label="default-retry-sha"
+          retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
+          candidate_count=$((candidate_count + 1))
+          set -- "$@" --candidate-root "$retry_root"
+          if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_DISABLE_ARGS"; then
+            updated=1
+            break
+          fi
+        fi
       fi
     done
+
+    if [ "$updated" -eq 0 ]; then
+      mirror_home="$STAGING_ROOT/candidates/internal-mirror-default"
+      mirror_root="$mirror_home/.cache/cve-bin-tool"
+      candidate_count=$((candidate_count + 1))
+      set -- "$@" --candidate-root "$mirror_root"
+      if import_from_internal_mirror "$mirror_home"; then
+        python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$mirror_root" \
+          >"$ATTEMPTS_DIR/internal-mirror-default.log" 2>&1 || true
+        updated=1
+      fi
+    fi
+
+    if [ "$updated" -eq 0 ]; then
+      bundle_home="$STAGING_ROOT/candidates/bundle-import-default"
+      bundle_root="$bundle_home/.cache/cve-bin-tool"
+      candidate_count=$((candidate_count + 1))
+      set -- "$@" --candidate-root "$bundle_root"
+      if import_bundle_if_present "$bundle_home"; then
+        python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$bundle_root" \
+          >"$ATTEMPTS_DIR/bundle-import-default.log" 2>&1 || true
+        updated=1
+      fi
+    fi
+
     [ "$candidate_count" -gt 0 ] || exit 1
     set +e
     python -m resilient_updates.cli --config "$CONFIG_PATH" activate cve-bin-tool-db "$@" --active-root "$DB_ROOT" --previous-root "$STAGING_ROOT/previous" --temp-root "$STAGING_ROOT/tmp" --provenance-path "artifacts/provenance/cve-bin-tool-db.json"
     activate_code=$?
     set -e
+    activation_status="$(python - <<'PY'
+from __future__ import annotations
+import json
+from pathlib import Path
+
+payload = {}
+path = Path("artifacts/provenance/cve-bin-tool-db.json")
+if path.exists():
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        payload = {}
+print(str(payload.get("activation_status") or "failed"))
+PY
+)"
     if [ "$activate_code" -eq 5 ]; then
       echo "cve-bin-tool updater fell back to last-known-good database" >&2
+      write_status "lkg" "last-known-good database used"
       exit 0
+    fi
+    if [ "$activate_code" -eq 0 ]; then
+      write_status "$activation_status" "candidate database activated"
+    else
+      write_status "failed" "activation failed with code $activate_code"
     fi
     exit "$activate_code"
     ;;
@@ -525,10 +722,13 @@ PYEOF
     fi
     ;;
   export)
-    cve-bin-tool --export "artifacts/mirror/cve-bin-tool-export.json"
+    export_path="${BUNDLE_PATH:-artifacts/mirror/cve-bin-tool-export.json}"
+    mkdir -p "$(dirname "$export_path")"
+    cve-bin-tool --export "$export_path"
     ;;
   import)
-    cve-bin-tool --import "artifacts/mirror/cve-bin-tool-export.json"
+    import_path="${BUNDLE_PATH:-artifacts/mirror/cve-bin-tool-export.json}"
+    cve-bin-tool --import "$import_path"
     ;;
   *)
     echo "Unsupported mode: $MODE" >&2

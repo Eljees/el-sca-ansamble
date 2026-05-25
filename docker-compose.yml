@@ -214,7 +214,7 @@ services:
       - ./:/workspace
       - ./artifacts:/workspace/artifacts
       - type: bind
-        source: ${EXTRACT_INPUT_HOST:-${SCAN_TARGET_HOST:?Set SCAN_TARGET_HOST or EXTRACT_INPUT_HOST in .env to the path of the archive to extract. See .env.example}}
+        source: ${EXTRACT_INPUT_HOST:-/tmp/el-sca-extract-input-not-set}
         target: /input
         read_only: true
     networks: [scanner-net]
@@ -311,7 +311,7 @@ services:
       dockerfile: Dockerfile.resilient-updater
     profiles: ["default", "scan", "report", "update", "test-failover", "offline", "airgap"]
     working_dir: /workspace
-    entrypoint: ["/bin/sh", "/workspace/scripts/collect_reports.sh"]
+    entrypoint: ["/bin/sh", "/opt/app/scripts/collect_reports.sh"]
     environment:
       REPORT_OUTPUT: ${REPORT_OUTPUT:-/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md}
       HTML_REPORT_OUTPUT: ${HTML_REPORT_OUTPUT:-/workspace/artifacts/reports/final/index.html}

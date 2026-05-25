@@ -83,6 +83,7 @@ cve_bin_tool:
     seed_epss: true
     osv_ecosystems: ["Debian", "Ubuntu", "Alpine"]
   db_audit:
+    db_policy: "strict"
     required_sources: ["NVD", "GAD", "REDHAT", "CURL", "PURL2CPE"]
     min_entries:
       NVD: 1

@@ -17,3 +17,28 @@ def test_compose_uses_cyclonedx_as_cve_bin_tool_sbom_default():
 
     assert "CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}" in compose
     assert "CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-syft}" not in compose
+
+
+def test_compose_extractor_source_no_longer_uses_nested_interpolation():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "${EXTRACT_INPUT_HOST:-/tmp/el-sca-extract-input-not-set}" in compose
+    assert "${EXTRACT_INPUT_HOST:-${SCAN_TARGET_HOST" not in compose
+
+
+def test_runtime_entrypoints_use_opt_app_paths():
+    dockerfile = (ROOT / "Dockerfile.cve-bin-tool").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert 'ENTRYPOINT ["/bin/sh", "/opt/app/scripts/update_cve_bin_tool.sh"]' in dockerfile
+    assert 'entrypoint: ["/bin/sh", "/opt/app/scripts/collect_reports.sh"]' in compose
+
+
+def test_preflight_script_checks_unresolved_vars_and_trailing_brace():
+    script = (ROOT / "scripts" / "preflight_compose.sh").read_text(encoding="utf-8")
+
+    assert "SCAN_TARGET_HOST" in script
+    assert "EXTRACT_INPUT_HOST" in script
+    assert "REPORT_OUTPUT" in script
+    assert "Unresolved compose variables found in rendered config" in script
+    assert "Bad trailing brace in rendered compose source path" in script

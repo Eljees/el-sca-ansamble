@@ -29,7 +29,7 @@ input never raises, the corresponding field is left blank instead.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from hashlib import sha256
+from hashlib import sha1, sha256
 from pathlib import Path
 from typing import Any
 import json
@@ -60,6 +60,19 @@ def _short_hash(*parts: str) -> str:
         digest.update(part.encode("utf-8", errors="replace"))
         digest.update(b"\0")
     return digest.hexdigest()[:12]
+
+
+def _hash_path(path: Path) -> dict[str, str]:
+    sha1_digest = sha1()
+    sha256_digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            sha1_digest.update(chunk)
+            sha256_digest.update(chunk)
+    return {
+        "sha1": sha1_digest.hexdigest(),
+        "sha256": sha256_digest.hexdigest(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -113,10 +126,34 @@ def _input_sha256(extraction_manifest: Any) -> str | None:
     return f"multi:{_short_hash(*parts)}"
 
 
+def _input_hashes(extraction_manifest: Any) -> dict[str, str]:
+    if not isinstance(extraction_manifest, dict):
+        return {}
+    items = extraction_manifest.get("items") or []
+    if len(items) != 1 or not isinstance(items[0], dict):
+        return {}
+    archive = str(items[0].get("archive") or "").strip()
+    if not archive:
+        return {}
+    path = Path(archive)
+    if not path.exists() or not path.is_file():
+        return {}
+    try:
+        return _hash_path(path)
+    except OSError:
+        return {}
+
+
 def _grype_provenance_state(prov_grype: Any) -> dict[str, str]:
     """Map a ``provenance/grype.json`` to coarse update-state fields."""
     if not isinstance(prov_grype, dict):
-        return {"update_grype_db": "unknown", "grype_built": ""}
+        return {
+            "update_grype_db": "unknown",
+            "grype_built": "",
+            "grype_db_version": "",
+            "grype_db_source": "",
+            "grype_updated_at": "",
+        }
     status = str(prov_grype.get("activation_status") or "").strip()
     used_lkg = bool(prov_grype.get("used_last_known_good"))
     if status == "active":
@@ -131,23 +168,76 @@ def _grype_provenance_state(prov_grype: Any) -> dict[str, str]:
     meta = prov_grype.get("freshness_metadata")
     if isinstance(meta, dict):
         built = str(meta.get("built") or "")
-    return {"update_grype_db": update_state, "grype_built": built}
+    checksum = str(prov_grype.get("checksum") or "")
+    selected_source = prov_grype.get("selected_source") or {}
+    if isinstance(selected_source, dict):
+        selected_source = selected_source.get("name") or selected_source.get("url") or ""
+    return {
+        "update_grype_db": update_state,
+        "grype_built": built,
+        "grype_db_version": checksum,
+        "grype_db_source": str(selected_source or ""),
+        "grype_updated_at": str(prov_grype.get("timestamp_utc") or ""),
+    }
 
 
 def _cve_provenance_state(prov_cve: Any) -> dict[str, str]:
     if not isinstance(prov_cve, dict):
-        return {"update_cve_db": "unknown"}
+        return {
+            "update_cve_db": "unknown",
+            "cve_db_version": "",
+            "cve_db_source": "",
+            "cve_updated_at": "",
+        }
     status = str(prov_cve.get("activation_status") or "").strip()
     used_lkg = bool(prov_cve.get("used_last_known_good"))
-    if status == "active":
-        update_state = "refreshed-this-run"
-    elif status in {"active-noop", "last-known-good"} or used_lkg:
-        update_state = "reused-cached"
+    if status in {"fresh", "degraded", "lkg", "failed"}:
+        update_state = status
+    elif status == "active":
+        update_state = "fresh"
+    elif status == "active-noop":
+        update_state = "fresh"
+    elif status == "last-known-good":
+        update_state = "lkg"
+    elif used_lkg:
+        update_state = "lkg"
     elif status:
         update_state = status
     else:
         update_state = "unknown"
-    return {"update_cve_db": update_state}
+    selected_source = str(prov_cve.get("selected_source") or "")
+    version = selected_source
+    audit = prov_cve.get("last_known_good_audit") or {}
+    cve_db_file = (audit.get("files") or {}).get("cve.db") if isinstance(audit, dict) else {}
+    if not version and isinstance(cve_db_file, dict):
+        version = str(cve_db_file.get("mtime_utc") or "")
+    return {
+        "update_cve_db": update_state,
+        "cve_db_version": version,
+        "cve_db_source": selected_source,
+        "cve_updated_at": str(prov_cve.get("timestamp_utc") or ""),
+    }
+
+
+def _trivy_provenance_state(prov_trivy: Any) -> dict[str, str]:
+    if not isinstance(prov_trivy, dict):
+        return {
+            "update_trivy_db": "unknown",
+            "trivy_db_version": "",
+            "trivy_db_source": "",
+            "trivy_updated_at": "",
+        }
+    status = str(prov_trivy.get("activation_status") or "").strip()
+    update_state = status or "unknown"
+    selected_source = prov_trivy.get("selected_source") or {}
+    if isinstance(selected_source, dict):
+        selected_source = selected_source.get("name") or selected_source.get("url") or ""
+    return {
+        "update_trivy_db": update_state,
+        "trivy_db_version": str(prov_trivy.get("artifact_type") or ""),
+        "trivy_db_source": str(selected_source or ""),
+        "trivy_updated_at": str(prov_trivy.get("timestamp_utc") or ""),
+    }
 
 
 def _db_snapshot_id(prov_grype: Any, prov_cve: Any) -> str:
@@ -199,9 +289,13 @@ def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
     return [item for item in failed if not (item in seen or seen.add(item))]
 
 
-def _db_drift(root: Path, grype_state: dict[str, str], cve_state: dict[str, str]) -> str:
+def _db_drift(root: Path, grype_state: dict[str, str], cve_state: dict[str, str], trivy_state: dict[str, str]) -> str:
     """Return ``fresh`` | ``stale`` | ``unknown`` based on update-state hints."""
-    states = {grype_state.get("update_grype_db", ""), cve_state.get("update_cve_db", "")}
+    states = {
+        grype_state.get("update_grype_db", ""),
+        cve_state.get("update_cve_db", ""),
+        trivy_state.get("update_trivy_db", ""),
+    }
     if "unknown" in states and len(states) == 1:
         return "unknown"
     if states <= {"refreshed-this-run", "reused-cached"} and states:
@@ -233,17 +327,20 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         extraction = _read_json(base / "extraction_manifest.json")
     prov_grype = _read_json(base / "provenance" / "grype.json")
     prov_cve = _read_json(base / "provenance" / "cve-bin-tool-db.json")
+    prov_trivy = _read_json(base / "provenance" / "trivy.json")
 
     syft_count = _component_count(syft)
     grype_count = _grype_match_count(grype)
     trivy_count = _trivy_match_count(trivy)
     cve_count = _cve_bin_tool_count(cve)
     input_sha = _input_sha256(extraction)
+    input_hashes = _input_hashes(extraction)
     grype_state = _grype_provenance_state(prov_grype)
     cve_state = _cve_provenance_state(prov_cve)
+    trivy_state = _trivy_provenance_state(prov_trivy)
     snapshot_id = _db_snapshot_id(prov_grype, prov_cve)
     failures = _tool_failures(base, grype, trivy, cve)
-    drift = _db_drift(base, grype_state, cve_state)
+    drift = _db_drift(base, grype_state, cve_state, trivy_state)
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -262,8 +359,10 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "db_drift": drift,
         "policy_decision": "no-policy",
         "update_grype_db": grype_state["update_grype_db"],
+        "update_trivy_db": trivy_state["update_trivy_db"],
         "update_cve_db": cve_state["update_cve_db"],
         "input_sha256": input_sha or "",
+        "input_hashes": input_hashes,
         "db_snapshot_id": snapshot_id,
     }
     status = {
@@ -276,6 +375,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "generated_by": "resilient_updates.run_summary",
         "timestamp_utc": timestamp,
         "input": {"sha256": input_sha or ""},
+        "input_hashes": input_hashes,
         "db_snapshot_id": snapshot_id,
     }
     db_snapshot = {
@@ -284,7 +384,29 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "snapshot_id": snapshot_id,
         "grype_built": grype_state["grype_built"],
         "grype_update_state": grype_state["update_grype_db"],
+        "trivy_update_state": trivy_state["update_trivy_db"],
         "cve_update_state": cve_state["update_cve_db"],
+        "tools": {
+            "trivy": {
+                "db_version": trivy_state["trivy_db_version"],
+                "db_source": trivy_state["trivy_db_source"],
+                "updated_at": trivy_state["trivy_updated_at"],
+                "update_state": trivy_state["update_trivy_db"],
+            },
+            "grype": {
+                "db_version": grype_state["grype_db_version"],
+                "db_source": grype_state["grype_db_source"],
+                "updated_at": grype_state["grype_updated_at"],
+                "built_at": grype_state["grype_built"],
+                "update_state": grype_state["update_grype_db"],
+            },
+            "cve-bin-tool": {
+                "db_version": cve_state["cve_db_version"],
+                "db_source": cve_state["cve_db_source"],
+                "updated_at": cve_state["cve_updated_at"],
+                "update_state": cve_state["update_cve_db"],
+            },
+        },
     }
     return {
         "summary": summary,

@@ -2,9 +2,10 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/app
 
-WORKDIR /workspace
+WORKDIR /opt/app
 
 # BuildKit cache mounts: apt lists & debs are reused across rebuilds, so
 # only the diff downloads on the next run.  rm -rf inside the same layer is
@@ -28,5 +29,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 COPY requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install -r /tmp/requirements.txt
+
+COPY resilient_updates /opt/app/resilient_updates
+COPY scripts /opt/app/scripts
+
+RUN chmod +x /opt/app/scripts/*.sh 2>/dev/null || true
 
 ENTRYPOINT ["python", "-m", "resilient_updates.cli", "extract"]

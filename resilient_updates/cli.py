@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
 import tarfile
 from typing import Any
 from urllib.parse import urljoin
@@ -352,18 +353,19 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
     return EXIT_SUCCESS
 
 
-def _cve_db_policy(config: dict[str, Any]) -> tuple[list[str], dict[str, int], str, list[str]]:
+def _cve_db_policy(config: dict[str, Any]) -> tuple[list[str], dict[str, int], str, list[str], str]:
     cve_cfg = config["cve_bin_tool"]
     db_audit = cve_cfg["db_audit"]
     required_sources = [str(item).upper() for item in db_audit.get("required_sources", [])]
     min_entries = {str(key).upper(): int(value) for key, value in db_audit.get("min_entries", {}).items()}
     max_cache_age = str(db_audit.get("max_cache_age", "168h"))
     declared_sources = [str(item).upper() for item in cve_cfg.get("data_sources", [])]
-    return required_sources, min_entries, max_cache_age, declared_sources
+    db_policy = str(os.environ.get("CVE_BIN_TOOL_DB_POLICY") or db_audit.get("db_policy", "strict")).strip().lower()
+    return required_sources, min_entries, max_cache_age, declared_sources, db_policy
 
 
 def _run_cve_db_audit(config: dict[str, Any], db_root: str) -> tuple[int, dict[str, Any]]:
-    required_sources, min_entries, max_cache_age, declared_sources = _cve_db_policy(config)
+    required_sources, min_entries, max_cache_age, declared_sources, _db_policy = _cve_db_policy(config)
     payload = audit_cve_bin_tool_db(db_root, required_sources, min_entries, max_cache_age, declared_sources)
     if payload["overall_status"] == "pass":
         return EXIT_SUCCESS, payload
@@ -379,7 +381,7 @@ def _activate_cve_db(
     temp_root: str,
     provenance_path: str,
 ) -> tuple[int, dict[str, Any]]:
-    required_sources, min_entries, max_cache_age, declared_sources = _cve_db_policy(config)
+    required_sources, min_entries, max_cache_age, declared_sources, db_policy = _cve_db_policy(config)
     activated, payload = activate_best_cve_bin_tool_db(
         candidate_roots=candidate_roots,
         active_root=active_root,
@@ -390,6 +392,7 @@ def _activate_cve_db(
         min_entries=min_entries,
         max_cache_age=max_cache_age,
         declared_sources=declared_sources,
+        db_policy=db_policy,
     )
     if activated:
         return EXIT_SUCCESS, payload

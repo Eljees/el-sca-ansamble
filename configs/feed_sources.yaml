@@ -200,6 +200,7 @@ cve_bin_tool:
       - npm
       - Rust
   db_audit:
+    db_policy: "strict"
     required_sources:
       - NVD
       - GAD

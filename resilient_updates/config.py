@@ -21,6 +21,7 @@ KNOWN_LAYERS = {
 AUTH_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 INSECURE_KEYS = {"ignore_signatures", "disable_validation", "insecure_registry", "allow_stale_forever"}
 KNOWN_CVE_DATA_SOURCES = {"NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"}
+KNOWN_CVE_DB_POLICIES = {"strict", "degraded-ok", "lkg-ok"}
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -110,6 +111,11 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
         parse_duration_hours(db_audit.get("max_cache_age", "168h"))
     except ValueError as exc:
         errors.append(str(exc))
+    db_policy = str(db_audit.get("db_policy", "strict")).strip().lower()
+    if db_policy not in KNOWN_CVE_DB_POLICIES:
+        errors.append(
+            f"cve_bin_tool.db_audit.db_policy must be one of {sorted(KNOWN_CVE_DB_POLICIES)}"
+        )
     if "db_status" in cve_cfg:
         try:
             parse_duration_hours(cve_cfg["db_status"].get("warning_age", "24h"))

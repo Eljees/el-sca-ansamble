@@ -312,6 +312,7 @@ if ($Format -eq "auto") {
 $env:SCAN_TARGET_HOST      = $TargetResolved
 $env:SCAN_TARGET_CONTAINER = "/scan-target"
 $env:SCAN_TARGET_DISPLAY   = $TargetResolved
+$env:EXTRACT_INPUT_HOST    = $TargetResolved
 $env:SYFT_TARGET           = "/scan-target"
 $env:SYFT_FROM             = "dir"
 $env:TRIVY_TARGET          = "/scan-target"

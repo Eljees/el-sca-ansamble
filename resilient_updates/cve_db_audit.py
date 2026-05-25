@@ -20,6 +20,7 @@ from .provenance import write_provenance
 
 OBSERVABLE_CVE_SOURCES = {"NVD", "GAD", "REDHAT", "CURL", "OSV", "PURL2CPE", "EPSS", "RSD"}
 UNOBSERVABLE_CVE_SOURCES: set[str] = set()
+DB_POLICIES = {"strict", "degraded-ok", "lkg-ok"}
 
 
 def _utc_from_mtime(path: Path) -> str | None:
@@ -199,6 +200,56 @@ def audit_cve_bin_tool_db(
     return result
 
 
+def classify_cve_db_health(
+    audit_payload: dict[str, Any],
+    required_sources: list[str],
+) -> tuple[str, dict[str, Any]]:
+    """Classify audited DB health into fresh/degraded/failed."""
+    required_upper = {item.upper() for item in required_sources}
+    source_status = audit_payload.get("source_status") or {}
+    if audit_payload.get("overall_status") != "pass":
+        return "failed", {"missing_required": sorted(required_upper), "missing_optional": []}
+
+    missing_required: list[str] = []
+    missing_optional: list[str] = []
+
+    for source_name, payload in source_status.items():
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("observable") is not True:
+            continue
+        if payload.get("status") == "ok":
+            continue
+        source_upper = str(source_name).upper()
+        if source_upper in required_upper:
+            missing_required.append(source_upper)
+        else:
+            missing_optional.append(source_upper)
+
+    if missing_required:
+        return "failed", {
+            "missing_required": sorted(set(missing_required)),
+            "missing_optional": sorted(set(missing_optional)),
+        }
+    if missing_optional:
+        return "degraded", {
+            "missing_required": [],
+            "missing_optional": sorted(set(missing_optional)),
+        }
+    return "fresh", {"missing_required": [], "missing_optional": []}
+
+
+def _policy_allows_status(policy: str, status: str) -> bool:
+    if policy not in DB_POLICIES:
+        policy = "strict"
+    allowed = {
+        "strict": {"fresh"},
+        "degraded-ok": {"fresh", "degraded"},
+        "lkg-ok": {"fresh", "degraded"},
+    }
+    return status in allowed[policy]
+
+
 def activate_best_cve_bin_tool_db(
     candidate_roots: list[str | Path],
     active_root: str | Path,
@@ -209,16 +260,26 @@ def activate_best_cve_bin_tool_db(
     min_entries: dict[str, int],
     max_cache_age: str,
     declared_sources: list[str] | None = None,
+    db_policy: str = "strict",
 ) -> tuple[bool, dict[str, Any]]:
     audits: list[dict[str, Any]] = []
     selected_root: Path | None = None
     selected_audit: dict[str, Any] | None = None
+    selected_health_status: str = "failed"
+    selected_health_details: dict[str, Any] = {"missing_required": [], "missing_optional": []}
+
+    if db_policy not in DB_POLICIES:
+        db_policy = "strict"
+
     for candidate in candidate_roots:
         audit = audit_cve_bin_tool_db(candidate, required_sources, min_entries, max_cache_age, declared_sources)
         audits.append(audit)
-        if audit["overall_status"] == "pass":
+        health_status, health_details = classify_cve_db_health(audit, required_sources)
+        if _policy_allows_status(db_policy, health_status):
             selected_root = Path(candidate)
             selected_audit = audit
+            selected_health_status = health_status
+            selected_health_details = health_details
             break
 
     active_path = Path(active_root)
@@ -239,22 +300,28 @@ def activate_best_cve_bin_tool_db(
             if item["overall_status"] != "pass"
         ],
         "used_last_known_good": False,
+        "db_policy": db_policy,
+        "selected_health_status": selected_health_status,
+        "selected_health_details": selected_health_details,
         "activation_status": "failed",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
     }
     if not selected_root or not selected_audit:
         lkg = audit_cve_bin_tool_db(active_path, required_sources, min_entries, max_cache_age, declared_sources)
+        lkg_status, lkg_details = classify_cve_db_health(lkg, required_sources)
         payload["last_known_good_audit"] = lkg
-        if lkg["overall_status"] == "pass":
+        payload["last_known_good_status"] = lkg_status
+        payload["last_known_good_details"] = lkg_details
+        if db_policy == "lkg-ok" and lkg_status in {"fresh", "degraded"}:
             payload["used_last_known_good"] = True
-            payload["activation_status"] = "last-known-good"
+            payload["activation_status"] = "lkg"
             write_provenance(Path(provenance_path), payload)
             return False, payload
         write_provenance(Path(provenance_path), payload)
         return False, payload
 
     if selected_root.resolve() == active_path.resolve():
-        payload["activation_status"] = "active-noop"
+        payload["activation_status"] = selected_health_status
         payload["selected_audit"] = selected_audit
         write_provenance(Path(provenance_path), payload)
         return True, payload
@@ -279,7 +346,7 @@ def activate_best_cve_bin_tool_db(
             if previous_path.exists() and not active_path.exists():
                 shutil.copytree(previous_path, active_path)
             raise
-    payload["activation_status"] = "active"
+    payload["activation_status"] = selected_health_status
     payload["selected_audit"] = selected_audit
     write_provenance(Path(provenance_path), payload)
     return True, payload

@@ -177,6 +177,7 @@ fi
 export SCAN_TARGET_HOST="$TARGET_RESOLVED"
 export SCAN_TARGET_CONTAINER="/scan-target"
 export SCAN_TARGET_DISPLAY="$TARGET_RESOLVED"
+export EXTRACT_INPUT_HOST="$TARGET_RESOLVED"
 export SYFT_TARGET="/scan-target"
 export SYFT_FROM="dir"
 export TRIVY_TARGET="/scan-target"
