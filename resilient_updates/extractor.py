@@ -307,10 +307,12 @@ def _extract_one(
     return str(target_dir)
 
 
-def _find_archives(root: Path) -> list[Path]:
+def _find_archives(root: Path, *, ignore_generated_dirs: bool = True) -> list[Path]:
     if root.is_file():
         return [root] if _archive_kind(root) else []
-    ignored_parts = {"container_run", "artifacts", "__pycache__"}
+    ignored_parts = {"container_run", "__pycache__"}
+    if ignore_generated_dirs:
+        ignored_parts.add("artifacts")
     archives: list[Path] = []
     for item in root.rglob("*"):
         if not item.is_file():
@@ -401,7 +403,11 @@ def extract_artifacts(
             _enforce_limits(destination_root, limits)
             item["status"] = "extracted"
             if depth < max_depth:
-                nested = [nested_path for nested_path in _find_archives(target_dir) if nested_path.resolve() not in seen]
+                nested = [
+                    nested_path
+                    for nested_path in _find_archives(target_dir, ignore_generated_dirs=False)
+                    if nested_path.resolve() not in seen
+                ]
                 queue.extend((nested_path, depth + 1) for nested_path in nested)
         except Exception as exc:
             item["status"] = "failed"

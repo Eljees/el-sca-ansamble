@@ -26,12 +26,14 @@ def test_compose_extractor_source_no_longer_uses_nested_interpolation():
     assert "${EXTRACT_INPUT_HOST:-${SCAN_TARGET_HOST" not in compose
 
 
-def test_runtime_entrypoints_use_opt_app_paths():
+def test_runtime_entrypoints_use_runtime_stable_paths():
     dockerfile = (ROOT / "Dockerfile.cve-bin-tool").read_text(encoding="utf-8")
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    collect_script = (ROOT / "scripts" / "collect_reports.sh").read_text(encoding="utf-8")
 
     assert 'ENTRYPOINT ["/bin/sh", "/opt/app/scripts/update_cve_bin_tool.sh"]' in dockerfile
-    assert 'entrypoint: ["/bin/sh", "/opt/app/scripts/collect_reports.sh"]' in compose
+    assert 'entrypoint: ["/bin/sh", "/workspace/scripts/collect_reports.sh"]' in compose
+    assert 'python /workspace/scripts/report_html.py' in collect_script
 
 
 def test_preflight_script_checks_unresolved_vars_and_trailing_brace():

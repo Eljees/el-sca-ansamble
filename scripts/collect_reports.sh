@@ -43,7 +43,7 @@ python -m resilient_updates.cli collect-report \
   --display-target "$SCAN_TARGET_DISPLAY" \
   --case-id "$CASE_ID"
 
-if ! python /opt/app/scripts/report_html.py \
+if ! python /workspace/scripts/report_html.py \
   --artifacts-dir "$REPORTS_DIR" \
   --output "$HTML_REPORT_OUTPUT" \
   --target "$SCAN_TARGET_DISPLAY"; then

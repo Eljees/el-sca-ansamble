@@ -311,7 +311,7 @@ services:
       dockerfile: Dockerfile.resilient-updater
     profiles: ["default", "scan", "report", "update", "test-failover", "offline", "airgap"]
     working_dir: /workspace
-    entrypoint: ["/bin/sh", "/opt/app/scripts/collect_reports.sh"]
+    entrypoint: ["/bin/sh", "/workspace/scripts/collect_reports.sh"]
     environment:
       REPORT_OUTPUT: ${REPORT_OUTPUT:-/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md}
       HTML_REPORT_OUTPUT: ${HTML_REPORT_OUTPUT:-/workspace/artifacts/reports/final/index.html}
