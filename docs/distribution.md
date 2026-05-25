@@ -34,12 +34,12 @@ artifacts/            ← результаты сканирований — не
 
 Чтобы получатель мог просто сделать `git clone`, а потом копировать готовые шаблоны, в git должны лежать:
 
-- [docker-compose.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.yml) — основной compose для разработки и запуска;
-- [docker-compose.prod.example.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.prod.example.yml) — override-файл для запуска из готовых образов;
-- [.env.example](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/.env.example) — общий пример переменных;
-- [receiver.env.example](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/receiver.env.example) — готовый шаблон `.env` именно для получателя;
-- [scripts/windows/run-scan.ps1](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/scripts/windows/run-scan.ps1) — запуск скана на Windows;
-- [scripts/scan_archive.sh](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/scripts/scan_archive.sh) — запуск скана на Linux / WSL.
+- [docker-compose.yml](D:/dev/el-sca-ansamble/docker-compose.yml) — основной compose для разработки и запуска;
+- [docker-compose.prod.example.yml](D:/dev/el-sca-ansamble/docker-compose.prod.example.yml) — override-файл для запуска из готовых образов;
+- [.env.example](D:/dev/el-sca-ansamble/.env.example) — общий пример переменных;
+- [receiver.env.example](D:/dev/el-sca-ansamble/receiver.env.example) — готовый шаблон `.env` именно для получателя;
+- [scripts/windows/run-scan.ps1](D:/dev/el-sca-ansamble/scripts/windows/run-scan.ps1) — запуск скана на Windows;
+- [scripts/scan_archive.sh](D:/dev/el-sca-ansamble/scripts/scan_archive.sh) — запуск скана на Linux / WSL.
 
 Идея простая: вы пушите эти файлы один раз, а получатель уже у себя создаёт только локальные рабочие копии:
 
@@ -142,7 +142,7 @@ docker push "${REGISTRY}/el-sca-extractor:latest"
 Готовая последовательность для PowerShell целиком:
 
 ```powershell
-Set-Location "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble"
+Set-Location "D:\dev\el-sca-ansamble"
 
 $REGISTRY = "elariaphd"
 $VERSION = "1.0.0"
@@ -198,7 +198,7 @@ $REGISTRY = "ghcr.io/your-org"
 
 Главная идея такая:
 
-1. Основной [docker-compose.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.yml) разработчики не трогают.
+1. Основной [docker-compose.yml](D:/dev/el-sca-ansamble/docker-compose.yml) разработчики не трогают.
 2. Для передачи получателю в git кладётся отдельный override-файл.
 3. Получатель после `git clone` просто копирует этот override-файл в рабочее имя и запускает Compose с двумя файлами.
 
@@ -221,7 +221,7 @@ $REGISTRY = "ghcr.io/your-org"
 
 Что делать в репозитории:
 
-- добавить в git файл [docker-compose.prod.example.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.prod.example.yml);
+- добавить в git файл [docker-compose.prod.example.yml](D:/dev/el-sca-ansamble/docker-compose.prod.example.yml);
 - не создавать заранее `docker-compose.prod.yml`, потому что это уже рабочий локальный файл конкретного получателя;
 - передавать получателю репозиторий уже с `docker-compose.prod.example.yml`.
 - в этом override-файле `build: !reset null` убирает локальную сборку и оставляет только pull готовых образов.

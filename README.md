@@ -88,7 +88,7 @@
 
 ### Контейнерные сервисы
 
-Состав сервисов описан в [docker-compose.yml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/docker-compose.yml):
+Состав сервисов описан в [docker-compose.yml](D:/dev/el-sca-ansamble/docker-compose.yml):
 
 - `stack-info` — минимальная проверка стека и конфигурации;
 - `trivy-updater` — прогрев Trivy DB cache *(profile `update`)*;
@@ -244,7 +244,7 @@ docker compose build
 
 ## 3. Центральная конфигурация
 
-Главный policy-файл источников: [configs/feed_sources.yaml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/configs/feed_sources.yaml)
+Главный policy-файл источников: [configs/feed_sources.yaml](D:/dev/el-sca-ansamble/configs/feed_sources.yaml)
 
 Он управляет:
 
@@ -339,7 +339,7 @@ python -m resilient_updates.cli collect-report `
 Нужно поменять только значение `$env:SCAN_TARGET_HOST`.
 
 ```powershell
-Set-Location "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble"
+Set-Location "D:\dev\el-sca-ansamble"
 
 $env:SCAN_TARGET_HOST = "D:\path\to\artifact-folder"
 $env:SCAN_TARGET_CONTAINER = "/scan-target"
@@ -512,7 +512,7 @@ python3 -m resilient_updates.cli collect-report --reports-dir artifacts --target
 
 ## 5. Быстрый запуск для Windows
 
-Если нужен быстрый запуск без ручного перечисления контейнеров, можно использовать [scripts/windows/run-scan.ps1](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/scripts/windows/run-scan.ps1).
+Если нужен быстрый запуск без ручного перечисления контейнеров, можно использовать [scripts/windows/run-scan.ps1](D:/dev/el-sca-ansamble/scripts/windows/run-scan.ps1).
 
 Текущий `run-scan.ps1` теперь умеет полный цикл через `-Tool all` и отдельные прогоны через `syft`, `grype`, `trivy`, `cve-bin-tool`. По умолчанию базы не обновляются; для принудительного обновления перед сканом используйте `-UpdateDb`.
 
@@ -596,7 +596,7 @@ Linux:
 ## 9. Troubleshooting
 
 - `validate-config` упал:
-  - проверить [configs/feed_sources.yaml](D:/!ya_drive_sync/YandexDisk/rostel/el-sca-ansamble/configs/feed_sources.yaml)
+- проверить [configs/feed_sources.yaml](D:/dev/el-sca-ansamble/configs/feed_sources.yaml)
   - убедиться, что нет пустых или конфликтующих источников
 
 - `docker compose ... config` упал:

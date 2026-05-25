@@ -261,7 +261,7 @@ ls -lah
 
 ```powershell
 # On Windows PowerShell
-scp -r "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble\*" elaria@192.168.1.33:/opt/sca-work/
+scp -r "D:\dev\el-sca-ansamble\*" elaria@192.168.1.33:/opt/sca-work/
 ```
 
 ### Step 2.3: Verify Project Structure
@@ -386,7 +386,7 @@ If this fails, verify:
 
 ```powershell
 # On Windows, in el-sca-ansamble directory
-cd D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble
+cd D:\dev\el-sca-ansamble
 
 # Run complete scan with extraction and cleanup
 .\scripts\windows\run-scan.ps1 -Target "path\to\archive.tar.gz" -Extract -Clean
@@ -411,7 +411,7 @@ cd D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble
 .\scripts\windows\run-scan.ps1 -Target "archive.tar.gz" -UpdateDb
 
 # Run in background
-$job = Start-Job { cd D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble; .\scripts\windows\run-scan.ps1 -Target "..." -Clean }
+$job = Start-Job { cd D:\dev\el-sca-ansamble; .\scripts\windows\run-scan.ps1 -Target "..." -Clean }
 Get-Job -Id $job.Id | Receive-Job -Wait -AutoRemoveJob
 ```
 
@@ -659,4 +659,3 @@ rm -rf artifacts/*
 
 **Last Updated:** 2026-05-15 14:00 UTC+3  
 **Status:** ✅ Production Ready - v3.0
-

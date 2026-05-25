@@ -108,7 +108,7 @@ Simply update:
 # Pull latest version
 git pull origin main
 # or
-cd D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble
+cd D:\dev\el-sca-ansamble
 # Replace run-scan.ps1 with new version
 ```
 
