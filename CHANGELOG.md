@@ -96,6 +96,55 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rotate `NVD_API_KEY` and `NVD_API_KEY_FALLBACK` in the NVD console;
   install new values in `.env.local`.
 
+### Audit delta v2 — 2026-05-26 (docs/audit/50-delta-2026-05-25-v2.md)
+
+Повторный независимый аудит после переноса в `D:\dev\el-sca-ansamble`.
+Подтвердил применение фаз A–F; нашёл несколько недотянутых хвостов и
+парy false-positive'ов (Linux-mount stale-кэш ввёл в заблуждение по двум
+пунктам).  Полный отчёт — `docs/audit/50-delta-2026-05-25-v2.md`.
+
+**Added / Changed**
+
+- **`docker-compose.yml` — 4 sidecar image-тега через `${…_VERSION:-…}`.**
+  Раньше `versions.env` объявлял `OSV_SCANNER_VERSION`/`XRAY_VERSION`/
+  `TINYPROXY_VERSION`/`WIREGUARD_VERSION`, но в compose они не
+  использовались.  Теперь `osv-scanner` / `proxy-xray` / `tinyproxy` /
+  `wireguard` берут версию из `versions.env`.  Five основных
+  scanner-images уже были параметризованы фазой F.  See NEW-2.
+- **`Dockerfile.cve-bin-tool` — `ARG CVE_BIN_TOOL_VERSION=3.4`.**
+  `pip install … "cve-bin-tool==${CVE_BIN_TOOL_VERSION}"`; чтобы compose
+  мог прокинуть build-arg, в `docker-compose.yml` для cve-bin-tool
+  сервисов нужно дописать `build: { args: { CVE_BIN_TOOL_VERSION:
+  ${CVE_BIN_TOOL_VERSION:-3.4} } }` — оставлено как follow-up, чтобы не
+  трогать build-блоки до подтверждения `make lock`.
+
+**False-positives, выловленные перепроверкой через прямой read**
+
+- ~~`docs/operations.md:44` всё ещё `grype:v0.82.0`~~ — на самом деле
+  уже `v0.112.0` (фаза E закрыла).
+- ~~Все 5 `Dockerfile.*` запускаются от root~~ — на самом деле все
+  имеют `USER appuser` + `useradd …` (фаза B/F закрыла).
+- ~~`enrichment.date_value` пишется как float~~ — на самом деле уже
+  `datetime.fromtimestamp(...).isoformat()`.
+- ~~`windows.override.yml` без комментариев к 4G tmpfs~~ — в файле уже
+  развёрнутый комментарий-объяснение.
+
+**Pending user-action (новое)**
+
+- `git restore --staged artifacts/db_snapshot.json artifacts/run_manifest.json artifacts/status.json artifacts/summary.json`
+  — runtime-артефакты случайно попали в индекс (`.gitignore` уже верный,
+  им просто нужно успеть вступить).
+- `make lock` — `requirements.lock` пока placeholder (написано в самом
+  файле); сгенерировать настоящий с `--generate-hashes`.
+- `make test` (или `pytest -q --cov=resilient_updates --cov-report=term-missing`)
+  — измерить baseline покрытия, подстроить `--cov-fail-under` в CI.
+
+**Carry-over открытые после v2**
+
+- `cli._dedup_attempted_sources` last-wins (10-defects §15).
+- `Dockerfile.apk-analyzer` `JAVA_TOOL_OPTIONS=-Xmx512m` без override (10-defects §18).
+- `cve_db_audit._activate` Windows race-window сокращено, но не нулевое (10-defects §13).
+
 ---
 
 ### Added — 2026-05-20 batch-time digest
