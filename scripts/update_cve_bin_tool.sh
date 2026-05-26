@@ -8,12 +8,13 @@ REPORT_DIR="${REPORT_DIR:-artifacts/reports/cve-bin-tool}"
 DB_ROOT="${CVE_BIN_TOOL_DB_ROOT:-/root/.cache/cve-bin-tool}"
 STAGING_ROOT="${CVE_BIN_TOOL_STAGING_ROOT:-/var/lib/resilient-db/cve-bin-tool}"
 ATTEMPTS_DIR="$REPORT_DIR/attempts"
-UPDATE_TIMEOUT_SECONDS="${CVE_BIN_TOOL_UPDATE_TIMEOUT_SECONDS:-420}"
+UPDATE_TIMEOUT_SECONDS="${CVE_BIN_TOOL_UPDATE_TIMEOUT_SECONDS:-1800}"
 SEED_TIMEOUT_SECONDS="${CVE_BIN_TOOL_SEED_TIMEOUT_SECONDS:-120}"
 CVE_DISABLE_SOURCES="${CVE_BIN_TOOL_DISABLE_SOURCES:-}"
 CVE_DISABLE_SOURCES_ON_RETRY="${CVE_BIN_TOOL_DISABLE_SOURCES_ON_RETRY:-OSV}"
 CVE_UPDATE_MODES="${CVE_BIN_TOOL_UPDATE_MODES:-json-mirror json-nvd api2}"
 CVE_OSV_ECOSYSTEMS="${CVE_BIN_TOOL_OSV_ECOSYSTEMS:-Debian Ubuntu Alpine Go PyPI Maven npm Rust}"
+UPDATE_SCAN_DIR="${CVE_BIN_TOOL_UPDATE_SCAN_DIR:-/tmp/cvebt-update-empty}"
 NVD_API_KEY_PRIMARY="${NVD_API_KEY:-}"
 NVD_API_KEY_SECONDARY="${NVD_API_KEY_FALLBACK:-}"
 DB_POLICY="${CVE_BIN_TOOL_DB_POLICY:-strict}"
@@ -21,6 +22,7 @@ BUNDLE_PATH="${CVE_BIN_TOOL_BUNDLE_PATH:-}"
 USE_INTERNAL_MIRROR="${CVE_BIN_TOOL_USE_INTERNAL_MIRROR:-0}"
 INTERNAL_MIRROR_URL="${CVE_BIN_TOOL_MIRROR_URL:-}"
 STATUS_PATH="${CVE_BIN_TOOL_STATUS_PATH:-artifacts/provenance/cve-bin-tool-update-status.json}"
+PRESEED_ACTIVE="${CVE_BIN_TOOL_PRESEED_ACTIVE:-1}"
 
 mkdir -p "$REPORT_DIR" "$ATTEMPTS_DIR" "artifacts/provenance" "artifacts/mirror" "$STAGING_ROOT/candidates" "$STAGING_ROOT/tmp" "$STAGING_ROOT/previous"
 if [ "${CVE_BIN_TOOL_WRAPPER_HEALTHCHECK:-0}" = "1" ]; then
@@ -111,6 +113,19 @@ import_from_internal_mirror() {
   return 0
 }
 
+preseed_candidate_from_active() {
+  _candidate_home="$1"
+  [ "$PRESEED_ACTIVE" = "1" ] || return 0
+  [ -f "$DB_ROOT/cve.db" ] || return 0
+
+  echo "[attempt] preseeding candidate cache from active DB root: $DB_ROOT"
+  rm -rf "$_candidate_home/.cache/cve-bin-tool"
+  mkdir -p "$_candidate_home/.cache"
+  if ! cp -a "$DB_ROOT" "$_candidate_home/.cache/"; then
+    echo "[attempt] WARN preseed copy failed, continuing with empty candidate cache" >&2
+  fi
+}
+
 attempt_update() {
   nvd_mode="$1"
   api_label="$2"
@@ -125,8 +140,9 @@ attempt_update() {
 
   {
     echo "[attempt] mode=$nvd_mode api_label=$api_label started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    preseed_candidate_from_active "$candidate_home"
     set +e
-    HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" NVD_MODE="$nvd_mode" ATTEMPT_API_KEY="$api_key" CVE_DISABLE_ARGS="$disable_args" UPDATE_TIMEOUT_SECONDS="$UPDATE_TIMEOUT_SECONDS" \
+    HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" NVD_MODE="$nvd_mode" ATTEMPT_API_KEY="$api_key" CVE_DISABLE_ARGS="$disable_args" UPDATE_TIMEOUT_SECONDS="$UPDATE_TIMEOUT_SECONDS" UPDATE_SCAN_DIR="$UPDATE_SCAN_DIR" \
       python - <<'PY'
 import os
 import shlex
@@ -141,6 +157,9 @@ cmd = ["cve-bin-tool", "--update", "now", "--nvd", mode]
 if api_key:
     cmd.extend(["--nvd-api-key", api_key])
 cmd.extend(shlex.split(os.environ.get("CVE_DISABLE_ARGS", "")))
+scan_dir = os.environ.get("UPDATE_SCAN_DIR", "/tmp/cvebt-update-empty")
+os.makedirs(scan_dir, exist_ok=True)
+cmd.append(scan_dir)
 try:
     raise SystemExit(subprocess.run(cmd, env=env, timeout=timeout_seconds).returncode)
 except subprocess.TimeoutExpired:

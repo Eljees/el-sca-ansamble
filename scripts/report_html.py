@@ -916,9 +916,9 @@ def generate_html_site(findings, target_display, artifacts_dir, output_path, com
             metadata,
         )
     build_syft_page(page_paths, target_display, components, deduped_all, metadata)
-    print(f"HTML report → {page_paths['overview']}")
+    print(f"HTML report -> {page_paths['overview']}")
     for key in ("grype", "trivy", "cve-bin-tool", "syft"):
-        print(f"HTML page   → {page_paths[key]}")
+        print(f"HTML page   -> {page_paths[key]}")
     return 0
 
 
@@ -938,7 +938,7 @@ def main():
     components = parse_syft_components(syft_data)
 
     if not findings:
-        print("[warn] no findings loaded — check artifacts/ structure", file=sys.stderr)
+        print("[warn] no findings loaded - check artifacts/ structure", file=sys.stderr)
 
     return generate_html_site(findings, args.target, artifacts_dir, args.output, components)
 

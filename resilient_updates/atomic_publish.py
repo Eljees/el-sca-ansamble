@@ -1,7 +1,22 @@
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 import shutil
+
+
+def _replace_tree(src: Path, dst: Path) -> None:
+    """Move directory tree src -> dst, with EXDEV-safe copy fallback."""
+    try:
+        src.replace(dst)
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(src, dst)
+    shutil.rmtree(src)
 
 
 def publish_directory(temp_dir: str | Path, active_dir: str | Path, previous_dir: str | Path) -> None:
@@ -15,10 +30,10 @@ def publish_directory(temp_dir: str | Path, active_dir: str | Path, previous_dir
     moved_active = False
     try:
         if active_path.exists():
-            active_path.replace(previous_path)
+            _replace_tree(active_path, previous_path)
             moved_active = True
-        temp_path.replace(active_path)
+        _replace_tree(temp_path, active_path)
     except Exception:
         if moved_active and not active_path.exists() and previous_path.exists():
-            previous_path.replace(active_path)
+            _replace_tree(previous_path, active_path)
         raise

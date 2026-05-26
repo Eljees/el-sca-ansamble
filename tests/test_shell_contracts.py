@@ -12,6 +12,15 @@ def test_cve_bin_tool_binary_findings_exit_code_is_success():
     assert 'echo "[cve-bin-tool] binary scan done (exit $scan_rc)"' in script
 
 
+def test_cve_bin_tool_updater_preseeds_candidate_from_active_cache():
+    script = (ROOT / "scripts" / "update_cve_bin_tool.sh").read_text(encoding="utf-8")
+
+    assert 'PRESEED_ACTIVE="${CVE_BIN_TOOL_PRESEED_ACTIVE:-1}"' in script
+    assert 'UPDATE_TIMEOUT_SECONDS="${CVE_BIN_TOOL_UPDATE_TIMEOUT_SECONDS:-1800}"' in script
+    assert "preseed_candidate_from_active" in script
+    assert 'preseed_candidate_from_active "$candidate_home"' in script
+
+
 def test_compose_uses_cyclonedx_as_cve_bin_tool_sbom_default():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 

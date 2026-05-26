@@ -238,6 +238,12 @@ services:
       CVE_BIN_TOOL_SEED_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SEED_TIMEOUT_SECONDS:-}
       CVE_BIN_TOOL_SEED_AUX: ${CVE_BIN_TOOL_SEED_AUX:-}
       CVE_BIN_TOOL_OSV_ECOSYSTEMS: ${CVE_BIN_TOOL_OSV_ECOSYSTEMS:-}
+      CVE_BIN_TOOL_DISABLE_SOURCES: ${CVE_BIN_TOOL_DISABLE_SOURCES:-}
+      CVE_BIN_TOOL_DISABLE_SOURCES_ON_RETRY: ${CVE_BIN_TOOL_DISABLE_SOURCES_ON_RETRY:-}
+      CVE_BIN_TOOL_DB_POLICY: ${CVE_BIN_TOOL_DB_POLICY:-}
+      CVE_BIN_TOOL_USE_INTERNAL_MIRROR: ${CVE_BIN_TOOL_USE_INTERNAL_MIRROR:-}
+      CVE_BIN_TOOL_MIRROR_URL: ${CVE_BIN_TOOL_MIRROR_URL:-}
+      CVE_BIN_TOOL_BUNDLE_PATH: ${CVE_BIN_TOOL_BUNDLE_PATH:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -265,6 +271,7 @@ services:
       # Reserved for future cve-bin-tool versions.  In v3.4 this is logged as a
       # no-op because binary scans already use an internal CPU-count Pool.
       CVE_BIN_TOOL_PARALLEL: ${CVE_BIN_TOOL_PARALLEL:-}
+      CVE_BIN_TOOL_DB_POLICY: ${CVE_BIN_TOOL_DB_POLICY:-}
     volumes:
       - ./:/workspace
       - cve-bin-tool-cache:/root/.cache

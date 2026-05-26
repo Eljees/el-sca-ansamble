@@ -1,4 +1,4 @@
-param(
+﻿param(
   # Path to the file or directory to scan (required)
   [Parameter(Mandatory=$true)]
   [string]$Target,
@@ -541,3 +541,4 @@ Write-Host ""
 
 # Re-show DB freshness AFTER the scan so the final state stays on screen.
 Show-DbFreshnessBanner -Title 'DATABASE FRESHNESS (POST-SCAN)'
+
