@@ -1,7 +1,8 @@
 # SCA Pipeline v3.0 - Release Notes
 
-**Date:** 2026-05-15  
-**Status:** Production Release
+**Date:** 2026-05-15 | **Updated:** 2026-05-26  
+**Status:** Production Release  
+**Workspace:** `D:\dev\el-sca-ansamble` (Development & Research)
 
 ---
 
@@ -124,6 +125,53 @@ cd D:\dev\el-sca-ansamble
 
 ---
 
+---
+
+## 📂 Workspace Organization (Updated 2026-05-26)
+
+### Development Location (This Workspace)
+**Path:** `D:\dev\el-sca-ansamble`
+- Research and analysis files
+- CVE-bin-tool source code inspection
+- Experimental scan results
+- Documentation copies
+- **Use for:** Research, analysis, reference
+
+### Production Location (Recommended for Scans)
+**Path:** `D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble`
+- Main project repository
+- Fixed scripts (v3.0 with CVE-bin-tool exit code handling)
+- docker-compose.yml and configuration
+- Deployment guides
+- **Use for:** Active scanning, production work
+
+### Ubuntu Execution Environment
+**Path:** `/opt/sca-work/el-sca-ansamble` (192.168.1.33)
+- Docker execution host
+- Artifact storage and reports
+- Network access via SSH tunnel (port 10808)
+- 20GB disk (`/dev/sdb1`) for artifacts
+
+---
+
+## 🚀 Quick Start Guide
+
+```powershell
+# 1. Start SSH tunnel (keep open in separate terminal)
+ssh -R 10808:127.0.0.1:10808 elaria@192.168.1.33 -N
+
+# 2. Navigate to production location (recommended)
+cd "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble"
+
+# 3. Run scan with extraction and cleanup
+.\scripts\windows\run-scan.ps1 -Target "path\to\archive.tar.gz" -Extract -Clean
+
+# 4. Check results (saved next to source file)
+Get-ChildItem -Filter "*_report_*.md" -Path "path\to\"
+```
+
+---
+
 ## 🆘 Support
 
 If you encounter issues:
@@ -133,6 +181,12 @@ If you encounter issues:
 3. **Review script logs**: `docker-compose logs -f cve-bin-tool-scanner`
 4. **Clean and retry**: `.\scripts\windows\run-scan.ps1 -Target "file.tar.gz" -Clean`
 
+### Key Points to Remember
+- SSH tunnel MUST remain open during scans
+- Always use `-Clean` flag between scans
+- Reports saved next to source files on Windows
+- Monitor `/opt/sca-work` disk space on Ubuntu (~20GB available)
+
 ---
 
-**Status:** ✅ Ready for Production Use
+**Status:** ✅ Ready for Production Use | **Latest:** v3.0 | **Updated:** 2026-05-26
