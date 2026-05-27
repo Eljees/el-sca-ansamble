@@ -6,6 +6,8 @@ import json
 import logging
 import os
 
+import pytest
+
 from resilient_updates._logging import JsonFormatter, setup_logging
 
 
@@ -15,6 +17,7 @@ def _reset_root_logger() -> None:
         root.removeHandler(handler)
 
 
+@pytest.mark.smoke
 def test_setup_logging_text_format_emits_one_line(monkeypatch) -> None:
     _reset_root_logger()
     buf = io.StringIO()

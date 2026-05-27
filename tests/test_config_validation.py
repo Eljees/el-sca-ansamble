@@ -1,6 +1,9 @@
+import pytest
+
 from resilient_updates.config import load_config, validate_config_data
 
 
+@pytest.mark.smoke
 def test_config_validation_catches_duplicates_and_invalid_values():
     config = load_config("tests/fixtures/feed_sources.example.yaml")
     config["grype"]["upstream_update_urls"].append(

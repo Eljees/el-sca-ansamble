@@ -33,10 +33,32 @@ EXIT_LKG_USED = 5
 
 
 def _dedup_attempted_sources(attempts: list[AttemptResult]) -> list[dict[str, Any]]:
-    """Return unique sources from attempt list (retries cause duplicates)."""
+    """Collapse retries into one record per source, accumulating attempt metadata.
+
+    Each returned dict is the source's ``to_dict()`` output extended with:
+    - ``retry_count``  — total number of attempts made against this source.
+    - ``succeeded``    — True if any attempt for this source succeeded.
+    - ``outcomes``     — ordered list of per-attempt outcome dicts
+                         ``{success, reason, message, status_code}``.
+    """
+    # Preserve insertion order (first time a source is seen).
     seen: dict[str, dict[str, Any]] = {}
     for item in attempts:
-        seen[item.source.name] = item.source.to_dict()
+        name = item.source.name
+        if name not in seen:
+            seen[name] = {**item.source.to_dict(), "retry_count": 0, "succeeded": False, "outcomes": []}
+        rec = seen[name]
+        rec["retry_count"] += 1
+        if item.success:
+            rec["succeeded"] = True
+        rec["outcomes"].append(
+            {
+                "success": item.success,
+                "reason": item.reason.value if item.reason is not None else None,
+                "message": item.message,
+                "status_code": item.status_code,
+            }
+        )
     return list(seen.values())
 
 

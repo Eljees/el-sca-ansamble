@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.12-slim
 
+# Override at build time with --build-arg JAVA_XMX=1g (or via compose build.args).
+ARG JAVA_XMX=512m
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    JAVA_TOOL_OPTIONS="-Xmx512m"
+    JAVA_TOOL_OPTIONS="-Xmx${JAVA_XMX}"
 
 WORKDIR /workspace
 

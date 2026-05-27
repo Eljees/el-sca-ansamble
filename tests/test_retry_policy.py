@@ -1,6 +1,8 @@
 """Tests for resilient_updates._retry.RetryPolicy."""
 from __future__ import annotations
 
+import pytest
+
 from resilient_updates._retry import (
     DEFAULT_BACKOFF_SECONDS,
     DEFAULT_RETRY_COUNT,
@@ -10,6 +12,7 @@ from resilient_updates._retry import (
 )
 
 
+@pytest.mark.smoke
 def test_defaults_match_legacy_grype_listing_fetch() -> None:
     """Defaults reproduce the historical 1/1/[429,5xx] hardcode in cli.update_grype."""
     p = RetryPolicy()
