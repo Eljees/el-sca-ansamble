@@ -422,4 +422,10 @@ def extract_artifacts(
     manifest["extracted_count"] = extracted_count
     manifest["pre_filter"] = {
         "skipped_by_extension": stats.skipped_by_extension,
- 
+        "skipped_by_size": stats.skipped_by_size,
+        "examples": stats.skipped_examples,
+    }
+    manifest_path = destination_root / "extraction_manifest.json"
+    manifest["manifest_path"] = str(manifest_path)
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    return manifest
