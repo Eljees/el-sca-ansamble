@@ -618,6 +618,9 @@ def main() -> int:
             skip_extensions=tuple(args.skip_ext) if args.skip_ext else None,
         )
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+        input_is_file = Path(args.input).resolve().is_file()
+        if input_is_file and int(payload.get("extracted_count", 0)) == 0:
+            return EXIT_VALIDATION_FAILED
         return EXIT_SUCCESS if payload["status"] in {"pass", "warn"} else EXIT_VALIDATION_FAILED
     if args.command == "render-flags":
         print(_render_trivy_flags(config))

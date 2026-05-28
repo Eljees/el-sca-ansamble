@@ -291,9 +291,43 @@ elif [[ "$FORMAT" == "win" ]]; then
 
   WIN_EXTRACT_DIR="$ARTIFACTS_DIR/extracted/win-installer"
   if [[ -d "$WIN_EXTRACT_DIR" ]]; then
-    echo "[win] Running cve-bin-tool on extracted installer contents..."
-    export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/win-installer"
-    export SCAN_TARGET_HOST="$(realpath "$WIN_EXTRACT_DIR")"
+    cve_scan_host="$(realpath "$WIN_EXTRACT_DIR")"
+    cve_scan_container="/workspace/artifacts/extracted/win-installer"
+    force_direct_scan=0
+
+    win_analysis_txt="$ARTIFACTS_DIR/reports/win/win_analysis.txt"
+    if [[ -f "$win_analysis_txt" ]]; then
+      binary_count="$(grep -Eo 'Binaries[[:space:]]*:[[:space:]]*[0-9]+[[:space:]]+total' "$win_analysis_txt" | head -n1 | sed -E 's/.*Binaries[[:space:]]*:[[:space:]]*([0-9]+).*/\1/' || true)"
+      if [[ "${binary_count:-}" == "0" ]]; then
+        force_direct_scan=1
+        echo "[win] win-analyzer reported 0 PE binaries; switching cve-bin-tool to direct installer scan fallback..."
+      fi
+    fi
+
+    if [[ $force_direct_scan -eq 1 ]]; then
+      target_lower="${TARGET_RESOLVED,,}"
+      if [[ "$target_lower" == *.exe || "$target_lower" == *.msi ]]; then
+        cve_scan_host="$TARGET_RESOLVED"
+        cve_scan_container="/scan-target"
+      else
+        candidate="$(find "$ARTIFACTS_DIR/extracted/current" -type f \( -iname '*.exe' -o -iname '*.msi' \) 2>/dev/null | head -n1 || true)"
+        if [[ -n "${candidate:-}" ]]; then
+          cve_scan_host="$(realpath "$candidate")"
+          cve_scan_container="/scan-target"
+        else
+          echo "[win] No installer file candidate found for direct fallback; keeping extracted directory scan."
+          force_direct_scan=0
+        fi
+      fi
+    fi
+
+    if [[ $force_direct_scan -eq 1 ]]; then
+      echo "[win] Running cve-bin-tool on installer file fallback..."
+    else
+      echo "[win] Running cve-bin-tool on extracted installer contents..."
+    fi
+    export CVE_BIN_TOOL_TARGET="$cve_scan_container"
+    export SCAN_TARGET_HOST="$cve_scan_host"
     compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
@@ -336,7 +370,7 @@ else
   esac
 fi
 
-# ── Collect reports ───────────────────────────────────────────────────────────
+# ── Collect reports ─────────────────────────────────────────────────
 export CASE_ID="$CASE_ID"
 compose_checked --profile report run --rm report-collector
 
@@ -350,9 +384,9 @@ python -m resilient_updates.cli collect-report \
 python scripts/report_html.py \
   --artifacts-dir artifacts \
   --target        "$SCAN_TARGET_DISPLAY" \
-  --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed — skipping"
+  --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"
 
-# ── Done ──────────────────────────────────────────────────────────────────────
+# ── Done ──────────────────────────────────────────────────────────────────────────────────
 echo ""
 printf '\e[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
 printf '\e[32m Reports ready:\e[0m\n'

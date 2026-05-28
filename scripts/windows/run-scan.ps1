@@ -450,9 +450,28 @@ if ($Format -eq "apk") {
   # cve-bin-tool binary scan on extracted files
   $winExtractDir = Join-Path $ArtifactsDir "extracted\win-installer"
   if (Test-Path $winExtractDir) {
-    Write-Host "[win] Running cve-bin-tool binary scan on extracted installer contents…" -ForegroundColor Cyan
-    $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/win-installer"
-    $env:SCAN_TARGET_HOST    = (Resolve-Path $winExtractDir).Path
+    $cveScanHost      = (Resolve-Path $winExtractDir).Path
+    $cveScanContainer = "/workspace/artifacts/extracted/win-installer"
+    $forceDirectScan  = $false
+
+    $winAnalysisTxt = Join-Path $ArtifactsDir "reports\win\win_analysis.txt"
+    if (Test-Path $winAnalysisTxt) {
+      $m = Select-String -Path $winAnalysisTxt -Pattern 'Binaries\s*:\s*(\d+)\s+total' -AllMatches -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($m -and $m.Matches.Count -gt 0 -and [int]$m.Matches[0].Groups[1].Value -eq 0) {
+        $forceDirectScan = $true
+        Write-Host "[win] 0 PE binaries detected; switching to direct installer fallback..." -ForegroundColor Yellow
+      }
+    }
+
+    if ($forceDirectScan) {
+      $cveScanHost      = $TargetResolved
+      $cveScanContainer = "/scan-target"
+      Write-Host "[win] Running cve-bin-tool on installer file fallback..." -ForegroundColor Cyan
+    } else {
+      Write-Host "[win] Running cve-bin-tool on extracted installer contents..." -ForegroundColor Cyan
+    }
+    $env:CVE_BIN_TOOL_TARGET = $cveScanContainer
+    $env:SCAN_TARGET_HOST    = $cveScanHost
     Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 

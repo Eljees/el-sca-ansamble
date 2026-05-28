@@ -1,7 +1,9 @@
 import errno
 from pathlib import Path
 
-from resilient_updates.atomic_publish import publish_directory
+import pytest
+
+from resilient_updates.atomic_publish import _replace_tree, publish_directory
 
 
 def test_atomic_publish_preserves_previous(tmp_path: Path):
@@ -66,3 +68,53 @@ def test_atomic_publish_handles_cross_device_replace(tmp_path: Path, monkeypatch
     assert (active / "new.txt").read_text(encoding="utf-8") == "new"
     assert (previous / "old.txt").read_text(encoding="utf-8") == "old"
     monkeypatch.setattr(Path, "replace", original_replace)
+
+
+def test_replace_tree_exdev_cleans_staging_on_copy_failure(tmp_path: Path, monkeypatch):
+    """If the copy into staging fails, staging dir is removed and dst is untouched."""
+    src = tmp_path / "src"
+    dst = tmp_path / "dst_absent"
+    src.mkdir()
+    (src / "data.txt").write_text("payload", encoding="utf-8")
+
+    original_replace = Path.replace
+    original_copytree = __import__("shutil").copytree
+
+    def exdev_replace(self, target):
+        raise OSError(errno.EXDEV, "cross-device")
+
+    def failing_copytree(s, d, **kwargs):
+        # Simulate a partial write then failure.
+        Path(d).mkdir(parents=True, exist_ok=True)
+        (Path(d) / "partial.txt").write_text("partial")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", exdev_replace)
+    monkeypatch.setattr("shutil.copytree", failing_copytree)
+
+    with pytest.raises(OSError, match="disk full"):
+        _replace_tree(src, dst)
+
+    # dst must not exist — copy never completed.
+    assert not dst.exists()
+    # No orphaned staging dirs should remain in dst.parent.
+    staging_leftovers = list(tmp_path.glob(".staging_*"))
+    assert staging_leftovers == [], f"orphaned staging dirs: {staging_leftovers}"
+
+    monkeypatch.setattr(Path, "replace", original_replace)
+    monkeypatch.setattr("shutil.copytree", original_copytree)
+
+
+@pytest.mark.smoke
+def test_atomic_publish_no_active_dir(tmp_path: Path):
+    """publish_directory works when active_dir doesn't exist yet (first run)."""
+    previous = tmp_path / "previous"
+    temp = tmp_path / "temp"
+    active = tmp_path / "active"
+    temp.mkdir()
+    (temp / "data.txt").write_text("first", encoding="utf-8")
+
+    publish_directory(temp, active, previous)
+
+    assert (active / "data.txt").read_text(encoding="utf-8") == "first"
+    assert not previous.exists()

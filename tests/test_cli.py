@@ -6,8 +6,18 @@ import json
 import os
 import time
 
-from resilient_updates.cli import EXIT_ALL_SOURCES_FAILED, _db_status_payload, _health_summary
+import pytest
+
+from resilient_updates.cli import (
+    EXIT_ALL_SOURCES_FAILED,
+    EXIT_VALIDATION_FAILED,
+    _db_status_payload,
+    _dedup_attempted_sources,
+    _health_summary,
+)
 from resilient_updates.config import load_config
+from resilient_updates.fallback import AttemptResult, FailureReason
+from resilient_updates.source_policy import SourceCandidate
 
 
 def test_trivy_health_summary_returns_failure_payload_without_nameerror(tmp_path: Path, monkeypatch):
@@ -136,3 +146,97 @@ def test_write_run_summary_no_overwrite_keeps_existing(tmp_path: Path, monkeypat
     assert (tmp_path / "status.json").exists()
     assert (tmp_path / "run_manifest.json").exists()
     assert (tmp_path / "db_snapshot.json").exists()
+
+
+def test_extract_cli_fails_when_file_input_has_no_extractable_archives(tmp_path, monkeypatch):
+    from resilient_updates.cli import main
+
+    plain_file = tmp_path / "plain.txt"
+    plain_file.write_text("not an archive", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config", "tests/fixtures/feed_sources.example.yaml",
+            "extract",
+            "--input", str(plain_file),
+            "--output", str(tmp_path / "out"),
+        ],
+    )
+
+    assert main() == EXIT_VALIDATION_FAILED
+
+
+# ---------------------------------------------------------------------------
+# _dedup_attempted_sources -- retry accumulation
+# ---------------------------------------------------------------------------
+
+def _make_source(name="primary"):
+    return SourceCandidate(
+        priority=10, name=name, url=f"https://example.com/{name}",
+        tool="grype", layer="grype-db",
+    )
+
+
+@pytest.mark.smoke
+def test_dedup_single_attempt_passthrough():
+    src = _make_source("primary")
+    attempts = [AttemptResult(src, True, None, "ok", 200)]
+    result = _dedup_attempted_sources(attempts)
+    assert len(result) == 1
+    assert result[0]["name"] == "primary"
+    assert result[0]["retry_count"] == 1
+    assert result[0]["succeeded"] is True
+    assert result[0]["outcomes"] == [
+        {"success": True, "reason": None, "message": "ok", "status_code": 200}
+    ]
+
+
+def test_dedup_retries_accumulate_count():
+    src = _make_source("mirror")
+    attempts = [
+        AttemptResult(src, False, FailureReason.HTTP_5XX, "http status 503", 503),
+        AttemptResult(src, False, FailureReason.HTTP_5XX, "http status 503", 503),
+        AttemptResult(src, True, None, "ok", 200),
+    ]
+    result = _dedup_attempted_sources(attempts)
+    assert len(result) == 1
+    rec = result[0]
+    assert rec["retry_count"] == 3
+    assert rec["succeeded"] is True
+    assert len(rec["outcomes"]) == 3
+    assert rec["outcomes"][0]["reason"] == FailureReason.HTTP_5XX.value
+    assert rec["outcomes"][2]["success"] is True
+
+
+def test_dedup_all_failed_source():
+    src = _make_source("bad-mirror")
+    attempts = [
+        AttemptResult(src, False, FailureReason.TIMEOUT, "timed out", None),
+        AttemptResult(src, False, FailureReason.TIMEOUT, "timed out", None),
+    ]
+    result = _dedup_attempted_sources(attempts)
+    assert result[0]["succeeded"] is False
+    assert result[0]["retry_count"] == 2
+
+
+def test_dedup_multiple_sources_preserve_order():
+    src_a = _make_source("alpha")
+    src_b = _make_source("beta")
+    attempts = [
+        AttemptResult(src_a, False, FailureReason.HTTP_5XX, "503", 503),
+        AttemptResult(src_b, True,  None,                   "ok",  200),
+        AttemptResult(src_a, True,  None,                   "ok",  200),
+    ]
+    result = _dedup_attempted_sources(attempts)
+    assert len(result) == 2
+    assert result[0]["name"] == "alpha"
+    assert result[0]["retry_count"] == 2
+    assert result[0]["succeeded"] is True
+    assert result[1]["name"] == "beta"
+    assert result[1]["retry_count"] == 1
+
+
+def test_dedup_empty_input():
+    assert _dedup_attempted_sources([]) == []

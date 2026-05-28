@@ -408,15 +408,18 @@ def extract_artifacts(
             manifest["failures"].append({"archive": str(archive_path), "error": str(exc)})
         manifest["items"].append(item)
 
+    extracted_count = sum(1 for item in manifest["items"] if item["status"] == "extracted")
+    if source_root.is_file() and extracted_count == 0 and not manifest["failures"]:
+        manifest["failures"].append(
+            {
+                "archive": str(source_root),
+                "error": "input is a file but no supported archive entries were extracted",
+            }
+        )
+
     manifest["finished_at_utc"] = _now_iso()
     manifest["status"] = "pass" if not manifest["failures"] else "warn"
-    manifest["extracted_count"] = sum(1 for item in manifest["items"] if item["status"] == "extracted")
+    manifest["extracted_count"] = extracted_count
     manifest["pre_filter"] = {
         "skipped_by_extension": stats.skipped_by_extension,
-        "skipped_by_size": stats.skipped_by_size,
-        "examples": stats.skipped_examples,
-    }
-    manifest_path = destination_root / "extraction_manifest.json"
-    manifest["manifest_path"] = str(manifest_path)
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    return manifest
+ 
