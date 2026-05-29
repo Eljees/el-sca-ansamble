@@ -1,14 +1,14 @@
 """Tests for resilient_updates._logging."""
+
 from __future__ import annotations
 
 import io
 import json
 import logging
-import os
 
 import pytest
 
-from resilient_updates._logging import JsonFormatter, setup_logging
+from resilient_updates._logging import setup_logging
 
 
 def _reset_root_logger() -> None:

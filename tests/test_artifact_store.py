@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import time
-from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -14,10 +13,10 @@ from resilient_updates.artifact_store import (
     file_sha256,
 )
 
-
 # ---------------------------------------------------------------------------
 # ensure_directory
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.smoke
 def test_ensure_directory_creates_nested(tmp_path: Path):
@@ -38,6 +37,7 @@ def test_ensure_directory_is_idempotent(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # file_sha256
 # ---------------------------------------------------------------------------
+
 
 def test_file_sha256_prefix_and_length(tmp_path: Path):
     f = tmp_path / "data.bin"
@@ -71,6 +71,7 @@ def test_file_sha256_accepts_string_path(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # LastKnownGood
 # ---------------------------------------------------------------------------
+
 
 def test_lkg_missing_path_is_not_usable(tmp_path: Path):
     lkg = LastKnownGood(path=tmp_path / "nonexistent", max_age_hours=24)
@@ -111,6 +112,7 @@ def test_lkg_directory_with_files_is_usable(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # build_last_known_good
 # ---------------------------------------------------------------------------
+
 
 def test_build_lkg_parses_duration(tmp_path: Path):
     lkg = build_last_known_good(tmp_path / "x", "48h")

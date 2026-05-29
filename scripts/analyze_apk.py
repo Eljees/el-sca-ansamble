@@ -15,20 +15,21 @@ Usage (inside container):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
-import os
 import re
 import shutil
 import sys
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def log(msg: str) -> None:
     print(f"[apk-analyzer] {msg}", flush=True)
@@ -94,6 +95,7 @@ def find_apk(path: Path) -> Path | None:
 # APK parsing via androguard
 # ---------------------------------------------------------------------------
 
+
 def parse_with_androguard(apk_path: Path) -> dict[str, Any]:
     """Use androguard to extract app metadata, declared permissions, and class packages."""
     try:
@@ -134,16 +136,14 @@ def parse_with_androguard(apk_path: Path) -> dict[str, Any]:
         pass
 
     # Try to get declared activities / services for context
-    try:
-        result["declared_components"] = [
-            a.get_main_activity() or ""
-        ]
-    except Exception:
-        pass
+    with contextlib.suppress(Exception):
+        result["declared_components"] = [a.get_main_activity() or ""]
+
 
     # Enumerate top-level package names from DEX class list (heuristic for 3rd-party libs)
     try:
-        from androguard.misc import AnalyzeAPK  # noqa: F401 — may not exist in all versions
+        from androguard.misc import AnalyzeAPK
+
         _, _, dx = AnalyzeAPK(str(apk_path))
         pkgs: set[str] = set()
         for cls in dx.get_classes():
@@ -156,12 +156,16 @@ def parse_with_androguard(apk_path: Path) -> dict[str, Any]:
                     pkgs.add(pkg)
         # Filter out well-known Android SDK prefixes
         skip = {
-            "android", "com.android", "dalvik", "java", "javax",
-            "kotlin", "kotlinx", "org.jetbrains",
+            "android",
+            "com.android",
+            "dalvik",
+            "java",
+            "javax",
+            "kotlin",
+            "kotlinx",
+            "org.jetbrains",
         }
-        result["third_party_packages"] = sorted(
-            p for p in pkgs if not any(p.startswith(s) for s in skip)
-        )
+        result["third_party_packages"] = sorted(p for p in pkgs if not any(p.startswith(s) for s in skip))
     except Exception as e:
         log(f"  DEX class enumeration skipped: {e}")
 
@@ -174,6 +178,7 @@ def parse_with_androguard(apk_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Extract native .so files
 # ---------------------------------------------------------------------------
+
 
 def extract_native_libs(apk_path: Path, dest: Path) -> list[Path]:
     """Extract all .so files from lib/ inside the APK to *dest*."""
@@ -200,6 +205,7 @@ def extract_native_libs(apk_path: Path, dest: Path) -> list[Path]:
 # Parse pre-extracted APK directory (when artifact-extractor already unpacked it)
 # ---------------------------------------------------------------------------
 
+
 def parse_extracted_apk_dir(apk_dir: Path) -> dict[str, Any]:
     """Parse APK from its extracted directory contents (classes.dex + AndroidManifest.xml)."""
     log(f"Parsing extracted APK directory: {apk_dir}")
@@ -225,8 +231,9 @@ def parse_extracted_apk_dir(apk_dir: Path) -> dict[str, Any]:
             except ImportError:
                 from androguard.core.bytecodes.axml import AXMLPrinter  # androguard 3.x
             ap = AXMLPrinter(manifest_path.read_bytes())
-            xml_str = ap.get_xml_obj()  # returns xml.dom.minidom object or string
+            ap.get_xml_obj()  # returns xml.dom.minidom object or string
             import xml.etree.ElementTree as ET
+
             try:
                 root = ET.fromstring(ap.get_xml())
             except Exception:
@@ -240,22 +247,18 @@ def parse_extracted_apk_dir(apk_dir: Path) -> dict[str, Any]:
                 if uses_sdk is not None:
                     result["min_sdk"] = uses_sdk.get(f"{{{ns}}}minSdkVersion", "unknown")
                     result["target_sdk"] = uses_sdk.get(f"{{{ns}}}targetSdkVersion", "unknown")
-                result["permissions"] = [
-                    p.get(f"{{{ns}}}name", "") for p in root.findall("uses-permission")
-                ]
+                result["permissions"] = [p.get(f"{{{ns}}}name", "") for p in root.findall("uses-permission")]
             log(f"  package={result['package']}  version={result['version_name']}")
         except Exception as e:
             log(f"  WARNING: AndroidManifest.xml parsing failed: {e}")
 
     # Find native .so files
-    result["native_libs"] = [
-        str(p.relative_to(apk_dir)).replace("\\", "/")
-        for p in apk_dir.rglob("*.so")
-    ]
+    result["native_libs"] = [str(p.relative_to(apk_dir)).replace("\\", "/") for p in apk_dir.rglob("*.so")]
     log(f"  native libs: {len(result['native_libs'])}")
 
     # Enumerate Java packages from classes.dex via androguard
     import re
+
     dex_files = sorted(apk_dir.glob("classes*.dex"))
     if dex_files:
         pkgs: set[str] = set()
@@ -263,9 +266,11 @@ def parse_extracted_apk_dir(apk_dir: Path) -> dict[str, Any]:
             try:
                 try:
                     from androguard.core.dex import DEX  # androguard 4.x
+
                     d = DEX(dex_path.read_bytes())
                 except ImportError:
                     from androguard.core.bytecodes.dvm import DalvikVMFormat  # 3.x
+
                     d = DalvikVMFormat(dex_path.read_bytes())
                 for cls in d.get_classes():
                     m = re.match(r"^L([a-z][a-z0-9_/]+)/", cls.get_name())
@@ -306,69 +311,75 @@ def build_syft_sbom(apk_path: Path, meta: dict[str, Any], display_name: str | No
     """Build a minimal syft-json SBOM from APK metadata."""
     if display_name is None:
         display_name = apk_path.name
-    now = datetime.now(timezone.utc).isoformat()
+    _now = datetime.now(UTC).isoformat()
     artifacts: list[dict[str, Any]] = []
 
     # Main application component
     app_id = str(uuid.uuid4())
-    artifacts.append({
-        "id": app_id,
-        "name": meta.get("package", display_name),
-        "version": meta.get("version_name", "0.0"),
-        "type": "java-archive",
-        "foundBy": "apk-analyzer",
-        "locations": [{"path": f"/{apk_path.name}"}],
-        "licenses": [],
-        "language": "java",
-        "cpes": [],
-        "purl": f"pkg:apk/android/{meta.get('package', apk_path.stem)}@{meta.get('version_name', '0.0')}",
-        "metadataType": "AndroidApkMetadata",
-        "metadata": {
-            "packageName": meta.get("package", ""),
-            "versionCode": str(meta.get("version_code", "")),
-            "minSdkVersion": str(meta.get("min_sdk", "")),
-            "targetSdkVersion": str(meta.get("target_sdk", "")),
-            "permissions": meta.get("permissions", []),
-        },
-    })
+    artifacts.append(
+        {
+            "id": app_id,
+            "name": meta.get("package", display_name),
+            "version": meta.get("version_name", "0.0"),
+            "type": "java-archive",
+            "foundBy": "apk-analyzer",
+            "locations": [{"path": f"/{apk_path.name}"}],
+            "licenses": [],
+            "language": "java",
+            "cpes": [],
+            "purl": f"pkg:apk/android/{meta.get('package', apk_path.stem)}@{meta.get('version_name', '0.0')}",
+            "metadataType": "AndroidApkMetadata",
+            "metadata": {
+                "packageName": meta.get("package", ""),
+                "versionCode": str(meta.get("version_code", "")),
+                "minSdkVersion": str(meta.get("min_sdk", "")),
+                "targetSdkVersion": str(meta.get("target_sdk", "")),
+                "permissions": meta.get("permissions", []),
+            },
+        }
+    )
 
     # Native libraries as separate components
     for so_path in meta.get("native_libs", []):
         lib_name = Path(so_path).name.removesuffix(".so")
         lib_id = str(uuid.uuid4())
-        artifacts.append({
-            "id": lib_id,
-            "name": lib_name,
-            "version": "unknown",
-            "type": "binary",
-            "foundBy": "apk-analyzer",
-            "locations": [{"path": so_path}],
-            "licenses": [],
-            "language": "",
-            "cpes": [f"cpe:2.3:a:*:{lib_name}:*:*:*:*:*:android:*:*"],
-            "purl": f"pkg:generic/{lib_name}@unknown",
-            "metadataType": "",
-            "metadata": {},
-        })
+        artifacts.append(
+            {
+                "id": lib_id,
+                "name": lib_name,
+                "version": "unknown",
+                "type": "binary",
+                "foundBy": "apk-analyzer",
+                "locations": [{"path": so_path}],
+                "licenses": [],
+                "language": "",
+                "cpes": [f"cpe:2.3:a:*:{lib_name}:*:*:*:*:*:android:*:*"],
+                "purl": f"pkg:generic/{lib_name}@unknown",
+                "metadataType": "",
+                "metadata": {},
+            }
+        )
 
     # Third-party Java packages (heuristic — version unknown)
     for pkg in meta.get("third_party_packages", [])[:50]:  # cap at 50 to keep SBOM sane
         pkg_id = str(uuid.uuid4())
         short = pkg.split(".")[-1]
-        artifacts.append({
-            "id": pkg_id,
-            "name": pkg,
-            "version": "unknown",
-            "type": "java-archive",
-            "foundBy": "apk-analyzer-dex-heuristic",
-            "locations": [{"path": "/classes.dex"}],
-            "licenses": [],
-            "language": "java",
-            "cpes": [],
-            "purl": f"pkg:maven/{pkg.replace('.', '/')}/{short}@unknown",
-            "metadataType": "",
-            "metadata": {},
-        })
+        artifacts.append(
+            {
+                "id": pkg_id,
+                "name": pkg,
+                "version": "unknown",
+                "type": "java-archive",
+                "foundBy": "apk-analyzer-dex-heuristic",
+                "locations": [{"path": "/classes.dex"}],
+                "licenses": [],
+                "language": "java",
+                "cpes": [],
+                "purl": f"pkg:maven/{pkg.replace('.', '/')}/{short}@unknown",
+                "metadataType": "",
+                "metadata": {},
+            }
+        )
 
     sbom = {
         "$schema": SYFT_SCHEMA,
@@ -397,6 +408,7 @@ def build_syft_sbom(apk_path: Path, meta: dict[str, Any], display_name: str | No
 # ---------------------------------------------------------------------------
 # Text report
 # ---------------------------------------------------------------------------
+
 
 def write_text_report(apk_path: Path, meta: dict[str, Any], report_path: Path) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -446,13 +458,14 @@ def write_text_report(apk_path: Path, meta: dict[str, Any], report_path: Path) -
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="APK analyzer for el-sca-ansamble")
-    parser.add_argument("--input",  default="/scan-target", help="Path to .apk file or directory")
+    parser.add_argument("--input", default="/scan-target", help="Path to .apk file or directory")
     parser.add_argument("--output", default="/workspace/artifacts", help="Artifacts output root")
     args = parser.parse_args()
 
-    input_path  = Path(args.input)
+    input_path = Path(args.input)
     output_root = Path(args.output)
 
     apk_path = find_apk(input_path)
@@ -486,8 +499,10 @@ def main() -> int:
         if not is_extracted_dir:
             try:
                 with zipfile.ZipFile(apk_path, "r") as zf:
-                    meta["native_libs"] = [n for n in zf.namelist() if n.startswith("lib/") and n.endswith(".so")]
-            except Exception:
+                    meta["native_libs"] = [
+                        n for n in zf.namelist() if n.startswith("lib/") and n.endswith(".so")
+                    ]
+            except Exception:  # broad suppress intentional in probe loop
                 pass
 
     # Extract native .so files for cve-bin-tool scanning

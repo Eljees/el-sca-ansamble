@@ -4,6 +4,7 @@ run_summary derives the four sidecar JSONs (summary, status, run_manifest,
 db_snapshot) from existing scanner artefacts so the report header stops
 showing UNKNOWN.  All tests build fixtures on a tmp_path.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,9 +13,19 @@ from pathlib import Path
 from resilient_updates.run_summary import derive, write_to_disk
 
 
-def _seed_root(root: Path, *, syft=None, grype=None, trivy=None, cve=None,
-               extraction=None, prov_grype=None, prov_cve=None, prov_trivy=None,
-               timeout_flag=False) -> Path:
+def _seed_root(
+    root: Path,
+    *,
+    syft=None,
+    grype=None,
+    trivy=None,
+    cve=None,
+    extraction=None,
+    prov_grype=None,
+    prov_cve=None,
+    prov_trivy=None,
+    timeout_flag=False,
+) -> Path:
     """Build a minimal artifacts/ tree."""
     (root / "sbom").mkdir(parents=True, exist_ok=True)
     (root / "reports" / "grype").mkdir(parents=True, exist_ok=True)
@@ -42,13 +53,16 @@ def _seed_root(root: Path, *, syft=None, grype=None, trivy=None, cve=None,
     if prov_trivy is not None:
         (root / "provenance" / "trivy.json").write_text(json.dumps(prov_trivy), encoding="utf-8")
     if timeout_flag:
-        (root / "reports" / "cve-bin-tool" / "timeout.flag").write_text("timed_out_after=1800\n", encoding="utf-8")
+        (root / "reports" / "cve-bin-tool" / "timeout.flag").write_text(
+            "timed_out_after=1800\n", encoding="utf-8"
+        )
     return root
 
 
 # ---------------------------------------------------------------------------
 # derive — happy path
 # ---------------------------------------------------------------------------
+
 
 def test_derive_counts_components_and_matches(tmp_path: Path):
     root = _seed_root(
@@ -150,6 +164,7 @@ def test_derive_exposes_db_tool_metadata(tmp_path: Path):
 # derive — failure / "UNKNOWN" cases
 # ---------------------------------------------------------------------------
 
+
 def test_derive_with_no_artifacts_returns_blanks_not_exceptions(tmp_path: Path):
     """All four sidecars must be returned even from an empty root."""
     root = tmp_path / "empty_artifacts"
@@ -177,6 +192,7 @@ def test_derive_flags_cve_bin_tool_timeout(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # write_to_disk — persistence
 # ---------------------------------------------------------------------------
+
 
 def test_write_to_disk_creates_all_four_sidecars(tmp_path: Path):
     root = _seed_root(

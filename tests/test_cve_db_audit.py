@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import json
 import sqlite3
+from pathlib import Path
 
 from resilient_updates.cve_db_audit import (
     activate_best_cve_bin_tool_db,
@@ -26,7 +26,9 @@ def _make_db_root(root: Path, *, include_nvd: bool = True) -> Path:
         cursor.execute("CREATE TABLE cve_range (data_source TEXT)")
         cursor.execute("CREATE TABLE cve_severity (data_source TEXT)")
         cursor.execute("CREATE TABLE purl2cpe (id INTEGER)")
-        cursor.executemany("INSERT INTO cve_range (data_source) VALUES (?)", [("Curl",), ("REDHAT",), ("REDHAT",)])
+        cursor.executemany(
+            "INSERT INTO cve_range (data_source) VALUES (?)", [("Curl",), ("REDHAT",), ("REDHAT",)]
+        )
         cursor.executemany("INSERT INTO cve_severity (data_source) VALUES (?)", [("GAD",), ("REDHAT",)])
         if include_nvd:
             cursor.executemany("INSERT INTO cve_severity (data_source) VALUES (?)", [("NVD",), ("NVD",)])

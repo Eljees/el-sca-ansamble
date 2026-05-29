@@ -6,10 +6,10 @@ Targets:
 - build_session: ALL_PROXY env-var wiring
 - attempt_sources: empty-response path, 429 retry, all-sources-fail
 """
+
 from __future__ import annotations
 
 import socket
-from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -27,8 +27,11 @@ from resilient_updates.source_policy import SourceCandidate
 
 def _src(name: str = "primary") -> SourceCandidate:
     return SourceCandidate(
-        priority=10, name=name, url=f"http://127.0.0.1:0/{name}",
-        tool="grype", layer="grype-db",
+        priority=10,
+        name=name,
+        url=f"http://127.0.0.1:0/{name}",
+        tool="grype",
+        layer="grype-db",
     )
 
 
@@ -36,21 +39,25 @@ def _src(name: str = "primary") -> SourceCandidate:
 # classify_http_status
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.smoke
-@pytest.mark.parametrize("code,expected", [
-    (200, None),
-    (204, None),
-    (301, None),
-    (429, FailureReason.HTTP_429),
-    (401, FailureReason.AUTH_FAILURE),
-    (403, FailureReason.AUTH_FAILURE),
-    (404, FailureReason.HTTP_4XX),
-    (422, FailureReason.HTTP_4XX),
-    (500, FailureReason.HTTP_5XX),
-    (502, FailureReason.HTTP_5XX),
-    (503, FailureReason.HTTP_5XX),
-    (599, FailureReason.HTTP_5XX),
-])
+@pytest.mark.parametrize(
+    "code,expected",
+    [
+        (200, None),
+        (204, None),
+        (301, None),
+        (429, FailureReason.HTTP_429),
+        (401, FailureReason.AUTH_FAILURE),
+        (403, FailureReason.AUTH_FAILURE),
+        (404, FailureReason.HTTP_4XX),
+        (422, FailureReason.HTTP_4XX),
+        (500, FailureReason.HTTP_5XX),
+        (502, FailureReason.HTTP_5XX),
+        (503, FailureReason.HTTP_5XX),
+        (599, FailureReason.HTTP_5XX),
+    ],
+)
 def test_classify_http_status(code, expected):
     assert classify_http_status(code) is expected
 
@@ -58,6 +65,7 @@ def test_classify_http_status(code, expected):
 # ---------------------------------------------------------------------------
 # classify_exception
 # ---------------------------------------------------------------------------
+
 
 def test_classify_exception_timeout():
     assert classify_exception(requests.Timeout()) is FailureReason.TIMEOUT
@@ -85,6 +93,7 @@ def test_classify_exception_unknown():
 # build_session
 # ---------------------------------------------------------------------------
 
+
 def test_build_session_explicit_proxies():
     proxies = {"http": "socks5h://proxy:1080", "https": "socks5h://proxy:1080"}
     sess = build_session(proxies)
@@ -111,6 +120,7 @@ def test_build_session_no_proxies_returns_session():
 # attempt_sources — empty response
 # ---------------------------------------------------------------------------
 
+
 def test_attempt_sources_empty_response_classified_correctly():
     src = _src("empty-server")
 
@@ -134,6 +144,7 @@ def test_attempt_sources_empty_response_classified_correctly():
 # attempt_sources — 429 retried up to retry_count then gives up
 # ---------------------------------------------------------------------------
 
+
 def test_attempt_sources_429_retried_then_fails():
     src = _src("rate-limited")
     call_log: list[int] = []
@@ -142,7 +153,7 @@ def test_attempt_sources_429_retried_then_fails():
         call_log.append(1)
         return 429, b"slow down"
 
-    selected, payload, attempts = attempt_sources(
+    selected, _payload, attempts = attempt_sources(
         [src],
         timeout=1,
         retry_count=2,
@@ -158,6 +169,7 @@ def test_attempt_sources_429_retried_then_fails():
 # ---------------------------------------------------------------------------
 # attempt_sources — all sources fail → None winner
 # ---------------------------------------------------------------------------
+
 
 def test_attempt_sources_all_fail_returns_none():
     sources = [_src("a"), _src("b")]

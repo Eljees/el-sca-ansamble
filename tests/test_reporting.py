@@ -16,9 +16,15 @@ def test_build_report_includes_hashes_and_db_metadata(tmp_path: Path):
     target = tmp_path / "sample.bin"
     target.write_bytes(b"hello-report")
 
-    (artifacts / "sbom" / "syft.json").write_text(json.dumps({"artifacts": [{"name": "alpha"}]}), encoding="utf-8")
-    (artifacts / "reports" / "grype" / "report.json").write_text(json.dumps({"matches": []}), encoding="utf-8")
-    (artifacts / "reports" / "trivy" / "report.json").write_text(json.dumps({"Results": []}), encoding="utf-8")
+    (artifacts / "sbom" / "syft.json").write_text(
+        json.dumps({"artifacts": [{"name": "alpha"}]}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "grype" / "report.json").write_text(
+        json.dumps({"matches": []}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "trivy" / "report.json").write_text(
+        json.dumps({"Results": []}), encoding="utf-8"
+    )
     (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
     (artifacts / "summary.json").write_text(
         json.dumps(

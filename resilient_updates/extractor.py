@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
 import gzip
 import json
 import os
@@ -10,10 +7,12 @@ import shutil
 import subprocess
 import tarfile
 import zipfile
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from ._io import sha256_file as _sha256_file
-
 
 ARCHIVE_SUFFIXES = (
     ".tar.gz",
@@ -90,7 +89,7 @@ def _should_skip_member(
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _safe_name(value: str) -> str:
@@ -235,7 +234,9 @@ def _extract_gzip(path: Path, target_dir: Path) -> None:
 
 def _run_checked(command: list[str], cwd: Path | None = None) -> None:
     try:
-        subprocess.run(command, cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        subprocess.run(
+            command, cwd=cwd, check=True, capture_output=True, text=True
+        )
     except FileNotFoundError as exc:
         raise RuntimeError(f"required extractor tool is unavailable: {command[0]}") from exc
     except subprocess.CalledProcessError as exc:
@@ -268,6 +269,7 @@ def _extract_external(path: Path, target_dir: Path, kind: str) -> None:
         # quotes, unicode) that the previous custom implementation missed.
         # See docs/audit/10-defects.md §11.
         from shlex import quote as _shquote
+
         script = f"rpm2cpio {_shquote(str(path))} | cpio -idmu"
         _run_checked(["sh", "-c", script], cwd=target_dir)
         return
@@ -381,7 +383,12 @@ def extract_artifacts(
         if not kind:
             continue
         rel = archive_path.name if source_root.is_file() else str(archive_path.relative_to(source_root))
-        target_dir = destination_root / f"depth{depth}" / _safe_name(rel) / f"{_safe_name(_strip_archive_suffix(archive_path.name))}_extracted"
+        target_dir = (
+            destination_root
+            / f"depth{depth}"
+            / _safe_name(rel)
+            / f"{_safe_name(_strip_archive_suffix(archive_path.name))}_extracted"
+        )
         item: dict[str, Any] = {
             "archive": str(archive_path),
             "relative_path": rel,

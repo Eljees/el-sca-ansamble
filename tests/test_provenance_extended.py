@@ -3,13 +3,12 @@
 test_provenance.py has one test: write + read back.  This file covers
 _normalize (dataclasses, nested dicts/lists) and the auto-mkdir behaviour.
 """
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from pathlib import Path
-
-import pytest
 
 from resilient_updates.provenance import write_provenance
 

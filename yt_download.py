@@ -1,11 +1,19 @@
-import argparse, os, shutil, subprocess, sys
+import argparse
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
+
 
 def find_yt_dlp():
     found = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
-    if found: return found
-    candidates = [Path(sys.executable).parent / "Scripts" / "yt-dlp.exe",
-                  Path(sys.executable).parent / "yt-dlp.exe"]
+    if found:
+        return found
+    candidates = [
+        Path(sys.executable).parent / "Scripts" / "yt-dlp.exe",
+        Path(sys.executable).parent / "yt-dlp.exe",
+    ]
     appdata = os.environ.get("APPDATA")
     if appdata:
         roaming = Path(appdata) / "Python"
@@ -13,8 +21,10 @@ def find_yt_dlp():
             for d in roaming.iterdir():
                 candidates.append(d / "Scripts" / "yt-dlp.exe")
     for c in candidates:
-        if c.exists(): return str(c)
+        if c.exists():
+            return str(c)
     return ""
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -35,8 +45,11 @@ def main():
         cmd += ["-x", "--audio-format", "mp3"]
     else:
         q = args.quality
-        fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best" if q == "best" else \
-              f"bestvideo[height<={q}][ext=mp4]+bestaudio[ext=m4a]/best[height<={q}]"
+        fmt = (
+            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+            if q == "best"
+            else f"bestvideo[height<={q}][ext=mp4]+bestaudio[ext=m4a]/best[height<={q}]"
+        )
         cmd += ["-f", fmt, "--merge-output-format", "mp4"]
     if args.browser != "none":
         cmd += ["--cookies-from-browser", args.browser]
@@ -44,6 +57,7 @@ def main():
 
     print(f"Скачиваю: {args.url}")
     subprocess.run(cmd, check=True)
+
 
 if __name__ == "__main__":
     main()

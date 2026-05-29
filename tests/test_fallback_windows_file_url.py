@@ -5,6 +5,7 @@ urllib.request.url2pathname so that '/C:/x/y' becomes a real Windows
 path on Windows and stays a POSIX path elsewhere.  See
 docs/audit/10-defects.md section 4.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

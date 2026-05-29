@@ -1,14 +1,20 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from datetime import datetime, timedelta, timezone
-from hashlib import sha256
-from pathlib import Path
 import io
 import json
 import tarfile
+from copy import deepcopy
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from pathlib import Path
 
-from resilient_updates.cli import EXIT_ALL_SOURCES_FAILED, EXIT_LKG_USED, EXIT_STALE_REJECTED, EXIT_SUCCESS, update_grype
+from resilient_updates.cli import (
+    EXIT_ALL_SOURCES_FAILED,
+    EXIT_LKG_USED,
+    EXIT_STALE_REJECTED,
+    EXIT_SUCCESS,
+    update_grype,
+)
 from resilient_updates.config import load_config
 from tests.mock_feed_server.app import serve_in_thread
 
@@ -57,7 +63,7 @@ def test_429_falls_back_to_secondary(tmp_path: Path):
             "/primary/listing.json": {"status": 429, "body": "busy", "content_type": "text/plain"},
             "/secondary/listing.json": {
                 "status": 200,
-                "body": _listing("http://127.0.0.1:0/secondary", archive, datetime.now(timezone.utc)),
+                "body": _listing("http://127.0.0.1:0/secondary", archive, datetime.now(UTC)),
                 "content_type": "application/json",
             },
             "/secondary/db.tar.gz": {"status": 200, "body": archive},
@@ -65,7 +71,9 @@ def test_429_falls_back_to_secondary(tmp_path: Path):
     )
     host, port = server.server_address
     routes = server.RequestHandlerClass.routes
-    routes["/secondary/listing.json"]["body"] = _listing(f"http://{host}:{port}/secondary", archive, datetime.now(timezone.utc))
+    routes["/secondary/listing.json"]["body"] = _listing(
+        f"http://{host}:{port}/secondary", archive, datetime.now(UTC)
+    )
     config = _base_config(tmp_path, f"http://{host}:{port}")
     try:
         result = update_grype(config)
@@ -85,16 +93,25 @@ def test_corrupt_artifact_uses_last_known_good(tmp_path: Path):
         {
             "/primary/listing.json": {
                 "status": 200,
-                "body": _listing("http://127.0.0.1:0/primary", archive, datetime.now(timezone.utc)),
+                "body": _listing("http://127.0.0.1:0/primary", archive, datetime.now(UTC)),
                 "content_type": "application/json",
             },
             "/primary/db.tar.gz": {"status": 200, "body": archive},
         }
     )
     host, port = server.server_address
-    server.RequestHandlerClass.routes["/primary/listing.json"]["body"] = _listing(f"http://{host}:{port}/primary", archive, datetime.now(timezone.utc))
+    server.RequestHandlerClass.routes["/primary/listing.json"]["body"] = _listing(
+        f"http://{host}:{port}/primary", archive, datetime.now(UTC)
+    )
     config = _base_config(tmp_path, f"http://{host}:{port}")
-    config["grype"]["upstream_update_urls"] = [{"name": "primary", "url": f"http://{host}:{port}/primary/listing.json", "priority": 10, "enabled": True}]
+    config["grype"]["upstream_update_urls"] = [
+        {
+            "name": "primary",
+            "url": f"http://{host}:{port}/primary/listing.json",
+            "priority": 10,
+            "enabled": True,
+        }
+    ]
     try:
         result = update_grype(config)
     finally:
@@ -111,13 +128,13 @@ def test_corrupt_primary_falls_back_to_secondary(tmp_path: Path):
         {
             "/primary/listing.json": {
                 "status": 200,
-                "body": _listing("http://127.0.0.1:0/primary", bad_archive, datetime.now(timezone.utc)),
+                "body": _listing("http://127.0.0.1:0/primary", bad_archive, datetime.now(UTC)),
                 "content_type": "application/json",
             },
             "/primary/db.tar.gz": {"status": 200, "body": bad_archive},
             "/secondary/listing.json": {
                 "status": 200,
-                "body": _listing("http://127.0.0.1:0/secondary", good_archive, datetime.now(timezone.utc)),
+                "body": _listing("http://127.0.0.1:0/secondary", good_archive, datetime.now(UTC)),
                 "content_type": "application/json",
             },
             "/secondary/db.tar.gz": {"status": 200, "body": good_archive},
@@ -125,8 +142,12 @@ def test_corrupt_primary_falls_back_to_secondary(tmp_path: Path):
     )
     host, port = server.server_address
     routes = server.RequestHandlerClass.routes
-    routes["/primary/listing.json"]["body"] = _listing(f"http://{host}:{port}/primary", bad_archive, datetime.now(timezone.utc))
-    routes["/secondary/listing.json"]["body"] = _listing(f"http://{host}:{port}/secondary", good_archive, datetime.now(timezone.utc))
+    routes["/primary/listing.json"]["body"] = _listing(
+        f"http://{host}:{port}/primary", bad_archive, datetime.now(UTC)
+    )
+    routes["/secondary/listing.json"]["body"] = _listing(
+        f"http://{host}:{port}/secondary", good_archive, datetime.now(UTC)
+    )
     config = _base_config(tmp_path, f"http://{host}:{port}")
     try:
         result = update_grype(config)
@@ -142,7 +163,7 @@ def test_missing_checksum_is_rejected_when_hash_validation_enabled(tmp_path: Pat
     listing = json.dumps(
         {
             "archive_url": "http://127.0.0.1:0/primary/db.tar.gz",
-            "built": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "built": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
     )
     server, thread = serve_in_thread(
@@ -155,11 +176,18 @@ def test_missing_checksum_is_rejected_when_hash_validation_enabled(tmp_path: Pat
     server.RequestHandlerClass.routes["/primary/listing.json"]["body"] = json.dumps(
         {
             "archive_url": f"http://{host}:{port}/primary/db.tar.gz",
-            "built": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "built": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
     )
     config = _base_config(tmp_path, f"http://{host}:{port}")
-    config["grype"]["upstream_update_urls"] = [{"name": "primary", "url": f"http://{host}:{port}/primary/listing.json", "priority": 10, "enabled": True}]
+    config["grype"]["upstream_update_urls"] = [
+        {
+            "name": "primary",
+            "url": f"http://{host}:{port}/primary/listing.json",
+            "priority": 10,
+            "enabled": True,
+        }
+    ]
     try:
         result = update_grype(config)
     finally:
@@ -179,7 +207,7 @@ def test_v6_latest_json_with_relative_path_is_accepted(tmp_path: Path):
                     {
                         "status": "active",
                         "schemaVersion": "v6.1.4",
-                        "built": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "built": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                         "path": "vulnerability-db_v6.1.4_test.tar.zst",
                         "checksum": f"sha256:{digest}",
                     }
@@ -191,7 +219,9 @@ def test_v6_latest_json_with_relative_path_is_accepted(tmp_path: Path):
     )
     host, port = server.server_address
     config = _base_config(tmp_path, f"http://{host}:{port}")
-    config["grype"]["upstream_update_urls"] = [{"name": "primary", "url": f"http://{host}:{port}/v6/latest.json", "priority": 10, "enabled": True}]
+    config["grype"]["upstream_update_urls"] = [
+        {"name": "primary", "url": f"http://{host}:{port}/v6/latest.json", "priority": 10, "enabled": True}
+    ]
     try:
         result = update_grype(config)
     finally:
@@ -204,7 +234,7 @@ def test_v6_latest_json_with_relative_path_is_accepted(tmp_path: Path):
 
 def test_stale_db_is_rejected(tmp_path: Path):
     archive = _make_archive_bytes()
-    stale = datetime.now(timezone.utc) - timedelta(days=10)
+    stale = datetime.now(UTC) - timedelta(days=10)
     server, thread = serve_in_thread(
         {
             "/primary/listing.json": {
@@ -216,9 +246,18 @@ def test_stale_db_is_rejected(tmp_path: Path):
         }
     )
     host, port = server.server_address
-    server.RequestHandlerClass.routes["/primary/listing.json"]["body"] = _listing(f"http://{host}:{port}/primary", archive, stale)
+    server.RequestHandlerClass.routes["/primary/listing.json"]["body"] = _listing(
+        f"http://{host}:{port}/primary", archive, stale
+    )
     config = _base_config(tmp_path, f"http://{host}:{port}")
-    config["grype"]["upstream_update_urls"] = [{"name": "primary", "url": f"http://{host}:{port}/primary/listing.json", "priority": 10, "enabled": True}]
+    config["grype"]["upstream_update_urls"] = [
+        {
+            "name": "primary",
+            "url": f"http://{host}:{port}/primary/listing.json",
+            "priority": 10,
+            "enabled": True,
+        }
+    ]
     try:
         result = update_grype(config)
     finally:

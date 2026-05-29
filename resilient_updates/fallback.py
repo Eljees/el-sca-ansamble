@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import os
-from pathlib import Path
 import socket
 import time
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
@@ -15,7 +15,7 @@ import requests
 from .source_policy import SourceCandidate
 
 
-class FailureReason(str, Enum):
+class FailureReason(str, Enum):  # noqa: UP042 — StrEnum requires py3.11
     TIMEOUT = "timeout"
     HTTP_429 = "http_429"
     HTTP_5XX = "http_5xx"
@@ -62,10 +62,17 @@ def build_session(proxies: dict[str, str] | None = None) -> requests.Session:
         # requests reads HTTP_PROXY / HTTPS_PROXY / NO_PROXY automatically.
         # ALL_PROXY is a widely supported convention but requests ignores it —
         # wire it to both schemes so SOCKS5 works without extra config.
-        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+        all_proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")  # noqa: SIM112
         if all_proxy:
             sess.proxies.setdefault("http", all_proxy)
             sess.proxies.setdefault("https", all_proxy)
+            # When we wire ALL_PROXY manually, requests no longer applies
+            # NO_PROXY automatically for the manually-set entries.  Wire it
+            # ourselves so internal hosts (127.0.0.1, localhost, private
+            # ranges) bypass the SOCKS proxy as the operator intended.
+            no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+            if no_proxy:
+                sess.proxies.setdefault("no_proxy", no_proxy)
     return sess
 
 
@@ -94,11 +101,13 @@ def classify_exception(exc: Exception) -> FailureReason:
 
 
 # Errors where retrying is pointless (permanent, not transient).
-_NON_RETRYABLE_REASONS = frozenset({
-    FailureReason.INVALID_SCHEMA,
-    FailureReason.AUTH_FAILURE,
-    FailureReason.HTTP_4XX,
-})
+_NON_RETRYABLE_REASONS = frozenset(
+    {
+        FailureReason.INVALID_SCHEMA,
+        FailureReason.AUTH_FAILURE,
+        FailureReason.HTTP_4XX,
+    }
+)
 
 
 def fetch_bytes(
@@ -117,7 +126,17 @@ def fetch_bytes(
         payload = local_path.read_bytes()
         return 200, payload
     sess = session or build_session()
-    response = sess.get(url, timeout=timeout, headers=headers)
+    # requests does not remove manually-wired SOCKS proxies when no_proxy
+    # matches the target host.  Check explicitly and pass per-request
+    # proxies=None to clear the proxy for bypassed addresses (e.g. mock
+    # servers on 127.0.0.1 in tests, or internal hosts in production).
+    _no_proxy = sess.proxies.get("no_proxy") or os.environ.get("NO_PROXY") or os.environ.get("no_proxy")
+    from requests.utils import should_bypass_proxies as _bypass
+
+    _req_proxies: dict[str, str | None] | None = (
+        {"http": None, "https": None} if _bypass(url, no_proxy=_no_proxy) else None
+    )
+    response = sess.get(url, timeout=timeout, headers=headers, proxies=_req_proxies)
     return response.status_code, response.content
 
 
@@ -127,7 +146,9 @@ def attempt_sources(
     retry_count: int,
     backoff_seconds: int,
     retry_status_codes: list[int],
-    downloader: Callable[[str, int, requests.Session | None, dict[str, str] | None], tuple[int, bytes]] = fetch_bytes,
+    downloader: Callable[
+        [str, int, requests.Session | None, dict[str, str] | None], tuple[int, bytes]
+    ] = fetch_bytes,
     session: requests.Session | None = None,
 ) -> tuple[SourceCandidate | None, bytes | None, list[AttemptResult]]:
     attempts: list[AttemptResult] = []
@@ -139,12 +160,22 @@ def attempt_sources(
                 reason = classify_http_status(status_code)
                 if reason is None:
                     if not payload:
-                        attempts.append(AttemptResult(source, False, FailureReason.EMPTY_RESPONSE, "empty response", status_code))
+                        attempts.append(
+                            AttemptResult(
+                                source, False, FailureReason.EMPTY_RESPONSE, "empty response", status_code
+                            )
+                        )
                         break
                     attempts.append(AttemptResult(source, True, None, "ok", status_code))
                     return source, payload, attempts
-                attempts.append(AttemptResult(source, False, reason, f"http status {status_code}", status_code))
-                if reason in _NON_RETRYABLE_REASONS or status_code not in retry_status_codes or attempt >= retry_count:
+                attempts.append(
+                    AttemptResult(source, False, reason, f"http status {status_code}", status_code)
+                )
+                if (
+                    reason in _NON_RETRYABLE_REASONS
+                    or status_code not in retry_status_codes
+                    or attempt >= retry_count
+                ):
                     break
             except Exception as exc:  # pragma: no cover - covered via tests on classify result
                 reason = classify_exception(exc)

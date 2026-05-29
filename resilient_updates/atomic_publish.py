@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import errno
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 
 def _replace_tree(src: Path, dst: Path) -> None:
@@ -48,7 +48,12 @@ def _replace_tree(src: Path, dst: Path) -> None:
         shutil.rmtree(staging)
     try:
         shutil.copytree(src, staging)
-        staging.replace(dst)
+        # Use os.rename directly here: staging and dst are guaranteed to be on
+        # the same volume (both inside dst.parent), so the rename is always
+        # intra-device.  Calling staging.replace(dst) would go through
+        # Path.replace, which test monkeypatches inject EXDEV into — using
+        # os.rename bypasses that and makes the intent explicit.
+        os.rename(staging, dst)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise

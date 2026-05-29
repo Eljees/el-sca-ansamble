@@ -1,26 +1,34 @@
 """Tests for proxy support: build_session(), parse_proxy_config(), validate_proxy_config()."""
-from __future__ import annotations
 
-import os
+from __future__ import annotations
 
 from resilient_updates.config import parse_proxy_config, validate_proxy_config
 from resilient_updates.fallback import build_session
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _clear_proxy_env(monkeypatch):
     """Remove all proxy-related env vars to ensure a clean slate for each test."""
-    for var in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
-                "http_proxy", "https_proxy", "no_proxy", "all_proxy"):
+    for var in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "all_proxy",
+    ):
         monkeypatch.delenv(var, raising=False)
 
 
 # ---------------------------------------------------------------------------
 # build_session — no config, no env → no proxies
 # ---------------------------------------------------------------------------
+
 
 def test_build_session_no_proxy_config_no_env(monkeypatch):
     _clear_proxy_env(monkeypatch)
@@ -32,6 +40,7 @@ def test_build_session_no_proxy_config_no_env(monkeypatch):
 # ---------------------------------------------------------------------------
 # build_session — ALL_PROXY env var is wired to both http and https
 # ---------------------------------------------------------------------------
+
 
 def test_build_session_all_proxy_env_wired_to_http_and_https(monkeypatch):
     _clear_proxy_env(monkeypatch)
@@ -52,6 +61,7 @@ def test_build_session_all_proxy_lowercase_env_also_works(monkeypatch):
 # ---------------------------------------------------------------------------
 # build_session — explicit proxies dict overrides env
 # ---------------------------------------------------------------------------
+
 
 def test_build_session_explicit_proxies_override_env(monkeypatch):
     _clear_proxy_env(monkeypatch)
@@ -90,6 +100,7 @@ def test_build_session_empty_proxies_dict_skips_env(monkeypatch):
 # parse_proxy_config
 # ---------------------------------------------------------------------------
 
+
 def test_parse_proxy_config_absent_section_returns_empty():
     assert parse_proxy_config({}) == {}
     assert parse_proxy_config({"proxy": None}) == {}
@@ -124,6 +135,7 @@ def test_parse_proxy_config_partial_section():
 # ---------------------------------------------------------------------------
 # validate_proxy_config
 # ---------------------------------------------------------------------------
+
 
 def test_validate_proxy_config_empty_is_valid():
     assert validate_proxy_config({}) == []

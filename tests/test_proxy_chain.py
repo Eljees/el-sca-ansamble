@@ -4,6 +4,7 @@ ProxyRouter parses the YAML schema, picks a chain per source, caches
 health probes for a TTL, and writes provenance.  All tests stub the
 network probe (no real HTTP) so they run offline.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,10 +21,10 @@ from resilient_updates.proxy_chain import (
 )
 from resilient_updates.source_policy import SourceCandidate
 
-
 # ---------------------------------------------------------------------------
 # Dataclass helpers
 # ---------------------------------------------------------------------------
+
 
 def test_hop_from_dict_round_trip():
     raw = {"role": "front", "url": "http://tinyproxy:8888"}
@@ -35,12 +36,15 @@ def test_hop_from_dict_round_trip():
 
 
 def test_proxy_chain_entry_url_walks_back_to_first_url():
-    chain = ProxyChain.from_dict("via-vpn", {
-        "hops": [
-            {"role": "vpn", "interface": "wg0"},
-            {"role": "socks", "url": "socks5h://proxy:1080"},
-        ]
-    })
+    chain = ProxyChain.from_dict(
+        "via-vpn",
+        {
+            "hops": [
+                {"role": "vpn", "interface": "wg0"},
+                {"role": "socks", "url": "socks5h://proxy:1080"},
+            ]
+        },
+    )
     # entry_url returns the FIRST hop with a URL — VPN hop has no URL so
     # the SOCKS one wins.
     assert chain.entry_url == "socks5h://proxy:1080"
@@ -58,16 +62,19 @@ def test_policies_from_dict_uses_defaults_when_missing():
 # Router selection
 # ---------------------------------------------------------------------------
 
+
 def _config():
     return {
         "proxy": {
             "default_chain": "corp",
             "chains": {
                 "direct": {"hops": []},
-                "corp": {"hops": [
-                    {"role": "front", "url": "http://tinyproxy:8888"},
-                    {"role": "socks", "url": "socks5h://proxy-xray:1080"},
-                ]},
+                "corp": {
+                    "hops": [
+                        {"role": "front", "url": "http://tinyproxy:8888"},
+                        {"role": "socks", "url": "socks5h://proxy-xray:1080"},
+                    ]
+                },
             },
             "policies": {
                 "failover_order": ["corp", "direct"],
@@ -85,7 +92,9 @@ def _config():
 def _force_chain_health(router: ProxyRouter, name: str, status: str, latency_ms: float = 100.0):
     """Bypass the network probe by pre-seeding the health cache."""
     import time
+
     from resilient_updates.proxy_chain import _HealthState
+
     router._health[name] = _HealthState(
         status=status, latency_ms=latency_ms, error=None, checked_at=time.monotonic()
     )
@@ -143,6 +152,7 @@ def test_write_provenance_includes_chain_and_policy(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # validate_chains
 # ---------------------------------------------------------------------------
+
 
 def test_validate_chains_clean_config_returns_no_errors():
     assert validate_chains(_config()["proxy"]) == []

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 import json
+from dataclasses import asdict, is_dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -21,5 +21,5 @@ def write_provenance(path: str | Path, payload: dict[str, Any]) -> None:
     resolved = Path(path)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     normalized = _normalize(payload)
-    normalized.setdefault("timestamp_utc", datetime.now(timezone.utc).isoformat())
+    normalized.setdefault("timestamp_utc", datetime.now(UTC).isoformat())
     resolved.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")

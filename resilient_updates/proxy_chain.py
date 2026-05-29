@@ -24,22 +24,18 @@ profile ``vpn``) is down the chain is marked unhealthy automatically.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
 import json
-import os
 import time
-from typing import Any, Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import requests
 
 from .source_policy import SourceCandidate
 
-
-_ALLOWED_PROXY_SCHEMES = frozenset(
-    {"http", "https", "socks5", "socks5h", "socks4", "socks4a"}
-)
+_ALLOWED_PROXY_SCHEMES = frozenset({"http", "https", "socks5", "socks5h", "socks4", "socks4a"})
 
 
 @dataclass
@@ -58,7 +54,7 @@ class Hop:
     interface: str | None = None
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "Hop":
+    def from_dict(cls, raw: dict[str, Any]) -> Hop:
         return cls(
             role=str(raw.get("role", "")).strip() or "hop",
             url=(str(raw["url"]).strip() if raw.get("url") else None),
@@ -89,7 +85,7 @@ class ProxyChain:
     description: str = ""
 
     @classmethod
-    def from_dict(cls, name: str, raw: dict[str, Any]) -> "ProxyChain":
+    def from_dict(cls, name: str, raw: dict[str, Any]) -> ProxyChain:
         hops_raw = raw.get("hops") or []
         if not isinstance(hops_raw, list):
             raise TypeError(f"proxy.chains.{name}.hops must be a list")
@@ -128,17 +124,13 @@ class Policies:
     retry_per_chain: int = 2
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> "Policies":
+    def from_dict(cls, raw: dict[str, Any]) -> Policies:
         return cls(
-            healthcheck_url=str(
-                raw.get("healthcheck_url", cls.healthcheck_url)
-            ),
+            healthcheck_url=str(raw.get("healthcheck_url", cls.healthcheck_url)),
             healthcheck_timeout_seconds=int(
                 raw.get("healthcheck_timeout_seconds", cls.healthcheck_timeout_seconds)
             ),
-            healthcheck_ttl_seconds=int(
-                raw.get("healthcheck_ttl_seconds", cls.healthcheck_ttl_seconds)
-            ),
+            healthcheck_ttl_seconds=int(raw.get("healthcheck_ttl_seconds", cls.healthcheck_ttl_seconds)),
             failover_order=[str(item) for item in raw.get("failover_order", [])],
             retry_per_chain=int(raw.get("retry_per_chain", cls.retry_per_chain)),
         )
@@ -147,6 +139,7 @@ class Policies:
 # ---------------------------------------------------------------------------
 # Session building
 # ---------------------------------------------------------------------------
+
 
 def _proxies_for_chain(chain: ProxyChain, no_proxy: str | None) -> dict[str, str]:
     entry = chain.entry_url
@@ -169,6 +162,7 @@ def _session_from_proxies(proxies: dict[str, str]) -> requests.Session:
 # ---------------------------------------------------------------------------
 # Router
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _HealthState:
@@ -198,7 +192,7 @@ class ProxyRouter:
 
     # -- factory ------------------------------------------------------------
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> "ProxyRouter | None":
+    def from_config(cls, config: dict[str, Any]) -> ProxyRouter | None:
         """Parse a feed_sources.yaml ``proxy:`` block.
 
         Returns ``None`` if the YAML carries only the legacy flat form
@@ -211,10 +205,7 @@ class ProxyRouter:
         if not raw_chains and not raw_policies:
             return None
         chains_raw = raw_chains if isinstance(raw_chains, dict) else {}
-        chains = {
-            name: ProxyChain.from_dict(name, body or {})
-            for name, body in chains_raw.items()
-        }
+        chains = {name: ProxyChain.from_dict(name, body or {}) for name, body in chains_raw.items()}
         policies = Policies.from_dict(raw_policies or {})
         per_source_list = section.get("per_source") or []
         per_source: dict[str, str] = {}
@@ -228,19 +219,13 @@ class ProxyRouter:
         default_chain = section.get("default_chain")
         no_proxy = (section.get("no_proxy") or "").strip() or None
         if default_chain and default_chain not in chains:
-            raise ValueError(
-                f"proxy.default_chain={default_chain!r} is not declared in proxy.chains"
-            )
+            raise ValueError(f"proxy.default_chain={default_chain!r} is not declared in proxy.chains")
         for src, chain_name in per_source.items():
             if chain_name not in chains:
-                raise ValueError(
-                    f"proxy.per_source[{src}] references unknown chain {chain_name!r}"
-                )
+                raise ValueError(f"proxy.per_source[{src}] references unknown chain {chain_name!r}")
         for entry in policies.failover_order:
             if entry not in chains:
-                raise ValueError(
-                    f"proxy.policies.failover_order entry {entry!r} is not a declared chain"
-                )
+                raise ValueError(f"proxy.policies.failover_order entry {entry!r} is not a declared chain")
         return cls(chains, policies, default_chain, per_source, no_proxy)
 
     # -- public -------------------------------------------------------------
@@ -309,7 +294,7 @@ class ProxyRouter:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "timestamp_utc": datetime.now(UTC).isoformat(),
             "default_chain": self._default_chain,
             "failover_order": list(self._policies.failover_order),
             "policies": {
@@ -374,6 +359,7 @@ class ProxyRouter:
 # Pure-function helpers (used by validators and tests)
 # ---------------------------------------------------------------------------
 
+
 def validate_chains(section: dict[str, Any]) -> list[str]:
     """Validate the proxy.chains / proxy.policies / proxy.per_source block.
 
@@ -421,16 +407,11 @@ def validate_chains(section: dict[str, Any]) -> list[str]:
     else:
         for entry in failover:
             if entry not in chain_names:
-                errors.append(
-                    f"proxy.policies.failover_order entry {entry!r} is not a "
-                    f"declared chain"
-                )
+                errors.append(f"proxy.policies.failover_order entry {entry!r} is not a declared chain")
 
     default_chain = section.get("default_chain")
     if default_chain is not None and default_chain not in chain_names:
-        errors.append(
-            f"proxy.default_chain={default_chain!r} is not declared in proxy.chains"
-        )
+        errors.append(f"proxy.default_chain={default_chain!r} is not declared in proxy.chains")
 
     per_source = section.get("per_source") or []
     if not isinstance(per_source, list):
@@ -442,9 +423,7 @@ def validate_chains(section: dict[str, Any]) -> list[str]:
                 continue
             chain = item.get("chain")
             if chain is not None and chain not in chain_names:
-                errors.append(
-                    f"proxy.per_source[{idx}].chain={chain!r} is not a declared chain"
-                )
+                errors.append(f"proxy.per_source[{idx}].chain={chain!r} is not a declared chain")
 
     return errors
 

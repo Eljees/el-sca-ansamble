@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -96,14 +96,18 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
     declared_sources = set(cve_cfg.get("data_sources", []))
     unknown_declared_sources = declared_sources - KNOWN_CVE_DATA_SOURCES
     if unknown_declared_sources:
-        errors.append(f"cve_bin_tool.data_sources contains unknown sources: {sorted(unknown_declared_sources)}")
+        errors.append(
+            f"cve_bin_tool.data_sources contains unknown sources: {sorted(unknown_declared_sources)}"
+        )
     db_audit = cve_cfg.get("db_audit", {})
     required_sources = db_audit.get("required_sources", [])
     if not required_sources:
         errors.append("cve_bin_tool.db_audit.required_sources must not be empty")
     unknown_required_sources = set(required_sources) - KNOWN_CVE_DATA_SOURCES
     if unknown_required_sources:
-        errors.append(f"cve_bin_tool.db_audit.required_sources contains unknown sources: {sorted(unknown_required_sources)}")
+        errors.append(
+            f"cve_bin_tool.db_audit.required_sources contains unknown sources: {sorted(unknown_required_sources)}"
+        )
     for source_name in db_audit.get("min_entries", {}):
         if source_name not in KNOWN_CVE_DATA_SOURCES:
             errors.append(f"cve_bin_tool.db_audit.min_entries contains unknown source: {source_name}")
@@ -113,9 +117,7 @@ def validate_config_data(config: dict[str, Any]) -> list[str]:
         errors.append(str(exc))
     db_policy = str(db_audit.get("db_policy", "strict")).strip().lower()
     if db_policy not in KNOWN_CVE_DB_POLICIES:
-        errors.append(
-            f"cve_bin_tool.db_audit.db_policy must be one of {sorted(KNOWN_CVE_DB_POLICIES)}"
-        )
+        errors.append(f"cve_bin_tool.db_audit.db_policy must be one of {sorted(KNOWN_CVE_DB_POLICIES)}")
     if "db_status" in cve_cfg:
         try:
             parse_duration_hours(cve_cfg["db_status"].get("warning_age", "24h"))
@@ -209,6 +211,7 @@ def validate_proxy_config(config: dict[str, Any]) -> list[str]:
         if not val:
             continue
         from urllib.parse import urlparse as _urlparse
+
         parsed = _urlparse(val)
         if parsed.scheme not in _ALLOWED_PROXY_SCHEMES:
             errors.append(

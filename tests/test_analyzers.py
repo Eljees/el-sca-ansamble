@@ -5,22 +5,17 @@ These tests use only Python stdlib and temporary files — no Docker, no network
 Run with:  pytest tests/test_analyzers.py
            python -m pytest tests/test_analyzers.py -v
 """
+
 from __future__ import annotations
 
-import json
-import struct
+import types
 import zipfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-import sys
-import types
-
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers to load the scripts as modules without pytest conftest magic
 # ---------------------------------------------------------------------------
+
 
 def _load_script(name: str) -> types.ModuleType:
     script_path = Path(__file__).parent.parent / "scripts" / name
@@ -35,10 +30,11 @@ def _load_script(name: str) -> types.ModuleType:
 # analyze_win_installer tests
 # ---------------------------------------------------------------------------
 
+
 class TestDetectFormat:
     def test_msi_by_extension(self, tmp_path):
         f = tmp_path / "setup.msi"
-        f.write_bytes(b"\xD0\xCF\x11\xE0" + b"\x00" * 100)  # MSI magic
+        f.write_bytes(b"\xd0\xcf\x11\xe0" + b"\x00" * 100)  # MSI magic
         mod = _load_script("analyze_win_installer.py")
         assert mod.detect_format(f) == "msi"
 
@@ -76,7 +72,7 @@ class TestFindInstaller:
         assert result.suffix.lower() == ".exe"
 
     def test_finds_msi_in_directory(self, tmp_path):
-        (tmp_path / "app.msi").write_bytes(b"\xD0\xCF" + b"\x00" * 10)
+        (tmp_path / "app.msi").write_bytes(b"\xd0\xcf" + b"\x00" * 10)
         mod = _load_script("analyze_win_installer.py")
         result = mod.find_installer(tmp_path)
         assert result is not None
@@ -146,6 +142,7 @@ class TestBuildSyftSbomWin:
 # ---------------------------------------------------------------------------
 # analyze_apk tests
 # ---------------------------------------------------------------------------
+
 
 def _make_minimal_apk(dest: Path, pkg: str = "com.example.app") -> Path:
     """Create a minimal valid APK (ZIP) with placeholder files."""
@@ -270,9 +267,17 @@ class TestBuildSyftSbomApk:
 
     def test_sbom_source_uses_display_name(self, tmp_path):
         apk = _make_minimal_apk(tmp_path)
-        meta = {"package": "com.test", "version_name": "1.0", "version_code": "1",
-                "min_sdk": "21", "target_sdk": "33", "permissions": [],
-                "libraries": [], "native_libs": [], "third_party_packages": []}
+        meta = {
+            "package": "com.test",
+            "version_name": "1.0",
+            "version_code": "1",
+            "min_sdk": "21",
+            "target_sdk": "33",
+            "permissions": [],
+            "libraries": [],
+            "native_libs": [],
+            "third_party_packages": [],
+        }
         mod = _load_script("analyze_apk.py")
         sbom = mod.build_syft_sbom(apk, meta, display_name="my-custom-name")
         assert sbom["source"]["name"] == "my-custom-name"

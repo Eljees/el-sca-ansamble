@@ -144,7 +144,9 @@ def test_generate_html_site_creates_overview_and_tool_pages(tmp_path: Path):
     components = module.parse_syft_components(module.load_json(artifacts / "sbom" / "syft.json"))
 
     output = tmp_path / "site" / "index.html"
-    result = module.generate_html_site(findings, "D:/__tests/_SCA/CYBERSEC-11531/prometheus.tar.gz", str(artifacts), output, components)
+    result = module.generate_html_site(
+        findings, "D:/__tests/_SCA/CYBERSEC-11531/prometheus.tar.gz", str(artifacts), output, components
+    )
 
     assert result == 0
     assert output.exists()

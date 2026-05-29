@@ -35,7 +35,6 @@ from typing import Any
 
 from ._io import read_json as _read_json
 
-
 # ---------------------------------------------------------------------------
 # JSON loaders moved to resilient_updates._io (shared with reporting.py /
 # run_summary.py / extractor.py).  See docs/audit/20-architecture.md §1.
@@ -54,6 +53,7 @@ def _first_json(root: Path, relpaths: list[str]) -> Any:
 # Extraction helpers — return normalised "row" lists with the same keys as
 # reporting.py so a diff entry shows the same columns as the main report.
 # ---------------------------------------------------------------------------
+
 
 def _normalize_severity(value: Any) -> str:
     if not value:
@@ -136,36 +136,45 @@ def _findings_from_cve_bin_tool(cve: Any) -> list[dict[str, str]]:
 
 
 def _load_findings(root: Path) -> list[dict[str, str]]:
-    grype = _first_json(root, [
-        "reports/grype/report.json",
-        "reports/grype/grype_report.json",
-    ])
-    trivy = _first_json(root, [
-        "reports/trivy/report.json",
-        "reports/trivy/trivy_report.json",
-    ])
-    cve = _first_json(root, [
-        "reports/cve-bin-tool/report.json",
-        "reports/cve-bin-tool/cve-bin-tool_report.json",
-    ])
-    return (
-        _findings_from_grype(grype)
-        + _findings_from_trivy(trivy)
-        + _findings_from_cve_bin_tool(cve)
+    grype = _first_json(
+        root,
+        [
+            "reports/grype/report.json",
+            "reports/grype/grype_report.json",
+        ],
     )
+    trivy = _first_json(
+        root,
+        [
+            "reports/trivy/report.json",
+            "reports/trivy/trivy_report.json",
+        ],
+    )
+    cve = _first_json(
+        root,
+        [
+            "reports/cve-bin-tool/report.json",
+            "reports/cve-bin-tool/cve-bin-tool_report.json",
+        ],
+    )
+    return _findings_from_grype(grype) + _findings_from_trivy(trivy) + _findings_from_cve_bin_tool(cve)
 
 
 def _load_components(root: Path) -> list[dict[str, str]]:
-    syft = _first_json(root, [
-        "sbom/syft.json",
-        "sbom/syft.syft.json",
-    ])
+    syft = _first_json(
+        root,
+        [
+            "sbom/syft.json",
+            "sbom/syft.syft.json",
+        ],
+    )
     return _components_from_syft(syft)
 
 
 # ---------------------------------------------------------------------------
 # Diff engine
 # ---------------------------------------------------------------------------
+
 
 def _comp_key(row: dict[str, str]) -> tuple[str, str]:
     return (row["name"], row["version"])
@@ -224,8 +233,23 @@ def diff_runs(before_root: str | Path, after_root: str | Path) -> DiffSummary:
     removed_comps = [c for c in before_comps if _comp_key(c) in removed_comp_keys]
 
     # ── Findings ─────────────────────────────────────────────────────────
-    before_finds = _load_findings(before)
-    after_finds = _load_findings(after)
+    # Deduplicate within each run first: the same CVE can appear once per
+    # binary when a target bundles several executables built from the same
+    # source (e.g. Prometheus ships both `prometheus` and `promtool`).
+    # We key on (id, product, version, tool) and keep the first occurrence,
+    # exactly as reporting.py's _dedup_findings does for the main report.
+    def _dedup(finds: list[dict[str, str]]) -> list[dict[str, str]]:
+        seen: set[tuple[str, str, str, str]] = set()
+        result: list[dict[str, str]] = []
+        for f in finds:
+            key = _finding_key(f)
+            if key not in seen:
+                seen.add(key)
+                result.append(f)
+        return result
+
+    before_finds = _dedup(_load_findings(before))
+    after_finds = _dedup(_load_findings(after))
     before_fkeys = {_finding_key(f) for f in before_finds}
     after_fkeys = {_finding_key(f) for f in after_finds}
     added_fkeys = after_fkeys - before_fkeys
@@ -239,9 +263,7 @@ def diff_runs(before_root: str | Path, after_root: str | Path) -> DiffSummary:
     before_sev = Counter(f["severity"] for f in before_finds)
     after_sev = Counter(f["severity"] for f in after_finds)
     all_severities = sorted(set(before_sev) | set(after_sev))
-    severity_delta = {
-        s: int(after_sev.get(s, 0)) - int(before_sev.get(s, 0)) for s in all_severities
-    }
+    severity_delta = {s: int(after_sev.get(s, 0)) - int(before_sev.get(s, 0)) for s in all_severities}
 
     return DiffSummary(
         components_added=added_comps,
@@ -257,6 +279,7 @@ def diff_runs(before_root: str | Path, after_root: str | Path) -> DiffSummary:
 # ---------------------------------------------------------------------------
 # Renderers
 # ---------------------------------------------------------------------------
+
 
 def to_markdown(summary: DiffSummary, *, before_label: str, after_label: str) -> str:
     lines: list[str] = []
@@ -313,9 +336,7 @@ def to_markdown(summary: DiffSummary, *, before_label: str, after_label: str) ->
         lines.append("| Tool | CVE/GHSA | Severity | Product | Version |")
         lines.append("|---|---|---|---|---|")
         for f in sorted(summary.findings_added, key=lambda r: (r["severity"], r["id"])):
-            lines.append(
-                f"| {f['tool']} | {f['id']} | {f['severity']} | {f['product']} | {f['version']} |"
-            )
+            lines.append(f"| {f['tool']} | {f['id']} | {f['severity']} | {f['product']} | {f['version']} |")
         lines.append("")
     if summary.findings_removed:
         lines.append("### Resolved findings")
@@ -323,9 +344,7 @@ def to_markdown(summary: DiffSummary, *, before_label: str, after_label: str) ->
         lines.append("| Tool | CVE/GHSA | Severity | Product | Version |")
         lines.append("|---|---|---|---|---|")
         for f in sorted(summary.findings_removed, key=lambda r: (r["severity"], r["id"])):
-            lines.append(
-                f"| {f['tool']} | {f['id']} | {f['severity']} | {f['product']} | {f['version']} |"
-            )
+            lines.append(f"| {f['tool']} | {f['id']} | {f['severity']} | {f['product']} | {f['version']} |")
         lines.append("")
 
     return "\n".join(lines) + "\n"

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from pathlib import Path
 import json
 import os
 import time
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -82,18 +82,18 @@ def test_write_run_summary_cli_produces_four_sidecar_jsons(tmp_path: Path, monke
         json.dumps({"artifacts": [{"name": "alpha", "version": "1.0"}]}),
         encoding="utf-8",
     )
-    (tmp_path / "reports" / "grype" / "report.json").write_text(
-        json.dumps({"matches": []}), encoding="utf-8"
-    )
+    (tmp_path / "reports" / "grype" / "report.json").write_text(json.dumps({"matches": []}), encoding="utf-8")
 
     # The CLI needs a valid feed_sources.yaml.  Point it at the example fixture.
     monkeypatch.setattr(
         "sys.argv",
         [
             "cli",
-            "--config", "tests/fixtures/feed_sources.example.yaml",
+            "--config",
+            "tests/fixtures/feed_sources.example.yaml",
             "write-run-summary",
-            "--reports-dir", str(tmp_path),
+            "--reports-dir",
+            str(tmp_path),
         ],
     )
 
@@ -118,12 +118,8 @@ def test_write_run_summary_no_overwrite_keeps_existing(tmp_path: Path, monkeypat
     (tmp_path / "reports" / "grype").mkdir(parents=True)
     (tmp_path / "reports" / "trivy").mkdir(parents=True)
     (tmp_path / "reports" / "cve-bin-tool").mkdir(parents=True)
-    (tmp_path / "sbom" / "syft.json").write_text(
-        '{"artifacts": []}', encoding="utf-8"
-    )
-    (tmp_path / "reports" / "grype" / "report.json").write_text(
-        '{"matches": []}', encoding="utf-8"
-    )
+    (tmp_path / "sbom" / "syft.json").write_text('{"artifacts": []}', encoding="utf-8")
+    (tmp_path / "reports" / "grype" / "report.json").write_text('{"matches": []}', encoding="utf-8")
 
     # Manually-authored summary that must survive.
     sentinel = tmp_path / "summary.json"
@@ -133,9 +129,11 @@ def test_write_run_summary_no_overwrite_keeps_existing(tmp_path: Path, monkeypat
         "sys.argv",
         [
             "cli",
-            "--config", "tests/fixtures/feed_sources.example.yaml",
+            "--config",
+            "tests/fixtures/feed_sources.example.yaml",
             "write-run-summary",
-            "--reports-dir", str(tmp_path),
+            "--reports-dir",
+            str(tmp_path),
             "--no-overwrite",
         ],
     )
@@ -158,10 +156,13 @@ def test_extract_cli_fails_when_file_input_has_no_extractable_archives(tmp_path,
         "sys.argv",
         [
             "cli",
-            "--config", "tests/fixtures/feed_sources.example.yaml",
+            "--config",
+            "tests/fixtures/feed_sources.example.yaml",
             "extract",
-            "--input", str(plain_file),
-            "--output", str(tmp_path / "out"),
+            "--input",
+            str(plain_file),
+            "--output",
+            str(tmp_path / "out"),
         ],
     )
 
@@ -172,10 +173,14 @@ def test_extract_cli_fails_when_file_input_has_no_extractable_archives(tmp_path,
 # _dedup_attempted_sources -- retry accumulation
 # ---------------------------------------------------------------------------
 
+
 def _make_source(name="primary"):
     return SourceCandidate(
-        priority=10, name=name, url=f"https://example.com/{name}",
-        tool="grype", layer="grype-db",
+        priority=10,
+        name=name,
+        url=f"https://example.com/{name}",
+        tool="grype",
+        layer="grype-db",
     )
 
 
@@ -188,9 +193,7 @@ def test_dedup_single_attempt_passthrough():
     assert result[0]["name"] == "primary"
     assert result[0]["retry_count"] == 1
     assert result[0]["succeeded"] is True
-    assert result[0]["outcomes"] == [
-        {"success": True, "reason": None, "message": "ok", "status_code": 200}
-    ]
+    assert result[0]["outcomes"] == [{"success": True, "reason": None, "message": "ok", "status_code": 200}]
 
 
 def test_dedup_retries_accumulate_count():
@@ -226,8 +229,8 @@ def test_dedup_multiple_sources_preserve_order():
     src_b = _make_source("beta")
     attempts = [
         AttemptResult(src_a, False, FailureReason.HTTP_5XX, "503", 503),
-        AttemptResult(src_b, True,  None,                   "ok",  200),
-        AttemptResult(src_a, True,  None,                   "ok",  200),
+        AttemptResult(src_b, True, None, "ok", 200),
+        AttemptResult(src_a, True, None, "ok", 200),
     ]
     result = _dedup_attempted_sources(attempts)
     assert len(result) == 2

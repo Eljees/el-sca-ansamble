@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
@@ -32,8 +32,8 @@ class LastKnownGood:
             return False
         if self.path.is_dir() and not any(self.path.iterdir()):
             return False
-        modified = datetime.fromtimestamp(self.path.stat().st_mtime, tz=timezone.utc)
-        return datetime.now(timezone.utc) - modified <= timedelta(hours=self.max_age_hours)
+        modified = datetime.fromtimestamp(self.path.stat().st_mtime, tz=UTC)
+        return datetime.now(UTC) - modified <= timedelta(hours=self.max_age_hours)
 
 
 def build_last_known_good(path: str | Path, max_age: str) -> LastKnownGood:

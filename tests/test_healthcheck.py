@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Unit tests for resilient_updates.healthcheck.
 
 healthcheck.py had 0 test coverage (noted in docs/audit/30-tests.md §5).
@@ -7,19 +5,21 @@ These tests cover the two paths in _probe_layer and verify the shape of the
 dict returned by run_healthcheck without making any real network connections.
 """
 
+from __future__ import annotations
+
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from resilient_updates.healthcheck import _probe_layer, run_healthcheck
 from resilient_updates.fallback import AttemptResult, FailureReason
+from resilient_updates.healthcheck import _probe_layer, run_healthcheck
 from resilient_updates.source_policy import SourceCandidate
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_source(name: str = "primary") -> SourceCandidate:
     return SourceCandidate(
@@ -66,6 +66,7 @@ def _make_config() -> dict[str, Any]:
 # _probe_layer
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.smoke
 def test_probe_layer_no_sources_returns_no_sources_configured():
     """When build_sources yields nothing, probe must return a well-formed dict."""
@@ -92,9 +93,10 @@ def test_probe_layer_all_failed_returns_all_sources_failed():
     src = _make_source("bad")
     failed = AttemptResult(src, False, FailureReason.TIMEOUT, "timed out", None)
 
-    with patch("resilient_updates.healthcheck.build_sources", return_value=[src]), \
-         patch("resilient_updates.healthcheck.attempt_sources",
-               return_value=(None, {}, [failed])):
+    with (
+        patch("resilient_updates.healthcheck.build_sources", return_value=[src]),
+        patch("resilient_updates.healthcheck.attempt_sources", return_value=(None, {}, [failed])),
+    ):
         result = _probe_layer(
             _make_config(),
             tool="trivy",
@@ -118,9 +120,12 @@ def test_probe_layer_success_returns_ok():
     src = _make_source("primary")
     ok_attempt = AttemptResult(src, True, None, "200 OK", 200)
 
-    with patch("resilient_updates.healthcheck.build_sources", return_value=[src]), \
-         patch("resilient_updates.healthcheck.attempt_sources",
-               return_value=(src, {"blob": b""}, [ok_attempt])):
+    with (
+        patch("resilient_updates.healthcheck.build_sources", return_value=[src]),
+        patch(
+            "resilient_updates.healthcheck.attempt_sources", return_value=(src, {"blob": b""}, [ok_attempt])
+        ),
+    ):
         result = _probe_layer(
             _make_config(),
             tool="trivy",
@@ -141,14 +146,14 @@ def test_probe_layer_success_returns_ok():
 # run_healthcheck
 # ---------------------------------------------------------------------------
 
+
 def test_run_healthcheck_shape(tmp_path):
     """run_healthcheck must return a dict with a proxy key and one key per layer."""
     config_path = "tests/fixtures/feed_sources.example.yaml"
 
     # Patch attempt_sources so no real network calls are made; every layer fails
     # gracefully (no sources reachable → all-sources-failed or no-sources-configured).
-    with patch("resilient_updates.healthcheck.attempt_sources",
-               return_value=(None, {}, [])):
+    with patch("resilient_updates.healthcheck.attempt_sources", return_value=(None, {}, [])):
         result = run_healthcheck(config_path)
 
     assert "proxy" in result

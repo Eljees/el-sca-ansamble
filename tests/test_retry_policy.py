@@ -1,11 +1,11 @@
 """Tests for resilient_updates._retry.RetryPolicy."""
+
 from __future__ import annotations
 
 import pytest
 
 from resilient_updates._retry import (
     DEFAULT_BACKOFF_SECONDS,
-    DEFAULT_RETRY_COUNT,
     DEFAULT_RETRY_STATUS_CODES,
     DEFAULT_TIMEOUT_SECONDS,
     RetryPolicy,
@@ -35,18 +35,26 @@ def test_from_yaml_node_partial_fills_in_defaults() -> None:
 
 def test_from_yaml_node_unknown_keys_are_ignored() -> None:
     """Forward-compatibility: future YAML keys must not crash older code."""
-    p = RetryPolicy.from_yaml_node({
-        "retry_count": 2,
-        "future_field_we_dont_know": "ignored",
-    })
+    p = RetryPolicy.from_yaml_node(
+        {
+            "retry_count": 2,
+            "future_field_we_dont_know": "ignored",
+        }
+    )
     assert p.retry_count == 2
 
 
 def test_from_tool_config_reads_named_section() -> None:
-    cfg = {"trivy": {"retry_backoff_policy": {
-        "retry_count": 4, "backoff_seconds": 3.5, "timeout_seconds": 20,
-        "retry_status_codes": [429, 503],
-    }}}
+    cfg = {
+        "trivy": {
+            "retry_backoff_policy": {
+                "retry_count": 4,
+                "backoff_seconds": 3.5,
+                "timeout_seconds": 20,
+                "retry_status_codes": [429, 503],
+            }
+        }
+    }
     p = RetryPolicy.from_tool_config(cfg, "trivy")
     assert p.retry_count == 4
     assert p.backoff_seconds == 3.5
@@ -59,8 +67,7 @@ def test_from_tool_config_missing_tool_returns_defaults() -> None:
 
 
 def test_as_attempt_kwargs_shape() -> None:
-    p = RetryPolicy(retry_count=3, backoff_seconds=2.0, timeout_seconds=15,
-                    retry_status_codes=(429,))
+    p = RetryPolicy(retry_count=3, backoff_seconds=2.0, timeout_seconds=15, retry_status_codes=(429,))
     kw = p.as_attempt_kwargs()
     assert kw == {
         "timeout": 15,
@@ -73,9 +80,10 @@ def test_as_attempt_kwargs_shape() -> None:
 def test_immutable_after_construction() -> None:
     """Frozen dataclass — keeps the shared instance safe across call sites."""
     import dataclasses
+
     p = RetryPolicy()
     try:
         p.retry_count = 99  # type: ignore[misc]
     except dataclasses.FrozenInstanceError:
         return
-    assert False, "RetryPolicy should be frozen"
+    raise AssertionError("RetryPolicy should be frozen")

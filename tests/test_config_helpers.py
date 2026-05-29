@@ -5,9 +5,8 @@ paths.  This file covers the individual helpers (parse_duration_hours,
 validate_proxy_config, validate_config_data corner cases) that the smoke
 test leaves uncovered.
 """
-from __future__ import annotations
 
-from copy import deepcopy
+from __future__ import annotations
 
 import pytest
 
@@ -17,7 +16,6 @@ from resilient_updates.config import (
     validate_config_data,
     validate_proxy_config,
 )
-
 
 FIXTURE = "tests/fixtures/feed_sources.example.yaml"
 
@@ -29,6 +27,7 @@ def _good() -> dict:
 # ---------------------------------------------------------------------------
 # parse_duration_hours
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.smoke
 def test_parse_duration_hours_hours():
@@ -59,6 +58,7 @@ def test_parse_duration_hours_invalid_raises():
 # ---------------------------------------------------------------------------
 # validate_config_data — individual error paths
 # ---------------------------------------------------------------------------
+
 
 def test_missing_top_level_section_reported():
     config = _good()
@@ -133,6 +133,7 @@ def test_valid_fixture_has_no_errors():
 # ---------------------------------------------------------------------------
 # validate_proxy_config
 # ---------------------------------------------------------------------------
+
 
 def test_proxy_valid_socks5():
     config = _good()

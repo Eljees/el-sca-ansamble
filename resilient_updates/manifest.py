@@ -22,7 +22,7 @@ corresponding entry.  Best-effort by design, matching how
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,7 @@ from ._io import hash_pair, read_json, short_hash
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _existing(root: Path, *relative: str) -> list[str]:
@@ -45,8 +45,7 @@ def _existing(root: Path, *relative: str) -> list[str]:
 def _glob_relpaths(root: Path, pattern: str) -> list[str]:
     """Glob inside root and return *sorted* relative paths."""
     try:
-        matches = sorted((p for p in (root).rglob(pattern) if p.is_file()),
-                         key=lambda p: str(p))
+        matches = sorted((p for p in (root).rglob(pattern) if p.is_file()), key=lambda p: str(p))
         return [str(p.relative_to(root)).replace("\\", "/") for p in matches]
     except OSError:
         return []
@@ -69,12 +68,8 @@ def derive_manifest(
     extraction = read_json(root / "extraction_manifest.json") or {}
     legacy_run_manifest = read_json(root / "run_manifest.json") or {}
 
-    started_at = (legacy_run_manifest.get("started_at_utc")
-                  or extraction.get("started_at_utc")
-                  or _now())
-    finished_at = (legacy_run_manifest.get("finished_at_utc")
-                   or extraction.get("finished_at_utc")
-                   or _now())
+    started_at = legacy_run_manifest.get("started_at_utc") or extraction.get("started_at_utc") or _now()
+    finished_at = legacy_run_manifest.get("finished_at_utc") or extraction.get("finished_at_utc") or _now()
     if run_id is None:
         run_id = short_hash(
             str(target_host or ""),
@@ -110,17 +105,16 @@ def derive_manifest(
     artefacts: dict[str, Any] = {}
     if (root / "extraction_manifest.json").exists():
         artefacts["extraction"] = "extraction_manifest.json"
-    sbom_files = _existing(root,
-                           "sbom/syft.json",
-                           "sbom/cyclonedx.json",
-                           "sbom/spdx.json")
+    sbom_files = _existing(root, "sbom/syft.json", "sbom/cyclonedx.json", "sbom/spdx.json")
     if sbom_files:
         artefacts["sbom"] = sbom_files
-    report_files = _existing(root,
-                             "reports/grype/report.json",
-                             "reports/trivy/report.json",
-                             "reports/cve-bin-tool/report.json",
-                             "reports/osv-scanner/report.json")
+    report_files = _existing(
+        root,
+        "reports/grype/report.json",
+        "reports/trivy/report.json",
+        "reports/cve-bin-tool/report.json",
+        "reports/osv-scanner/report.json",
+    )
     if report_files:
         artefacts["reports"] = report_files
     prov_files = _glob_relpaths(root / "provenance", "*.json")
@@ -133,10 +127,13 @@ def derive_manifest(
     ]:
         if (root / rel).exists():
             artefacts[canonical] = rel
-    final_md_candidates = sorted((root / "reports" / "final").rglob("*.md")) if (root / "reports" / "final").exists() else []
+    final_md_candidates = (
+        sorted((root / "reports" / "final").rglob("*.md")) if (root / "reports" / "final").exists() else []
+    )
     if final_md_candidates:
-        artefacts["final_markdown"] = [str(p.relative_to(root)).replace("\\", "/")
-                                       for p in final_md_candidates]
+        artefacts["final_markdown"] = [
+            str(p.relative_to(root)).replace("\\", "/") for p in final_md_candidates
+        ]
 
     return {
         "schema_version": 1,

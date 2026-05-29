@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import gzip
 import io
 import os
-from pathlib import Path
 import shutil
 import sqlite3
-from typing import Any
 import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -16,7 +16,6 @@ from .artifact_store import ensure_directory
 from .atomic_publish import publish_directory
 from .config import parse_duration_hours
 from .provenance import write_provenance
-
 
 OBSERVABLE_CVE_SOURCES = {"NVD", "GAD", "REDHAT", "CURL", "OSV", "PURL2CPE", "EPSS", "RSD"}
 UNOBSERVABLE_CVE_SOURCES: set[str] = set()
@@ -26,14 +25,14 @@ DB_POLICIES = {"strict", "degraded-ok", "lkg-ok"}
 def _utc_from_mtime(path: Path) -> str | None:
     if not path.exists():
         return None
-    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat()
 
 
 def _age_hours(path: Path) -> float | None:
     if not path.exists():
         return None
-    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-    return round((datetime.now(timezone.utc) - modified).total_seconds() / 3600, 2)
+    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+    return round((datetime.now(UTC) - modified).total_seconds() / 3600, 2)
 
 
 def _path_info(path: Path) -> dict[str, Any]:
@@ -192,7 +191,9 @@ def audit_cve_bin_tool_db(
             "reason": reason,
         }
 
-    missing_required = [item for item in required_sources if result["source_status"].get(item, {}).get("status") != "ok"]
+    missing_required = [
+        item for item in required_sources if result["source_status"].get(item, {}).get("status") != "ok"
+    ]
     if missing_required:
         result["failures"].append(f"required sources failed audit: {', '.join(missing_required)}")
 
@@ -272,7 +273,9 @@ def activate_best_cve_bin_tool_db(
         db_policy = "strict"
 
     for candidate in candidate_roots:
-        audit = audit_cve_bin_tool_db(candidate, required_sources, min_entries, max_cache_age, declared_sources)
+        audit = audit_cve_bin_tool_db(
+            candidate, required_sources, min_entries, max_cache_age, declared_sources
+        )
         audits.append(audit)
         health_status, health_details = classify_cve_db_health(audit, required_sources)
         if _policy_allows_status(db_policy, health_status):
@@ -304,10 +307,12 @@ def activate_best_cve_bin_tool_db(
         "selected_health_status": selected_health_status,
         "selected_health_details": selected_health_details,
         "activation_status": "failed",
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "timestamp_utc": datetime.now(UTC).isoformat(),
     }
     if not selected_root or not selected_audit:
-        lkg = audit_cve_bin_tool_db(active_path, required_sources, min_entries, max_cache_age, declared_sources)
+        lkg = audit_cve_bin_tool_db(
+            active_path, required_sources, min_entries, max_cache_age, declared_sources
+        )
         lkg_status, lkg_details = classify_cve_db_health(lkg, required_sources)
         payload["last_known_good_audit"] = lkg
         payload["last_known_good_status"] = lkg_status
@@ -326,7 +331,7 @@ def activate_best_cve_bin_tool_db(
         write_provenance(Path(provenance_path), payload)
         return True, payload
 
-    staging_dir = temp_parent / f"run-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    staging_dir = temp_parent / f"run-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
     shutil.copytree(selected_root, staging_dir)
@@ -400,7 +405,9 @@ def seed_cve_bin_tool_aux_sources(
                 response.raise_for_status()
                 with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
                     archive.extractall(osv_dir)
-                seeded_ecosystems.append({"ecosystem": ecosystem, "files_after_extract": _count_tree_files(osv_dir)})
+                seeded_ecosystems.append(
+                    {"ecosystem": ecosystem, "files_after_extract": _count_tree_files(osv_dir)}
+                )
             except Exception as exc:
                 result["failures"].append(f"OSV seed failed for {ecosystem}: {exc}")
         if seeded_ecosystems:

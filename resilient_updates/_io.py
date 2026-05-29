@@ -19,11 +19,11 @@ add it here rather than copy-pasting.
 
 from __future__ import annotations
 
-from hashlib import sha1, sha256, sha512
 import json
+from collections.abc import Iterable
+from hashlib import sha1, sha256, sha512
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 _CHUNK = 1024 * 1024  # 1 MiB read buffer; safe for ~6 GiB DB caches.
 
@@ -31,6 +31,7 @@ _CHUNK = 1024 * 1024  # 1 MiB read buffer; safe for ~6 GiB DB caches.
 # ---------------------------------------------------------------------------
 # File hashing
 # ---------------------------------------------------------------------------
+
 
 def sha256_file(path: Path) -> str:
     """Hex-encoded SHA-256 of ``path``.  Streams the file in 1 MiB chunks."""
@@ -115,6 +116,7 @@ def short_hash(*parts: str, length: int = 12) -> str:
 # ---------------------------------------------------------------------------
 # JSON loaders
 # ---------------------------------------------------------------------------
+
 
 def read_json(path: Path) -> Any:
     """Read JSON from ``path`` returning ``None`` on missing / invalid input.

@@ -16,7 +16,6 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 
-
 TOOL_ORDER = ["grype", "trivy", "cve-bin-tool"]
 TOOL_COLOR = {"grype": "#7c3aed", "trivy": "#0369a1", "cve-bin-tool": "#b45309", "syft": "#0f766e"}
 TOOL_LABEL = {"grype": "Grype", "trivy": "Trivy", "cve-bin-tool": "cve-bin-tool", "syft": "Syft"}
@@ -55,7 +54,7 @@ def hash_target(path: str | os.PathLike[str] | None) -> dict[str, str]:
     try:
         with open(path, encoding="utf-8") as handle:
             return json.load(handle)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[warn] could not load {path}: {exc}", file=sys.stderr)
         return None
 
@@ -263,7 +262,11 @@ def load_report_metadata(artifacts_dir: str | os.PathLike[str], target_display: 
                 "built_at": str(payload.get("built_at") or "UNKNOWN"),
                 "update_state": str(payload.get("update_state") or "UNKNOWN"),
             }
-    for tool_name, key in (("trivy", "update_trivy_db"), ("grype", "update_grype_db"), ("cve-bin-tool", "update_cve_db")):
+    for tool_name, key in (
+        ("trivy", "update_trivy_db"),
+        ("grype", "update_grype_db"),
+        ("cve-bin-tool", "update_cve_db"),
+    ):
         tools.setdefault(tool_name, {})
         tools[tool_name].setdefault("update_state", str(summary.get(key) or "UNKNOWN"))
         tools[tool_name].setdefault("db_version", "UNKNOWN")
@@ -271,10 +274,17 @@ def load_report_metadata(artifacts_dir: str | os.PathLike[str], target_display: 
         tools[tool_name].setdefault("updated_at", "UNKNOWN")
         tools[tool_name].setdefault("built_at", "UNKNOWN")
     return {
-        "db_snapshot_id": str(summary.get("db_snapshot_id") or run_manifest.get("db_snapshot_id") or db_snapshot.get("snapshot_id") or "UNKNOWN"),
+        "db_snapshot_id": str(
+            summary.get("db_snapshot_id")
+            or run_manifest.get("db_snapshot_id")
+            or db_snapshot.get("snapshot_id")
+            or "UNKNOWN"
+        ),
         "db_drift": str(status.get("db_drift") or summary.get("db_drift") or "UNKNOWN"),
         "tool_failures": str(status.get("tool_failures") or summary.get("tool_failures") or "UNKNOWN"),
-        "input_sha256": str(summary.get("input_sha256") or (run_manifest.get("input") or {}).get("sha256") or "UNKNOWN"),
+        "input_sha256": str(
+            summary.get("input_sha256") or (run_manifest.get("input") or {}).get("sha256") or "UNKNOWN"
+        ),
         "input_hashes": {
             "sha1": str(input_hashes.get("sha1") or "UNKNOWN"),
             "sha256": str(input_hashes.get("sha256") or summary.get("input_sha256") or "UNKNOWN"),
@@ -320,13 +330,13 @@ def render_findings_rows(findings):
             fix_html = '<span class="fix-no">wont-fix</span>'
         rows.append(
             f"""
-        <tr data-sev="{escape(finding['severity'])}">
-          <td><span class="tool-tag" style="color:{TOOL_COLOR.get(finding['tool'], '#6b7280')};border-color:{TOOL_COLOR.get(finding['tool'], '#6b7280')}40;background:{TOOL_COLOR.get(finding['tool'], '#6b7280')}10">{escape(finding['tool'])}</span></td>
+        <tr data-sev="{escape(finding["severity"])}">
+          <td><span class="tool-tag" style="color:{TOOL_COLOR.get(finding["tool"], "#6b7280")};border-color:{TOOL_COLOR.get(finding["tool"], "#6b7280")}40;background:{TOOL_COLOR.get(finding["tool"], "#6b7280")}10">{escape(finding["tool"])}</span></td>
           <td class="mono">{cve_html}</td>
-          <td>{severity_badge(finding['severity'])}</td>
-          <td class="score-cell">{score_html(finding['score'])}</td>
-          <td><span class="pkg-name">{escape(finding['product'])}</span>{f'<br><span class="pkg-type">{escape(finding["pkg_type"])}</span>' if finding["pkg_type"] else ""}</td>
-          <td class="mono ver">{escape(finding['version'])}</td>
+          <td>{severity_badge(finding["severity"])}</td>
+          <td class="score-cell">{score_html(finding["score"])}</td>
+          <td><span class="pkg-name">{escape(finding["product"])}</span>{f'<br><span class="pkg-type">{escape(finding["pkg_type"])}</span>' if finding["pkg_type"] else ""}</td>
+          <td class="mono ver">{escape(finding["version"])}</td>
           <td>{fix_html}</td>
         </tr>"""
         )
@@ -339,10 +349,10 @@ def render_component_rows(components):
         rows.append(
             f"""
         <tr>
-          <td><span class="pkg-name">{escape(component['name'])}</span>{f'<br><span class="pkg-type">{escape(component["type"])}</span>' if component["type"] else ""}</td>
-          <td class="mono ver">{escape(component['version'])}</td>
-          <td class="mono">{escape(component['purl']) if component['purl'] else '<span class="muted">-</span>'}</td>
-          <td class="score-cell">{component['locations']}</td>
+          <td><span class="pkg-name">{escape(component["name"])}</span>{f'<br><span class="pkg-type">{escape(component["type"])}</span>' if component["type"] else ""}</td>
+          <td class="mono ver">{escape(component["version"])}</td>
+          <td class="mono">{escape(component["purl"]) if component["purl"] else '<span class="muted">-</span>'}</td>
+          <td class="score-cell">{component["locations"]}</td>
         </tr>"""
         )
     return "".join(rows)
@@ -409,9 +419,9 @@ def render_metadata(metadata):
         tool = metadata["tools"].get(tool_name, {})
         tool_rows.append(
             f"""
-          <div class="stat-row"><span class="stat-label">{escape(tool_name)} state</span><span class="stat-value">{escape(tool.get('update_state', 'UNKNOWN'))}</span></div>
-          <div class="stat-row"><span class="stat-label">{escape(tool_name)} version</span><span class="stat-value mono">{escape(tool.get('db_version', 'UNKNOWN'))}</span></div>
-          <div class="stat-row"><span class="stat-label">{escape(tool_name)} updated</span><span class="stat-value mono">{escape(tool.get('updated_at', 'UNKNOWN'))}</span></div>
+          <div class="stat-row"><span class="stat-label">{escape(tool_name)} state</span><span class="stat-value">{escape(tool.get("update_state", "UNKNOWN"))}</span></div>
+          <div class="stat-row"><span class="stat-label">{escape(tool_name)} version</span><span class="stat-value mono">{escape(tool.get("db_version", "UNKNOWN"))}</span></div>
+          <div class="stat-row"><span class="stat-label">{escape(tool_name)} updated</span><span class="stat-value mono">{escape(tool.get("updated_at", "UNKNOWN"))}</span></div>
         """
         )
         if tool.get("built_at", "UNKNOWN") != "UNKNOWN":
@@ -425,25 +435,25 @@ def render_metadata(metadata):
       <div class="section" style="margin-bottom:0">
         <div class="section-title">Artifact hashes</div>
         <div class="stats-block">
-          <div class="stat-row"><span class="stat-label">Final target SHA-1</span><span class="stat-value mono">{escape(metadata['target_hashes']['sha1'])}</span></div>
-          <div class="stat-row"><span class="stat-label">Final target SHA-256</span><span class="stat-value mono">{escape(metadata['target_hashes']['sha256'])}</span></div>
-          <div class="stat-row"><span class="stat-label">Input artifact SHA-1</span><span class="stat-value mono">{escape(metadata['input_hashes']['sha1'])}</span></div>
-          <div class="stat-row"><span class="stat-label">Input artifact SHA-256</span><span class="stat-value mono">{escape(metadata['input_hashes']['sha256'])}</span></div>
+          <div class="stat-row"><span class="stat-label">Final target SHA-1</span><span class="stat-value mono">{escape(metadata["target_hashes"]["sha1"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Final target SHA-256</span><span class="stat-value mono">{escape(metadata["target_hashes"]["sha256"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Input artifact SHA-1</span><span class="stat-value mono">{escape(metadata["input_hashes"]["sha1"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Input artifact SHA-256</span><span class="stat-value mono">{escape(metadata["input_hashes"]["sha256"])}</span></div>
         </div>
       </div>
       <div class="section" style="margin-bottom:0">
         <div class="section-title">DB snapshot</div>
         <div class="stats-block">
-          <div class="stat-row"><span class="stat-label">Snapshot ID</span><span class="stat-value mono">{escape(metadata['db_snapshot_id'])}</span></div>
-          <div class="stat-row"><span class="stat-label">DB drift</span><span class="stat-value">{escape(metadata['db_drift'])}</span></div>
-          <div class="stat-row"><span class="stat-label">Tool failures</span><span class="stat-value">{escape(metadata['tool_failures'])}</span></div>
+          <div class="stat-row"><span class="stat-label">Snapshot ID</span><span class="stat-value mono">{escape(metadata["db_snapshot_id"])}</span></div>
+          <div class="stat-row"><span class="stat-label">DB drift</span><span class="stat-value">{escape(metadata["db_drift"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Tool failures</span><span class="stat-value">{escape(metadata["tool_failures"])}</span></div>
         </div>
       </div>
     </div>
     <div class="section" style="margin-bottom:0">
       <div class="section-title">Tool database versions and update times</div>
       <div class="stats-block">
-        {''.join(tool_rows)}
+        {"".join(tool_rows)}
       </div>
     </div>
   </div>"""
@@ -772,7 +782,9 @@ def page_template(title, target_display, date_str, nav, body_html, base_name):
 </html>"""
 
 
-def build_finding_page(page_key, page_title, findings, target_display, page_paths, components_total, tool_counts, metadata):
+def build_finding_page(
+    page_key, page_title, findings, target_display, page_paths, components_total, tool_counts, metadata
+):
     deduped = sort_findings(dedupe_findings(findings))
     severity_counts = {}
     for finding in deduped:
@@ -903,7 +915,16 @@ def generate_html_site(findings, target_display, artifacts_dir, output_path, com
     deduped_all = sort_findings(dedupe_findings(findings))
     tool_counts = {tool: sum(1 for item in deduped_all if item["tool"] == tool) for tool in TOOL_ORDER}
     metadata = load_report_metadata(artifacts_dir, target_display)
-    build_finding_page("overview", "SCA report overview", deduped_all, target_display, page_paths, len(components), tool_counts, metadata)
+    build_finding_page(
+        "overview",
+        "SCA report overview",
+        deduped_all,
+        target_display,
+        page_paths,
+        len(components),
+        tool_counts,
+        metadata,
+    )
     for tool in TOOL_ORDER:
         build_finding_page(
             tool,

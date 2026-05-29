@@ -1,4 +1,5 @@
 """Tests for resilient_updates.manifest.derive_manifest / write_manifest."""
+
 from __future__ import annotations
 
 import json
@@ -49,12 +50,8 @@ def test_derive_manifest_minimal_input_no_exception(tmp_path: Path) -> None:
 
 def test_derive_manifest_run_id_is_deterministic(tmp_path: Path) -> None:
     """Same inputs => same run_id (modulo time-based fields)."""
-    p1 = derive_manifest(
-        tmp_path, case_id="CASE", target_host="H", target_container="C", run_id="manual-id"
-    )
-    p2 = derive_manifest(
-        tmp_path, case_id="CASE", target_host="H", target_container="C", run_id="manual-id"
-    )
+    p1 = derive_manifest(tmp_path, case_id="CASE", target_host="H", target_container="C", run_id="manual-id")
+    p2 = derive_manifest(tmp_path, case_id="CASE", target_host="H", target_container="C", run_id="manual-id")
     assert p1["run_id"] == p2["run_id"] == "manual-id"
 
 

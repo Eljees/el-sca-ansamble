@@ -1,9 +1,8 @@
 """Tests for resilient_updates._io shared helpers."""
+
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from resilient_updates._io import (
     collect_json,
@@ -22,9 +21,7 @@ def test_sha256_file_matches_known_digest(tmp_path: Path) -> None:
     f = tmp_path / "f"
     f.write_bytes(b"abc")
     # SHA-256("abc")
-    assert sha256_file(f) == (
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    )
+    assert sha256_file(f) == ("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
 
 def test_sha1_and_sha512(tmp_path: Path) -> None:

@@ -21,8 +21,8 @@ import csv
 import datetime
 import json
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 # Default lookup roots, in priority order.  Override via
 # CVE_BIN_TOOL_DB_ROOT or EL_SCA_ENRICHMENT_ROOT env vars.
@@ -48,6 +48,7 @@ def _candidate_roots() -> list[Path]:
 # ---------------------------------------------------------------------------
 # EPSS
 # ---------------------------------------------------------------------------
+
 
 def load_epss_scores(roots: Iterable[Path] | None = None) -> dict[str, dict[str, float | str]]:
     """Return ``{cve_id: {"epss": float, "percentile": float, "date": str}}``.
@@ -80,7 +81,7 @@ def load_epss_scores(roots: Iterable[Path] | None = None) -> dict[str, dict[str,
                 if cve_idx is None or epss_idx is None:
                     return out
                 date_value = datetime.datetime.fromtimestamp(
-                    candidate.stat().st_mtime, tz=datetime.timezone.utc
+                    candidate.stat().st_mtime, tz=datetime.UTC
                 ).isoformat()
                 for row in reader:
                     if len(row) <= max(cve_idx, epss_idx):
@@ -109,6 +110,7 @@ def load_epss_scores(roots: Iterable[Path] | None = None) -> dict[str, dict[str,
 # ---------------------------------------------------------------------------
 # CISA KEV
 # ---------------------------------------------------------------------------
+
 
 def load_kev_set(roots: Iterable[Path] | None = None) -> set[str]:
     """Return the set of CVE IDs present in CISA's Known Exploited Vulnerabilities catalog.
@@ -157,6 +159,7 @@ def _extract_kev_ids(blob: object) -> set[str]:
 # ---------------------------------------------------------------------------
 # Application API
 # ---------------------------------------------------------------------------
+
 
 def enrich_findings(
     findings: list[dict[str, object]],

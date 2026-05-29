@@ -6,7 +6,6 @@ from .config import load_config, parse_proxy_config
 from .fallback import attempt_sources, build_session
 from .source_policy import build_sources
 
-
 # Default retry profile for tools whose YAML schema doesn't declare a
 # retry_backoff_policy at the same nesting depth as trivy's
 # (grype.timeout_policy / cve_bin_tool.source_health_policy).
@@ -80,13 +79,13 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
     # ── Trivy ──────────────────────────────────────────────────────────────
     trivy_health = config["trivy"]["source_health_policy"]
     trivy_retry_cfg = config["trivy"]["retry_backoff_policy"]
-    trivy_kwargs = dict(
-        timeout=int(trivy_health["healthcheck_timeout_seconds"]),
-        retry_count=int(trivy_retry_cfg["retry_count"]),
-        backoff_seconds=int(trivy_retry_cfg["backoff_seconds"]),
-        retry_status_codes=list(trivy_retry_cfg["retry_status_codes"]),
-        session=session,
-    )
+    trivy_kwargs = {
+        "timeout": int(trivy_health["healthcheck_timeout_seconds"]),
+        "retry_count": int(trivy_retry_cfg["retry_count"]),
+        "backoff_seconds": int(trivy_retry_cfg["backoff_seconds"]),
+        "retry_status_codes": list(trivy_retry_cfg["retry_status_codes"]),
+        "session": session,
+    }
     for layer in ("trivy-db", "trivy-java-db", "trivy-checks"):
         result[layer] = _probe_layer(config, "trivy", layer, **trivy_kwargs)
 

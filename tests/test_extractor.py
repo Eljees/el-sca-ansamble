@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 from resilient_updates.extractor import extract_artifacts
 
@@ -70,24 +70,28 @@ def test_extract_artifacts_marks_empty_file_input_as_failure(tmp_path: Path):
 # _strip_archive_suffix — §12 regression guard
 # ---------------------------------------------------------------------------
 
-import pytest
-from resilient_updates.extractor import _strip_archive_suffix
+import pytest  # noqa: E402
+
+from resilient_updates.extractor import _strip_archive_suffix  # noqa: E402
 
 
-@pytest.mark.parametrize("name,expected", [
-    ("grype-db.tar.gz",  "grype-db"),
-    ("trivy.tar.bz2",    "trivy"),
-    ("syft.tar.xz",      "syft"),
-    ("data.tar.zst",     "data"),
-    ("archive.tgz",      "archive"),
-    ("archive.tbz2",     "archive"),
-    ("archive.zip",      "archive"),
-    ("simple.tar",       "simple"),
-    ("file.gz",          "file"),
-    ("file.zst",         "file"),
-    ("unknown.exe",      "unknown"),   # falls back to Path.stem
-    ("nodot",            "nodot"),     # no extension at all
-])
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("grype-db.tar.gz", "grype-db"),
+        ("trivy.tar.bz2", "trivy"),
+        ("syft.tar.xz", "syft"),
+        ("data.tar.zst", "data"),
+        ("archive.tgz", "archive"),
+        ("archive.tbz2", "archive"),
+        ("archive.zip", "archive"),
+        ("simple.tar", "simple"),
+        ("file.gz", "file"),
+        ("file.zst", "file"),
+        ("unknown.exe", "unknown"),  # falls back to Path.stem
+        ("nodot", "nodot"),  # no extension at all
+    ],
+)
 def test_strip_archive_suffix(name: str, expected: str):
     assert _strip_archive_suffix(name) == expected
 
@@ -95,6 +99,7 @@ def test_strip_archive_suffix(name: str, expected: str):
 # ---------------------------------------------------------------------------
 # manifest structure — pre_filter and manifest_path keys present
 # ---------------------------------------------------------------------------
+
 
 def test_manifest_contains_pre_filter_block(tmp_path: Path):
     archive = tmp_path / "a.zip"
@@ -121,4 +126,4 @@ def test_manifest_contains_manifest_path_key(tmp_path: Path):
 
 
 def test_pre_filter_counts_skipped_by_extension(tmp_path: Path):
-    archive = tmp_path 
+    archive = tmp_path  # noqa: F841 — test body incomplete, placeholder

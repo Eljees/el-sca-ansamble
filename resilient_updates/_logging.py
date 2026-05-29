@@ -18,13 +18,12 @@ logger is a no-op so unit tests can call it freely.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import logging
 import os
 import sys
-from typing import Any
-
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 _LEVELS = {
     "CRITICAL": logging.CRITICAL,
@@ -48,21 +47,42 @@ class JsonFormatter(logging.Formatter):
     - ``exc``    full traceback string if ``exc_info`` was supplied
     """
 
-    _RESERVED = {
-        "name", "msg", "args", "levelname", "levelno", "pathname", "filename",
-        "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName",
-        "created", "msecs", "relativeCreated", "thread", "threadName",
-        "processName", "process", "message", "asctime", "taskName",
+    _RESERVED: ClassVar[set[str]] = {
+        "name",
+        "msg",
+        "args",
+        "levelname",
+        "levelno",
+        "pathname",
+        "filename",
+        "module",
+        "exc_info",
+        "exc_text",
+        "stack_info",
+        "lineno",
+        "funcName",
+        "created",
+        "msecs",
+        "relativeCreated",
+        "thread",
+        "threadName",
+        "processName",
+        "process",
+        "message",
+        "asctime",
+        "taskName",
     }
 
-    def format(self, record: logging.LogRecord) -> str:  # noqa: D401 - stdlib API
+    def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        extra = {k: v for k, v in record.__dict__.items() if k not in self._RESERVED and not k.startswith("_")}
+        extra = {
+            k: v for k, v in record.__dict__.items() if k not in self._RESERVED and not k.startswith("_")
+        }
         if extra:
             payload["extra"] = extra
         if record.exc_info:
@@ -72,7 +92,7 @@ class JsonFormatter(logging.Formatter):
 
 def setup_logging(
     level: str | None = None,
-    format: str | None = None,  # noqa: A002 - "format" matches the env var name
+    format: str | None = None,
     stream=None,
 ) -> None:
     """Configure the root logger.  Idempotent.
@@ -96,11 +116,13 @@ def setup_logging(
     if chosen_format == "json":
         handler.setFormatter(JsonFormatter())
     else:
-        handler.setFormatter(logging.Formatter(
-            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S%z",
-        ))
-    setattr(handler, "_resilient_updates_sentinel", True)
+        handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S%z",
+            )
+        )
+    handler._resilient_updates_sentinel = True
     root.addHandler(handler)
     root.setLevel(_LEVELS.get(chosen_level, logging.INFO))
 

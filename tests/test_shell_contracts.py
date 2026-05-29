@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -42,7 +41,7 @@ def test_runtime_entrypoints_use_runtime_stable_paths():
 
     assert 'ENTRYPOINT ["/bin/sh", "/opt/app/scripts/update_cve_bin_tool.sh"]' in dockerfile
     assert 'entrypoint: ["/bin/sh", "/workspace/scripts/collect_reports.sh"]' in compose
-    assert 'python /workspace/scripts/report_html.py' in collect_script
+    assert "python /workspace/scripts/report_html.py" in collect_script
 
 
 def test_preflight_script_checks_unresolved_vars_and_trailing_brace():

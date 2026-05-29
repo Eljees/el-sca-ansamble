@@ -1,3 +1,4 @@
+import contextlib
 import errno
 from pathlib import Path
 
@@ -40,10 +41,8 @@ def test_atomic_publish_rolls_back_when_activation_fails(tmp_path: Path, monkeyp
 
     monkeypatch.setattr(Path, "replace", flaky_replace)
 
-    try:
+    with contextlib.suppress(Exception):
         publish_directory(temp, active, previous)
-    except Exception:
-        pass
 
     assert (active / "old.txt").read_text(encoding="utf-8") == "old"
 
@@ -57,8 +56,6 @@ def test_atomic_publish_handles_cross_device_replace(tmp_path: Path, monkeypatch
     (active / "old.txt").write_text("old", encoding="utf-8")
     (temp / "new.txt").write_text("new", encoding="utf-8")
 
-    original_replace = Path.replace
-
     def exdev_replace(self, target):
         raise OSError(errno.EXDEV, "Invalid cross-device link")
 
@@ -67,7 +64,6 @@ def test_atomic_publish_handles_cross_device_replace(tmp_path: Path, monkeypatch
 
     assert (active / "new.txt").read_text(encoding="utf-8") == "new"
     assert (previous / "old.txt").read_text(encoding="utf-8") == "old"
-    monkeypatch.setattr(Path, "replace", original_replace)
 
 
 def test_replace_tree_exdev_cleans_staging_on_copy_failure(tmp_path: Path, monkeypatch):

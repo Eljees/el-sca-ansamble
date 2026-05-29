@@ -22,19 +22,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import struct
 import subprocess
 import sys
 import uuid
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def log(msg: str) -> None:
     print(f"[win-analyzer] {msg}", flush=True)
@@ -48,6 +46,7 @@ def run(cmd: list[str], check: bool = True, **kwargs) -> subprocess.CompletedPro
 # ---------------------------------------------------------------------------
 # Format detection
 # ---------------------------------------------------------------------------
+
 
 def detect_format(path: Path) -> str:
     """Return 'msi', 'nsis', 'exe', 'zip', or 'unknown'."""
@@ -85,6 +84,7 @@ def find_installer(path: Path) -> Path | None:
 # ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
+
 
 def _count_files(d: Path) -> int:
     """Count all files under directory d (recursive)."""
@@ -176,6 +176,7 @@ def extract_zip_for_installer(src: Path, dest: Path) -> Path | None:
 # PE version info extraction
 # ---------------------------------------------------------------------------
 
+
 def read_pe_version(path: Path) -> dict[str, str]:
     """Extract VS_VERSION_INFO from a PE file using pefile."""
     try:
@@ -212,26 +213,19 @@ def collect_binaries(root: Path) -> list[Path]:
 
 def build_component(bin_path: Path, root: Path, version_info: dict[str, str]) -> dict[str, Any]:
     """Build a syft-json artifact entry from PE version info."""
-    product = (
-        version_info.get("ProductName")
-        or version_info.get("FileDescription")
-        or bin_path.stem
-    )
-    version = (
-        version_info.get("ProductVersion")
-        or version_info.get("FileVersion")
-        or "unknown"
-    ).strip()
+    product = version_info.get("ProductName") or version_info.get("FileDescription") or bin_path.stem
+    version = (version_info.get("ProductVersion") or version_info.get("FileVersion") or "unknown").strip()
     company = version_info.get("CompanyName", "")
     rel_path = str(bin_path.relative_to(root)).replace("\\", "/")
 
     # Normalise version: keep only semver-like prefix
     import re
+
     m = re.match(r"[\d]+(?:[._][\d]+)*", version)
     version_clean = m.group(0).replace("_", ".") if m else version
 
     cpe_product = re.sub(r"[^a-z0-9_]", "_", product.lower()).strip("_")
-    cpe_vendor  = re.sub(r"[^a-z0-9_]", "_", company.lower()).strip("_") or "*"
+    cpe_vendor = re.sub(r"[^a-z0-9_]", "_", company.lower()).strip("_") or "*"
 
     return {
         "id": str(uuid.uuid4()),
@@ -242,9 +236,9 @@ def build_component(bin_path: Path, root: Path, version_info: dict[str, str]) ->
         "locations": [{"path": f"/{rel_path}"}],
         "licenses": [],
         "language": "",
-        "cpes": [
-            f"cpe:2.3:a:{cpe_vendor}:{cpe_product}:{version_clean}:*:*:*:*:*:*:*"
-        ] if version_clean != "unknown" else [],
+        "cpes": [f"cpe:2.3:a:{cpe_vendor}:{cpe_product}:{version_clean}:*:*:*:*:*:*:*"]
+        if version_clean != "unknown"
+        else [],
         "purl": f"pkg:generic/{cpe_product}@{version_clean}",
         "metadataType": "WindowsBinaryMetadata",
         "metadata": {
@@ -290,6 +284,7 @@ def build_syft_sbom(installer_path: Path, components: list[dict[str, Any]]) -> d
 # Text report
 # ---------------------------------------------------------------------------
 
+
 def write_text_report(
     installer_path: Path,
     fmt: str,
@@ -328,13 +323,14 @@ def write_text_report(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Windows installer analyzer for el-sca-ansamble")
-    parser.add_argument("--input",  default="/scan-target", help="Path to installer or directory")
+    parser.add_argument("--input", default="/scan-target", help="Path to installer or directory")
     parser.add_argument("--output", default="/workspace/artifacts", help="Artifacts output root")
     args = parser.parse_args()
 
-    input_path  = Path(args.input)
+    input_path = Path(args.input)
     output_root = Path(args.output)
 
     installer = find_installer(input_path)

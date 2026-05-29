@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from datetime import date
-import re
 from pathlib import Path
 from typing import Any
 
 from ._io import (
-    sha256_file as _sha256_file,
-    sha256_dir as _sha256_dir,
     read_json as _read_json,
+    sha256_dir as _sha256_dir,
+    sha256_file as _sha256_file,
 )
-
 
 DEFAULT_CASE_ID = "CYBERSEC-UNKNOWN"
 _CASE_ID_RE = re.compile(r"\b(CYBERSEC-\d+)\b", re.IGNORECASE)
@@ -60,7 +59,9 @@ def _grype_findings(data: Any) -> list[dict[str, Any]]:
                 "tool": "grype",
                 "id": vuln.get("id") or vuln.get("name") or "UNKNOWN",
                 "severity": _normalize_severity(vuln.get("severity")),
-                "score": vuln.get("cvss", [{}])[0].get("metrics", {}).get("baseScore") if vuln.get("cvss") else "",
+                "score": vuln.get("cvss", [{}])[0].get("metrics", {}).get("baseScore")
+                if vuln.get("cvss")
+                else "",
                 "vendor": artifact.get("type") or "",
                 "product": artifact.get("name") or "",
                 "version": artifact.get("version") or "",
@@ -94,7 +95,13 @@ def _trivy_findings(data: Any) -> list[dict[str, Any]]:
 def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
     findings = []
     if isinstance(data, dict):
-        candidates = data.get("findings") or data.get("results") or data.get("cves") or data.get("vulnerabilities") or []
+        candidates = (
+            data.get("findings")
+            or data.get("results")
+            or data.get("cves")
+            or data.get("vulnerabilities")
+            or []
+        )
     elif isinstance(data, list):
         candidates = data
     else:
@@ -105,7 +112,11 @@ def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
         findings.append(
             {
                 "tool": "cve-bin-tool",
-                "id": item.get("cve_number") or item.get("cve") or item.get("id") or item.get("CVE") or "UNKNOWN",
+                "id": item.get("cve_number")
+                or item.get("cve")
+                or item.get("id")
+                or item.get("CVE")
+                or "UNKNOWN",
                 "severity": _normalize_severity(item.get("severity") or item.get("cvss_severity")),
                 "score": item.get("score") or item.get("cvss_score") or item.get("CVSSv3_Severity") or "",
                 "vendor": item.get("vendor") or "",
@@ -125,7 +136,9 @@ def _collect_json(root: Path, names: list[str]) -> Any:
     return None
 
 
-def _collect_json_from_paths(root: Path, relative_paths: list[str], fallback_names: list[str] | None = None) -> Any:
+def _collect_json_from_paths(
+    root: Path, relative_paths: list[str], fallback_names: list[str] | None = None
+) -> Any:
     for relative_path in relative_paths:
         data = _read_json(root / relative_path)
         if data is not None:
@@ -182,16 +195,15 @@ def _markdown_table(findings: list[dict[str, Any]]) -> str:
 
     has_enrichment = any(item.get("epss") not in (None, "") or item.get("kev") for item in findings)
     if has_enrichment:
-        header = (
-            "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | "
-            "Source | EPSS | KEV |"
-        )
+        header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Source | EPSS | KEV |"
         rule = "|---|---|---|---:|---|---|---|---|---:|:---:|"
     else:
         header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Source |"
         rule = "|---|---|---|---:|---|---|---|---|"
     lines: list[str] = [header, rule]
-    for item in sorted(findings, key=lambda row: (SEVERITY_ORDER.get(row["severity"], 9), row["id"], row["tool"])):
+    for item in sorted(
+        findings, key=lambda row: (SEVERITY_ORDER.get(row["severity"], 9), row["id"], row["tool"])
+    ):
         cells = {key: str(value).replace("|", "\\|") for key, value in item.items()}
         # Provide blank defaults so .format() never raises KeyError.
         for fallback in ("tool", "id", "severity", "score", "vendor", "product", "version", "source"):
@@ -272,12 +284,24 @@ def build_report(
     if missing_required:
         missing_text = "; ".join(missing_required)
         raise FileNotFoundError(f"missing required scan artifacts: {missing_text}")
-    syft = _collect_json_from_paths(root, ["sbom/syft.json", "sbom/syft.syft.json"], ["syft.json", "syft.syft.json"])
-    grype = _collect_json_from_paths(root, ["reports/grype/grype_report.json", "reports/grype/report.json"], ["grype_report.json"])
-    trivy = _collect_json_from_paths(root, ["reports/trivy/trivy_report.json", "reports/trivy/trivy.json", "reports/trivy/report.json"], ["trivy_report.json", "trivy.json"])
+    syft = _collect_json_from_paths(
+        root, ["sbom/syft.json", "sbom/syft.syft.json"], ["syft.json", "syft.syft.json"]
+    )
+    grype = _collect_json_from_paths(
+        root, ["reports/grype/grype_report.json", "reports/grype/report.json"], ["grype_report.json"]
+    )
+    trivy = _collect_json_from_paths(
+        root,
+        ["reports/trivy/trivy_report.json", "reports/trivy/trivy.json", "reports/trivy/report.json"],
+        ["trivy_report.json", "trivy.json"],
+    )
     cve = _collect_json_from_paths(
         root,
-        ["reports/cve-bin-tool/cve-bin-tool_report.json", "reports/cve-bin-tool/cve_raw.json", "reports/cve-bin-tool/report.json"],
+        [
+            "reports/cve-bin-tool/cve-bin-tool_report.json",
+            "reports/cve-bin-tool/cve_raw.json",
+            "reports/cve-bin-tool/report.json",
+        ],
         ["cve-bin-tool_report.json", "cve_raw.json"],
     )
     status = _collect_json(root, ["status.json"]) or {}
@@ -294,12 +318,17 @@ def build_report(
     if not (status and summary and run_manifest and db_snapshot):
         try:
             from .run_summary import derive as _derive_run_summary
+
             _auto = _derive_run_summary(root)
-            if not summary:       summary       = _auto["summary"]
-            if not status:        status        = _auto["status"]
-            if not run_manifest:  run_manifest  = _auto["run_manifest"]
-            if not db_snapshot:   db_snapshot   = _auto["db_snapshot"]
-        except Exception:  # noqa: BLE001 — never let derivation block a report
+            if not summary:
+                summary = _auto["summary"]
+            if not status:
+                status = _auto["status"]
+            if not run_manifest:
+                run_manifest = _auto["run_manifest"]
+            if not db_snapshot:
+                db_snapshot = _auto["db_snapshot"]
+        except Exception:
             pass
     provenance = sorted({*(root / "provenance").glob("*.json"), *root.rglob("provenance/*.json")})
 
@@ -314,7 +343,7 @@ def build_report(
             for line in cve_timeout_flag.read_text(encoding="utf-8").splitlines():
                 if line.startswith("timed_out_after="):
                     cve_timeout_seconds = line.split("=", 1)[1].strip()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
@@ -324,14 +353,23 @@ def build_report(
     # the columns blank and the legacy table format is rendered.
     try:
         from .enrichment import enrich_findings
+
         enrich_findings(all_findings)
-    except Exception:  # noqa: BLE001 — never let enrichment block a report
+    except Exception:
         pass
     high_critical = [item for item in all_findings if item["severity"] in {"CRITICAL", "HIGH"}]
     severity_counts = Counter(item["severity"] for item in all_findings)
     syft_count = _get_nested(summary, ["coverage", "sbom_components"], _syft_count(syft))
-    grype_count = summary.get("estimated_grype_matches", len(_grype_findings(grype))) if isinstance(summary, dict) else len(_grype_findings(grype))
-    cve_count = summary.get("estimated_cve_bin_tool_matches", len(_cve_bin_tool_findings(cve))) if isinstance(summary, dict) else len(_cve_bin_tool_findings(cve))
+    grype_count = (
+        summary.get("estimated_grype_matches", len(_grype_findings(grype)))
+        if isinstance(summary, dict)
+        else len(_grype_findings(grype))
+    )
+    cve_count = (
+        summary.get("estimated_cve_bin_tool_matches", len(_cve_bin_tool_findings(cve)))
+        if isinstance(summary, dict)
+        else len(_cve_bin_tool_findings(cve))
+    )
     parsed_counts = {
         "grype": len(_grype_findings(grype)),
         "trivy": len(_trivy_findings(trivy)),
@@ -358,11 +396,31 @@ def build_report(
     target = str(display_target or target_path or "UNKNOWN")
     digest = target_digest(target_path) if target_path else None
     input_sha = summary.get("input_sha256") or _get_nested(run_manifest, ["input", "sha256"])
-    db_snapshot_id = summary.get("db_snapshot_id") or run_manifest.get("db_snapshot_id") or db_snapshot.get("snapshot_id")
-    tool_failures = status.get("tool_failures", summary.get("tool_failures", "UNKNOWN")) if isinstance(status, dict) else "UNKNOWN"
-    db_drift = status.get("db_drift", summary.get("db_drift", "UNKNOWN")) if isinstance(status, dict) else "UNKNOWN"
+    db_snapshot_id = (
+        summary.get("db_snapshot_id") or run_manifest.get("db_snapshot_id") or db_snapshot.get("snapshot_id")
+    )
+    tool_failures = (
+        status.get("tool_failures", summary.get("tool_failures", "UNKNOWN"))
+        if isinstance(status, dict)
+        else "UNKNOWN"
+    )
+    db_drift = (
+        status.get("db_drift", summary.get("db_drift", "UNKNOWN")) if isinstance(status, dict) else "UNKNOWN"
+    )
     evidence_files = _collect_paths(root)
     resolved_case_id = _resolve_case_id(case_id, target_path, display_target)
+
+    # Collect input hashes (sha1 + sha256) from summary or run_manifest.
+    input_hashes: dict[str, str] = {}
+    if isinstance(summary, dict) and isinstance(summary.get("input_hashes"), dict):
+        input_hashes = summary["input_hashes"]
+    elif isinstance(run_manifest, dict) and isinstance(run_manifest.get("input_hashes"), dict):
+        input_hashes = run_manifest["input_hashes"]
+
+    # Collect per-tool DB metadata from db_snapshot.json for the metadata section.
+    db_tools: dict[str, Any] = {}
+    if isinstance(db_snapshot, dict):
+        db_tools = db_snapshot.get("tools") or {}
 
     report = [
         f"# {resolved_case_id}: контейнерный SCA-отчет",
@@ -380,6 +438,41 @@ def build_report(
         f"- Update policy: `grype={summary.get('update_grype_db', 'UNKNOWN')}`, `cve-bin-tool={summary.get('update_cve_db', 'UNKNOWN')}`",
         f"- Extraction status: `{extraction_manifest.get('status', 'UNKNOWN')}`",
         f"- Extracted archives: `{extraction_manifest.get('extracted_count', 'UNKNOWN')}`",
+        "",
+        "## Hash sums",
+        "",
+    ]
+    if input_hashes:
+        if input_hashes.get("sha1"):
+            report.append(f"- SHA-1: `{input_hashes['sha1']}`")
+        if input_hashes.get("sha256"):
+            report.append(f"- SHA-256: `{input_hashes['sha256']}`")
+    elif input_sha:
+        report.append(f"- SHA-256: `{input_sha}`")
+    else:
+        report.append("- Hash information not available.")
+    report += [
+        "",
+        "## Database metadata",
+        "",
+    ]
+    if db_tools:
+        for tool_name, tool_info in sorted(db_tools.items()):
+            if not isinstance(tool_info, dict):
+                continue
+            state = tool_info.get("update_state") or tool_info.get("state") or "unknown"
+            version = tool_info.get("db_version") or tool_info.get("version") or "unknown"
+            source = tool_info.get("db_source") or tool_info.get("source") or ""
+            built = tool_info.get("built_at") or tool_info.get("updated_at") or ""
+            line = f"- {tool_name}: state=`{state}`, version=`{version}`"
+            if source:
+                line += f", source=`{source}`"
+            if built:
+                line += f", built=`{built}`"
+            report.append(line)
+    else:
+        report.append("- Database metadata not available.")
+    report += [
         "",
         "## Evidence",
         "",
@@ -428,12 +521,12 @@ def build_report(
             "",
             "## Interpretation",
             "",
-            "Отчет агрегирует raw evidence из контейнерного пайплайна. Находки являются сигналом сканеров, а не подтвержденной применимостью уязвимостей.",
+            "Отчет агрегирует raw evidence из контейнерного пайплайна. Находки являются сигналом сканеров, а не подтвержденной применимостью уязвимостей.",  # noqa: RUF001
             "",
             "## Recommendations",
             "",
             "1. Вручную проверить High/Critical находки в контексте поставки.",
-            "2. Хранить raw JSON рядом с итоговым Markdown-отчетом.",
+            "2. Хранить raw JSON рядом с итоговым Markdown-отчетом.",  # noqa: RUF001
             "3. Фиксировать DB snapshot ID и версии инструментов для воспроизводимых сравнений.",
             "",
         ]

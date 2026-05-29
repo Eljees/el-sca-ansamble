@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from threading import Thread
 import argparse
 import json
 import time
-from typing import Any
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
+from typing import Any, ClassVar
 
 
 class RouteHandler(BaseHTTPRequestHandler):
-    routes: dict[str, dict[str, Any]] = {}
+    routes: ClassVar[dict[str, dict[str, Any]]] = {}
 
     def log_message(self, fmt: str, *args: Any) -> None:  # pragma: no cover
         return
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         route = self.routes.get(self.path)
         if not route:
             self.send_response(404)
@@ -38,7 +38,9 @@ class RouteHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def build_server(routes: dict[str, dict[str, Any]], host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
+def build_server(
+    routes: dict[str, dict[str, Any]], host: str = "127.0.0.1", port: int = 0
+) -> ThreadingHTTPServer:
     RouteHandler.routes = routes
     return ThreadingHTTPServer((host, port), RouteHandler)
 
@@ -56,7 +58,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--config", default="")
     args = parser.parse_args()
-    routes: dict[str, dict[str, Any]] = {}
+    routes: ClassVar[dict[str, dict[str, Any]]] = {}
     if args.config:
         routes = json.loads(Path(args.config).read_text(encoding="utf-8"))
     server = build_server(routes, args.host, args.port)

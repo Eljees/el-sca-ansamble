@@ -23,7 +23,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # Sensible defaults for any caller that loads a partial / missing section.
 # These mirror the grype listing-fetch values that were hardcoded in
 # cli.update_grype before the refactor — short timeout, one retry,
@@ -49,7 +48,7 @@ class RetryPolicy:
     retry_status_codes: tuple[int, ...] = field(default_factory=lambda: DEFAULT_RETRY_STATUS_CODES)
 
     @classmethod
-    def from_yaml_node(cls, node: dict[str, Any] | None) -> "RetryPolicy":
+    def from_yaml_node(cls, node: dict[str, Any] | None) -> RetryPolicy:
         """Build from a YAML ``retry_backoff_policy`` (or partial) node.
 
         Missing keys fall back to defaults so callers never have to
@@ -66,7 +65,7 @@ class RetryPolicy:
         )
 
     @classmethod
-    def from_tool_config(cls, config: dict[str, Any], tool: str) -> "RetryPolicy":
+    def from_tool_config(cls, config: dict[str, Any], tool: str) -> RetryPolicy:
         """Build from ``config[tool]['retry_backoff_policy']`` if present."""
         tool_cfg = config.get(tool) or {}
         return cls.from_yaml_node(tool_cfg.get("retry_backoff_policy"))

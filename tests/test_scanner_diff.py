@@ -5,19 +5,18 @@ returns a structured diff of components + findings, plus a Markdown
 renderer.  All tests build fixtures on a tmp_path — no network, no
 external scanner needed.
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import pytest
-
 from resilient_updates.scanner_diff import diff_runs, to_markdown
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_run(root: Path, *, syft, grype, trivy=None, cve=None) -> Path:
     """Build a minimal artifacts/ tree matching the layout build_report consumes."""
@@ -61,6 +60,7 @@ def _grype(findings):
 # Components diff
 # ---------------------------------------------------------------------------
 
+
 def test_components_added_and_removed(tmp_path: Path):
     before = _make_run(
         tmp_path / "before",
@@ -100,6 +100,7 @@ def test_components_version_change_counts_as_add_plus_remove(tmp_path: Path):
 # Findings diff
 # ---------------------------------------------------------------------------
 
+
 def test_findings_added_and_severity_delta(tmp_path: Path):
     before = _make_run(
         tmp_path / "before",
@@ -109,10 +110,12 @@ def test_findings_added_and_severity_delta(tmp_path: Path):
     after = _make_run(
         tmp_path / "after",
         syft=_syft([]),
-        grype=_grype([
-            ("CVE-2024-0001", "High", "alpha", "1.0"),
-            ("CVE-2024-0002", "Critical", "beta", "2.0"),
-        ]),
+        grype=_grype(
+            [
+                ("CVE-2024-0001", "High", "alpha", "1.0"),
+                ("CVE-2024-0002", "Critical", "beta", "2.0"),
+            ]
+        ),
     )
 
     diff = diff_runs(before, after)
@@ -135,10 +138,14 @@ def test_findings_dedup_via_tuple_key(tmp_path: Path):
         syft=_syft([]),
         grype={
             "matches": [
-                {"vulnerability": {"id": "CVE-1", "severity": "High"},
-                 "artifact": {"name": "x", "version": "1.0"}},
-                {"vulnerability": {"id": "CVE-1", "severity": "High"},
-                 "artifact": {"name": "x", "version": "1.0"}},
+                {
+                    "vulnerability": {"id": "CVE-1", "severity": "High"},
+                    "artifact": {"name": "x", "version": "1.0"},
+                },
+                {
+                    "vulnerability": {"id": "CVE-1", "severity": "High"},
+                    "artifact": {"name": "x", "version": "1.0"},
+                },
             ]
         },
     )
@@ -153,6 +160,7 @@ def test_findings_dedup_via_tuple_key(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # Markdown renderer
 # ---------------------------------------------------------------------------
+
 
 def test_to_markdown_includes_section_headers(tmp_path: Path):
     before = _make_run(tmp_path / "before", syft=_syft([("a", "1")]), grype=_grype([]))

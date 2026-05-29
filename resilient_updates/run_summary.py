@@ -28,8 +28,8 @@ input never raises, the corresponding field is left blank instead.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,6 @@ from ._io import (
     read_json as _read_json,
     short_hash as _short_hash,
 )
-
 
 # ---------------------------------------------------------------------------
 # Low-level helpers
@@ -49,6 +48,7 @@ from ._io import (
 # See docs/audit/20-architecture.md §1.
 # ---------------------------------------------------------------------------
 
+
 def _count_list(value: Any) -> int:
     if isinstance(value, list):
         return len(value)
@@ -58,6 +58,7 @@ def _count_list(value: Any) -> int:
 # ---------------------------------------------------------------------------
 # Field derivations
 # ---------------------------------------------------------------------------
+
 
 def _component_count(syft: Any) -> int:
     if not isinstance(syft, dict):
@@ -173,13 +174,9 @@ def _cve_provenance_state(prov_cve: Any) -> dict[str, str]:
     used_lkg = bool(prov_cve.get("used_last_known_good"))
     if status in {"fresh", "degraded", "lkg", "failed"}:
         update_state = status
-    elif status == "active":
+    elif status == "active" or status == "active-noop":
         update_state = "fresh"
-    elif status == "active-noop":
-        update_state = "fresh"
-    elif status == "last-known-good":
-        update_state = "lkg"
-    elif used_lkg:
+    elif status == "last-known-good" or used_lkg:
         update_state = "lkg"
     elif status:
         update_state = status
@@ -261,15 +258,16 @@ def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
         results = trivy.get("Results") or []
         if all(not (r.get("Vulnerabilities") or []) for r in results):
             failed.append("trivy")
-    if isinstance(cve, list) and not cve:
-        if "cve-bin-tool" not in failed:
-            failed.append("cve-bin-tool")
+    if isinstance(cve, list) and not cve and "cve-bin-tool" not in failed:
+        failed.append("cve-bin-tool")
     # De-duplicate, preserve order.
     seen: set[str] = set()
     return [item for item in failed if not (item in seen or seen.add(item))]
 
 
-def _db_drift(root: Path, grype_state: dict[str, str], cve_state: dict[str, str], trivy_state: dict[str, str]) -> str:
+def _db_drift(
+    root: Path, grype_state: dict[str, str], cve_state: dict[str, str], trivy_state: dict[str, str]
+) -> str:
     """Return ``fresh`` | ``stale`` | ``unknown`` based on update-state hints."""
     states = {
         grype_state.get("update_grype_db", ""),
@@ -288,6 +286,7 @@ def _db_drift(root: Path, grype_state: dict[str, str], cve_state: dict[str, str]
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def derive(root: str | Path) -> dict[str, dict[str, Any]]:
     """Compute the four sidecar JSONs for a ``reports_dir`` root.
@@ -322,7 +321,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
     failures = _tool_failures(base, grype, trivy, cve)
     drift = _db_drift(base, grype_state, cve_state, trivy_state)
 
-    timestamp = datetime.now(timezone.utc).isoformat()
+    timestamp = datetime.now(UTC).isoformat()
 
     summary = {
         "generated_by": "resilient_updates.run_summary",

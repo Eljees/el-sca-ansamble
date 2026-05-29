@@ -1,13 +1,15 @@
 import requests.exceptions
 
-from resilient_updates.fallback import attempt_sources, FailureReason
+from resilient_updates.fallback import FailureReason, attempt_sources
 from resilient_updates.source_policy import SourceCandidate
 
 
 def test_primary_timeout_falls_back_to_secondary():
     sources = [
         SourceCandidate(priority=10, name="primary", url="https://primary", tool="grype", layer="grype-db"),
-        SourceCandidate(priority=20, name="secondary", url="https://secondary", tool="grype", layer="grype-db"),
+        SourceCandidate(
+            priority=20, name="secondary", url="https://secondary", tool="grype", layer="grype-db"
+        ),
     ]
 
     responses = {
@@ -39,8 +41,11 @@ def test_primary_timeout_falls_back_to_secondary():
 # InvalidSchema (OCI) is non-retryable — must not retry even when retry_count > 0
 # ---------------------------------------------------------------------------
 
+
 def test_invalid_schema_is_not_retried():
-    source = SourceCandidate(priority=10, name="oci", url="oci://registry/image:tag", tool="trivy", layer="trivy-db")
+    source = SourceCandidate(
+        priority=10, name="oci", url="oci://registry/image:tag", tool="trivy", layer="trivy-db"
+    )
     call_count = 0
 
     def downloader(url, timeout, session, headers):
@@ -48,7 +53,7 @@ def test_invalid_schema_is_not_retried():
         call_count += 1
         raise requests.exceptions.InvalidSchema("No connection adapters were found for 'oci://...'")
 
-    selected, payload, attempts = attempt_sources(
+    selected, _payload, attempts = attempt_sources(
         [source],
         timeout=1,
         retry_count=3,
@@ -65,8 +70,11 @@ def test_invalid_schema_is_not_retried():
 # AUTH_FAILURE (401/403) is non-retryable
 # ---------------------------------------------------------------------------
 
+
 def test_auth_failure_401_is_not_retried():
-    source = SourceCandidate(priority=10, name="protected", url="https://protected", tool="grype", layer="grype-db")
+    source = SourceCandidate(
+        priority=10, name="protected", url="https://protected", tool="grype", layer="grype-db"
+    )
     call_count = 0
 
     def downloader(url, timeout, session, headers):
@@ -74,7 +82,7 @@ def test_auth_failure_401_is_not_retried():
         call_count += 1
         return 401, b"Unauthorized"
 
-    selected, payload, attempts = attempt_sources(
+    selected, _payload, attempts = attempt_sources(
         [source],
         timeout=1,
         retry_count=3,
@@ -88,7 +96,9 @@ def test_auth_failure_401_is_not_retried():
 
 
 def test_auth_failure_403_is_not_retried():
-    source = SourceCandidate(priority=10, name="forbidden", url="https://forbidden", tool="grype", layer="grype-db")
+    source = SourceCandidate(
+        priority=10, name="forbidden", url="https://forbidden", tool="grype", layer="grype-db"
+    )
     call_count = 0
 
     def downloader(url, timeout, session, headers):
@@ -96,7 +106,7 @@ def test_auth_failure_403_is_not_retried():
         call_count += 1
         return 403, b"Forbidden"
 
-    selected, payload, attempts = attempt_sources(
+    selected, _payload, _attempts = attempt_sources(
         [source],
         timeout=1,
         retry_count=2,
@@ -112,8 +122,10 @@ def test_auth_failure_403_is_not_retried():
 # session argument is forwarded unchanged to the downloader
 # ---------------------------------------------------------------------------
 
+
 def test_session_is_forwarded_to_downloader():
     import requests as req
+
     source = SourceCandidate(priority=10, name="src", url="https://src", tool="grype", layer="grype-db")
     sentinel = req.Session()
     received = []
@@ -138,6 +150,7 @@ def test_session_is_forwarded_to_downloader():
 # 500 responses are retried up to retry_count times
 # ---------------------------------------------------------------------------
 
+
 def test_http_5xx_is_retried_up_to_retry_count():
     source = SourceCandidate(priority=10, name="flaky", url="https://flaky", tool="grype", layer="grype-db")
     call_count = 0
@@ -149,7 +162,7 @@ def test_http_5xx_is_retried_up_to_retry_count():
             return 500, b""
         return 200, b"recovered"
 
-    selected, payload, attempts = attempt_sources(
+    selected, payload, _attempts = attempt_sources(
         [source],
         timeout=1,
         retry_count=3,

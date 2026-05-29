@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from argparse import ArgumentParser
-from datetime import datetime, timezone
-from pathlib import Path
 import json
 import os
 import tarfile
+from argparse import ArgumentParser
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 
+from ._retry import RetryPolicy
 from .artifact_store import build_last_known_good, ensure_directory, file_sha256
 from .atomic_publish import publish_directory
-from .config import DEFAULT_CONFIG_PATH, load_config, parse_duration_hours, parse_proxy_config, validate_config_data
+from .config import (
+    DEFAULT_CONFIG_PATH,
+    load_config,
+    parse_duration_hours,
+    parse_proxy_config,
+    validate_config_data,
+)
 from .cve_db_audit import activate_best_cve_bin_tool_db, audit_cve_bin_tool_db, seed_cve_bin_tool_aux_sources
 from .extractor import extract_artifacts
 from .fallback import AttemptResult, FailureReason, attempt_sources, build_session, fetch_bytes
@@ -22,7 +28,6 @@ from .healthcheck import run_healthcheck
 from .provenance import write_provenance
 from .reporting import build_report
 from .source_policy import build_sources
-from ._retry import RetryPolicy
 
 EXIT_SUCCESS = 0
 EXIT_CONFIG_ERROR = 1
@@ -63,7 +68,7 @@ def _dedup_attempted_sources(attempts: list[AttemptResult]) -> list[dict[str, An
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _latest_mtime(path: Path) -> float | None:
@@ -109,7 +114,7 @@ def _db_status_payload(tool: str, path: Path, warning_age: str) -> dict[str, Any
             "message": "database path is empty or missing",
             "timestamp_utc": _now_iso(),
         }
-    age_hours = round((datetime.now(timezone.utc).timestamp() - latest) / 3600, 2)
+    age_hours = round((datetime.now(UTC).timestamp() - latest) / 3600, 2)
     warning = age_hours > warning_hours
     return {
         "tool": tool,
@@ -144,7 +149,16 @@ def _provenance_path(config: dict[str, Any], tool: str) -> Path:
     return Path("artifacts/provenance") / f"{tool}.json"
 
 
-def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int, retry_count: int, backoff_seconds: int, retry_codes: list[int], session: "requests.Session | None" = None) -> tuple[int, dict[str, Any]]:
+def _health_summary(
+    config: dict[str, Any],
+    tool: str,
+    layer: str,
+    timeout: int,
+    retry_count: int,
+    backoff_seconds: int,
+    retry_codes: list[int],
+    session: requests.Session | None = None,
+) -> tuple[int, dict[str, Any]]:
     source, _payload, attempts = attempt_sources(
         build_sources(config, tool, layer),
         timeout=timeout,
@@ -176,7 +190,7 @@ def _health_summary(config: dict[str, Any], tool: str, layer: str, timeout: int,
     return EXIT_SUCCESS if source else EXIT_ALL_SOURCES_FAILED, payload
 
 
-def _download_text(url: str, timeout: int, session: "requests.Session | None" = None) -> str:
+def _download_text(url: str, timeout: int, session: requests.Session | None = None) -> str:
     status_code, payload = fetch_bytes(url, timeout, session=session)
     if status_code >= 400:
         raise ValueError(f"status {status_code}")
@@ -235,26 +249,30 @@ def _download_grype_candidate(
     timeout_cfg: dict[str, Any],
     validation_cfg: dict[str, Any],
     temp_dir: Path,
-    session: "requests.Session | None" = None,
+    session: requests.Session | None = None,
 ) -> tuple[Path, str | None, str | None]:
     listing_target = temp_dir / f"{source.name}-listing.json"
     archive_target = temp_dir / f"{source.name}-db.archive"
     listing_target.write_bytes(listing_payload)
     archive_url, checksum, built = _resolve_listing(listing_payload, source.url)
-    if archive_url.startswith("/"):
-        archive_url = urljoin(source.url, archive_url)
-    elif not archive_url.startswith(("http://", "https://", "file://")):
+    if archive_url.startswith("/") or not archive_url.startswith(("http://", "https://", "file://")):
         archive_url = urljoin(source.url, archive_url)
     if checksum is None and archive_url.startswith(("http://", "https://")):
         try:
-            checksum = _extract_checksum_from_text(_download_text(f"{archive_url}.sha256", int(timeout_cfg["update_download_timeout"]), session=session))
+            checksum = _extract_checksum_from_text(
+                _download_text(
+                    f"{archive_url}.sha256", int(timeout_cfg["update_download_timeout"]), session=session
+                )
+            )
         except Exception:
             checksum = None
     if validation_cfg.get("validate_hash") and not checksum:
         raise ValueError(FailureReason.CHECKSUM_MISMATCH.value)
     archive_name = Path(urlparse(archive_url).path).name or "db.archive"
     archive_target = temp_dir / f"{source.name}-{archive_name}"
-    archive_status, archive_payload = fetch_bytes(archive_url, int(timeout_cfg["update_download_timeout"]), session=session)
+    archive_status, archive_payload = fetch_bytes(
+        archive_url, int(timeout_cfg["update_download_timeout"]), session=session
+    )
     if archive_status >= 400:
         raise ValueError(f"http_{archive_status}")
     archive_target.write_bytes(archive_payload)
@@ -262,13 +280,13 @@ def _download_grype_candidate(
     if validation_cfg.get("validate_age") and built:
         built_at = datetime.fromisoformat(built.replace("Z", "+00:00"))
         max_age_hours = parse_duration_hours(validation_cfg["max_allowed_built_age"])
-        age_hours = (datetime.now(timezone.utc) - built_at).total_seconds() / 3600
+        age_hours = (datetime.now(UTC) - built_at).total_seconds() / 3600
         if age_hours > max_age_hours:
             raise ValueError(FailureReason.STALE_DATA.value)
     return archive_target, checksum, built
 
 
-def update_grype(config: dict[str, Any], session: "requests.Session | None" = None) -> int:
+def update_grype(config: dict[str, Any], session: requests.Session | None = None) -> int:
     timeout_cfg = config["grype"]["timeout_policy"]
     validation_cfg = config["grype"]["validation"]
     atomic_cfg = config["grype"]["atomic_activation_policy"]
@@ -283,12 +301,11 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
     active_dir = Path(atomic_cfg["active_dir"])
     previous_dir = Path(atomic_cfg["previous_dir"])
     temp_root = ensure_directory(atomic_cfg["temp_dir"])
-    temp_dir = ensure_directory(temp_root / f"run-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}")
+    temp_dir = ensure_directory(temp_root / f"run-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}")
     attempts = []
     validation_failures: list[dict[str, Any]] = []
     selected_source = None
     selected_archive = None
-    checksum = None
     built = None
     for source in build_sources(config, "grype", "grype-db"):
         candidate_source, listing_payload, source_attempts = attempt_sources(
@@ -308,7 +325,7 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
         if not candidate_source or not listing_payload:
             continue
         try:
-            selected_archive, checksum, built = _download_grype_candidate(
+            selected_archive, _checksum, built = _download_grype_candidate(
                 candidate_source,
                 listing_payload,
                 timeout_cfg,
@@ -320,7 +337,12 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
             break
         except ValueError as exc:
             validation_failures.append(
-                {"source": candidate_source.name, "reason": str(exc), "message": str(exc), "status_code": None}
+                {
+                    "source": candidate_source.name,
+                    "reason": str(exc),
+                    "message": str(exc),
+                    "status_code": None,
+                }
             )
             continue
 
@@ -340,13 +362,17 @@ def update_grype(config: dict[str, Any], session: "requests.Session | None" = No
                 }
                 for item in attempts
                 if not item.success
-            ] + validation_failures,
+            ]
+            + validation_failures,
             "activation_status": "last-known-good" if lkg.is_usable() else "failed",
             "used_last_known_good": lkg.is_usable(),
             "timestamp_utc": _now_iso(),
         }
         write_provenance(_provenance_path(config, "grype"), payload)
-        if any(item["reason"] == FailureReason.STALE_DATA.value for item in validation_failures) and not lkg.is_usable():
+        if (
+            any(item["reason"] == FailureReason.STALE_DATA.value for item in validation_failures)
+            and not lkg.is_usable()
+        ):
             return EXIT_STALE_REJECTED
         return EXIT_LKG_USED if lkg.is_usable() else EXIT_ALL_SOURCES_FAILED
 
@@ -393,7 +419,9 @@ def _cve_db_policy(config: dict[str, Any]) -> tuple[list[str], dict[str, int], s
     min_entries = {str(key).upper(): int(value) for key, value in db_audit.get("min_entries", {}).items()}
     max_cache_age = str(db_audit.get("max_cache_age", "168h"))
     declared_sources = [str(item).upper() for item in cve_cfg.get("data_sources", [])]
-    db_policy = str(os.environ.get("CVE_BIN_TOOL_DB_POLICY") or db_audit.get("db_policy", "strict")).strip().lower()
+    db_policy = (
+        str(os.environ.get("CVE_BIN_TOOL_DB_POLICY") or db_audit.get("db_policy", "strict")).strip().lower()
+    )
     return required_sources, min_entries, max_cache_age, declared_sources, db_policy
 
 
@@ -464,7 +492,9 @@ def main() -> int:
     seed.add_argument("--timeout", type=int, default=120)
     collect_report = subparsers.add_parser("collect-report")
     collect_report.add_argument("--reports-dir", default="artifacts")
-    collect_report.add_argument("--output", default="artifacts/reports/final/cve_analysis_report_generated_ru.md")
+    collect_report.add_argument(
+        "--output", default="artifacts/reports/final/cve_analysis_report_generated_ru.md"
+    )
     collect_report.add_argument("--target", default="")
     collect_report.add_argument("--display-target", default="")
     collect_report.add_argument("--case-id", default="CYBERSEC-UNKNOWN")
@@ -486,7 +516,7 @@ def main() -> int:
         action="append",
         default=[],
         help="Skip archive members with this extension (e.g. --skip-ext .png --skip-ext .ttf). "
-             "Pass multiple times.",
+        "Pass multiple times.",
     )
     render_flags = subparsers.add_parser("render-flags")
     render_flags.add_argument("tool", choices=["trivy"])
@@ -520,8 +550,11 @@ def main() -> int:
     manifest_parser.add_argument("--case-id", default=None)
     manifest_parser.add_argument("--target-host", default=None)
     manifest_parser.add_argument("--target-container", default=None)
-    manifest_parser.add_argument("--run-id", default=None,
-                                 help="Override run_id; default derives one deterministically from target+case+timestamp")
+    manifest_parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Override run_id; default derives one deterministically from target+case+timestamp",
+    )
 
     scanner_diff = subparsers.add_parser(
         "scanner-diff",
@@ -546,6 +579,7 @@ def main() -> int:
     # LOG_FORMAT (text|json) are read from environment.  See
     # docs/audit/20-architecture.md section 3.
     from ._logging import setup_logging  # local import keeps top-level fast
+
     setup_logging()
 
     config = load_config(args.config)
@@ -568,13 +602,19 @@ def main() -> int:
     if args.command == "db-status":
         defaults = {
             "trivy": Path(config.get("trivy", {}).get("cache_dir", "/var/lib/resilient-db/trivy")),
-            "grype": Path(config.get("grype", {}).get("atomic_activation_policy", {}).get("active_dir", "/var/lib/resilient-db/grype/active")),
+            "grype": Path(
+                config.get("grype", {})
+                .get("atomic_activation_policy", {})
+                .get("active_dir", "/var/lib/resilient-db/grype/active")
+            ),
             "cve-bin-tool": Path("/root/.cache/cve-bin-tool"),
         }
         path = Path(args.path) if args.path else defaults[args.tool]
         payload = _db_status_payload(args.tool, path, args.warning_age)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return EXIT_SUCCESS if payload["exists"] and payload["age_hours"] is not None else EXIT_VALIDATION_FAILED
+        return (
+            EXIT_SUCCESS if payload["exists"] and payload["age_hours"] is not None else EXIT_VALIDATION_FAILED
+        )
     if args.command == "audit":
         code, payload = _run_cve_db_audit(config, args.db_root)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -603,7 +643,9 @@ def main() -> int:
         return EXIT_SUCCESS if payload["overall_status"] == "pass" else EXIT_VALIDATION_FAILED
     if args.command == "collect-report":
         target = args.target or None
-        output = build_report(args.reports_dir, args.output, target, args.display_target or None, args.case_id)
+        output = build_report(
+            args.reports_dir, args.output, target, args.display_target or None, args.case_id
+        )
         print(json.dumps({"status": "ok", "report": str(output)}, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS
     if args.command == "extract":
@@ -655,16 +697,21 @@ def main() -> int:
         return code
     if args.command == "write-run-summary":
         from .run_summary import write_to_disk
+
         written = write_to_disk(args.reports_dir, overwrite=not args.no_overwrite)
-        print(json.dumps(
-            {"status": "ok", "written": {k: str(v) for k, v in written.items()}},
-            indent=2, ensure_ascii=False,
-        ))
+        print(
+            json.dumps(
+                {"status": "ok", "written": {k: str(v) for k, v in written.items()}},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         return EXIT_SUCCESS
     if args.command == "manifest":
         # Single root file connecting all per-run artefacts.  See
         # docs/audit/20-architecture.md section 4.
         from .manifest import derive_manifest, write_manifest
+
         payload = derive_manifest(
             args.artifacts_dir,
             case_id=args.case_id,
@@ -673,13 +720,17 @@ def main() -> int:
             run_id=args.run_id,
         )
         out_path = write_manifest(payload, args.output)
-        print(json.dumps(
-            {"status": "ok", "output": str(out_path), "run_id": payload["run_id"]},
-            indent=2, ensure_ascii=False,
-        ))
+        print(
+            json.dumps(
+                {"status": "ok", "output": str(out_path), "run_id": payload["run_id"]},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
         return EXIT_SUCCESS
     if args.command == "scanner-diff":
         from .scanner_diff import diff_runs, to_markdown
+
         summary = diff_runs(args.before, args.after)
         fmt = args.format
         if args.output != "-" and not args.format:
@@ -704,17 +755,21 @@ def main() -> int:
         # Import lazily so users on older configs (no proxy.chains) never load
         # the new module just to run the legacy CLI commands.
         from .proxy_chain import ProxyRouter
+
         router = ProxyRouter.from_config(config)
         if router is None:
-            print(json.dumps(
-                {
-                    "status": "no-chains-configured",
-                    "message": "feed_sources.yaml uses the legacy flat proxy: block. "
-                               "Add proxy.chains / proxy.policies to enable the router.",
-                    "active_session_proxies": dict(_session.proxies),
-                },
-                indent=2, ensure_ascii=False,
-            ))
+            print(
+                json.dumps(
+                    {
+                        "status": "no-chains-configured",
+                        "message": "feed_sources.yaml uses the legacy flat proxy: block. "
+                        "Add proxy.chains / proxy.policies to enable the router.",
+                        "active_session_proxies": dict(_session.proxies),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
             return EXIT_SUCCESS
         payload = {
             "status": "ok",
