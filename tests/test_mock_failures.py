@@ -4,7 +4,13 @@ import io
 import json
 import tarfile
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+
+try:
+    from datetime import UTC  # py3.11+
+except ImportError:
+    from datetime import timezone as _tz
+    UTC = _tz.utc  # noqa: UP017
+from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 

@@ -19,6 +19,11 @@ from __future__ import annotations
 
 import csv
 import datetime
+
+try:
+    _UTC = datetime.UTC  # py3.11+
+except AttributeError:
+    _UTC = datetime.timezone.utc  # noqa: UP017
 import json
 import os
 from collections.abc import Iterable
@@ -81,7 +86,7 @@ def load_epss_scores(roots: Iterable[Path] | None = None) -> dict[str, dict[str,
                 if cve_idx is None or epss_idx is None:
                     return out
                 date_value = datetime.datetime.fromtimestamp(
-                    candidate.stat().st_mtime, tz=datetime.UTC
+                    candidate.stat().st_mtime, tz=_UTC
                 ).isoformat()
                 for row in reader:
                     if len(row) <= max(cve_idx, epss_idx):

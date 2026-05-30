@@ -22,7 +22,13 @@ import json
 import logging
 import os
 import sys
-from datetime import UTC, datetime
+
+try:
+    from datetime import UTC  # py3.11+
+except ImportError:
+    from datetime import timezone as _tz
+    UTC = _tz.utc  # noqa: UP017
+from datetime import datetime
 from typing import Any, ClassVar
 
 _LEVELS = {
