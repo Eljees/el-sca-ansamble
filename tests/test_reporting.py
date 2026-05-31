@@ -81,6 +81,9 @@ def test_build_report_warns_on_stale_enrichment(tmp_path: Path, monkeypatch):
     """ADR-0004 P2: a stale EPSS cache surfaces a freshness warning."""
     artifacts = tmp_path / "artifacts"
     (artifacts / "sbom").mkdir(parents=True)
+    (artifacts / "sbom" / "syft.json").write_text(
+        json.dumps({"artifacts": []}), encoding="utf-8"
+    )
     for tool in ("grype", "trivy", "cve-bin-tool"):
         (artifacts / "reports" / tool).mkdir(parents=True)
     (artifacts / "reports" / "grype" / "report.json").write_text(
