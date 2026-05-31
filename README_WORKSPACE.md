@@ -21,8 +21,8 @@ D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble
 ## 📁 Workspace Contents
 
 ### Documentation
-- **DEPLOYMENT_GUIDE_FINAL.md** — Complete deployment & operations guide (v3.0)
-- **CHANGES_v3.0.md** — Release notes and changelog for v3.0
+- **DEPLOYMENT_GUIDE_EXAMPLE.md** — Worked deployment & operations example (v3.0)
+- **CHANGELOG.md** — Release notes and changelog (Keep a Changelog)
 - **README_WORKSPACE.md** — This file
 
 ### Research & Analysis
@@ -39,8 +39,8 @@ D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble
 ### For Research
 ```powershell
 # Review documentation
-notepad DEPLOYMENT_GUIDE_FINAL.md
-notepad CHANGES_v3.0.md
+notepad DEPLOYMENT_GUIDE_EXAMPLE.md
+notepad CHANGELOG.md
 
 # Examine CVE-bin-tool analysis
 dir _el_cvebt_source_research
@@ -212,8 +212,8 @@ rm -r artifacts/reports artifacts/sbom artifacts/extracted
 - Clear artifacts: `rm -rf artifacts/*`
 
 ### Documentation
-- See **DEPLOYMENT_GUIDE_FINAL.md** for comprehensive guide
-- See **CHANGES_v3.0.md** for version history
+- See **DEPLOYMENT_GUIDE_EXAMPLE.md** for comprehensive guide
+- See **CHANGELOG.md** for version history
 - Email/contact admin for infrastructure issues
 
 ---

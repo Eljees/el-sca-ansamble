@@ -375,12 +375,14 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [3.0.0] — 2026-05-15
 
-Baseline: see `CHANGES_v3.0.md`.  Highlights:
+Highlights:
 
 - cve-bin-tool exit-code handling in `scripts/windows/run-scan.ps1` fixed
-  (exit 1 = "CVEs found", not failure).
-- Comprehensive deployment guide `DEPLOYMENT_GUIDE_FINAL.md` covering
+  (exit 1 = "CVEs found", not failure); all scan calls routed through
+  `Invoke-CveBinToolChecked`.
+- Example deployment guide `DEPLOYMENT_GUIDE_EXAMPLE.md` covering
   X-Ray SOCKS5 setup, SSH reverse tunnel, Docker proxy configuration.
+- Migration from v2.0: backward compatible — no changes required.
 
 ## [2.0.0] — 2026-04-14
 

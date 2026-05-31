@@ -6,9 +6,10 @@ need to do; each section is ordered by depth (read top-to-bottom).
 ## I need to scan an artefact (operator)
 
 1. `../README.md` — what the project is and how the pipeline flows.
-2. `operations.md` — exact commands for full and partial cycles.
-3. `windows-powershell.md` — Windows-specific notes.
-4. `airgap.md` — running without any internet access.
+2. `../QUICK_START.md` — fastest path from clone to a first scan.
+3. `operations.md` — exact commands for full and partial cycles.
+4. `windows-powershell.md` — Windows-specific notes.
+5. `airgap.md` — running without any internet access.
 
 ## I need to deploy or operate it (DevOps)
 
@@ -19,6 +20,8 @@ need to do; each section is ordered by depth (read top-to-bottom).
 5. `distribution.md` — image distribution / receiver setup.
 6. `runbook.md` — what to do when things break.
 7. `proxy.md` — quick reference for proxy configuration.
+8. `../DEPLOYMENT_GUIDE_EXAMPLE.md` — worked example of one org's full
+   deployment (host-specific values — treat as a template, not canon).
 
 ## I need to review security posture
 
@@ -30,11 +33,12 @@ need to do; each section is ordered by depth (read top-to-bottom).
 ## I need to develop / contribute
 
 1. `../CONTRIBUTING.md` — dev environment, tests, linting, commit conventions.
-2. `architecture.md` — service / module map.
-3. `audit/00-overview.md` — current audit findings and phased remediation.
-4. `adr/0001-wrapper-first.md` — why we don't fork upstream.
-5. `failure-modes.md` — error classification.
-6. `reproducibility.md` — how reproducible runs are guaranteed.
+2. `../README_WORKSPACE.md` — local dev-workspace layout and conventions.
+3. `architecture.md` — service / module map.
+4. `audit/00-overview.md` — current audit findings and phased remediation.
+5. `adr/0001-wrapper-first.md` — why we don't fork upstream.
+6. `failure-modes.md` — error classification.
+7. `reproducibility.md` — how reproducible runs are guaranteed.
 
 ## I need to understand the project's current state
 
@@ -43,8 +47,11 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `../CHANGELOG.md` — release notes (Keep a Changelog).
-7. `status-and-roadmap.md` — historical project status (older than audit/).
+6. `audit/100-fixups-2026-05-31.md` — latest remediation pass (start here;
+   `00-overview.md` is the 2026-05-25 baseline and is partly superseded).
+7. `audit/archive/` — superseded planning notes (`PLAN_2026-05-1x.md`).
+8. `../CHANGELOG.md` — release notes (Keep a Changelog).
+9. `status-and-roadmap.md` — historical project status (older than audit/).
 
 ## Architectural decisions
 

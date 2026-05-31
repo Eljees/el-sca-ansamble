@@ -106,8 +106,8 @@ artifacts/reports/cve-bin-tool/report.json
 |---------|------|
 | **Use this for scanning** | `D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble` |
 | Research workspace | `D:\dev\el-sca-ansamble` |
-| Full docs | `DEPLOYMENT_GUIDE_FINAL.md` |
-| Changelog | `CHANGES_v3.0.md` |
+| Full docs | `DEPLOYMENT_GUIDE_EXAMPLE.md` |
+| Changelog | `CHANGELOG.md` |
 
 ---
 
@@ -170,6 +170,6 @@ rm -rf artifacts/*
 
 ---
 
-**For detailed guide:** Read `DEPLOYMENT_GUIDE_FINAL.md`  
-**For what changed:** Read `CHANGES_v3.0.md`  
+**For detailed guide:** Read `DEPLOYMENT_GUIDE_EXAMPLE.md`  
+**For what changed:** Read `CHANGELOG.md`  
 **Status:** ✅ Ready to use | **Version:** 3.0 | **Last Updated:** 2026-05-26
