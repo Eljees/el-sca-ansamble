@@ -8,6 +8,7 @@ Status, Consequences.
 |---|---|---|
 | [0001](0001-wrapper-first.md) | Wrapper-first orchestration (no upstream forks) | accepted |
 | [0002](0002-proxy-sidecar.md) | Sidecar proxy chain (tinyproxy + xray) | accepted |
+| [0003](0003-vex-feed.md) | VEX feed — suppress findings via Trivy `--vex` | proposed |
 
 When you add an ADR:
 

@@ -57,6 +57,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 
 - `adr/0001-wrapper-first.md` — wrapper-first vs. fork-and-modify.
 - `adr/0002-proxy-sidecar.md` — proxy sidecar chain.
+- `adr/0003-vex-feed.md` — VEX feed via Trivy `--vex` (proposed).
 
 ## Reference
 
