@@ -393,6 +393,21 @@ def build_report(
             " CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS or reduce scan target size"
         )
 
+    # EPSS/KEV freshness (ADR-0004 P2): warn when the on-disk exploit-scoring
+    # feeds are older than their TTL, so the EPSS/KEV columns aren't trusted
+    # blindly.  Best-effort — missing feeds produce no warning.
+    try:
+        from .enrichment import source_freshness
+
+        for _feed, _info in source_freshness().items():
+            if _info.get("stale"):
+                warnings.append(
+                    f"{_feed}: enrichment data is {_info['age_hours']}h old"
+                    f" (threshold {_info['max_age_hours']}h) -- exploit scores may be outdated"
+                )
+    except Exception:
+        pass
+
     target = str(display_target or target_path or "UNKNOWN")
     digest = target_digest(target_path) if target_path else None
     input_sha = summary.get("input_sha256") or _get_nested(run_manifest, ["input", "sha256"])

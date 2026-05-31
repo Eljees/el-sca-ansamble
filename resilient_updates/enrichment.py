@@ -28,6 +28,7 @@ import json
 import os
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 # Default lookup roots, in priority order.  Override via
 # CVE_BIN_TOOL_DB_ROOT or EL_SCA_ENRICHMENT_ROOT env vars.
@@ -35,6 +36,20 @@ _DEFAULT_ROOTS = (
     "/root/.cache/cve-bin-tool",
     "/var/lib/resilient-db/cve-bin-tool/active",
 )
+
+
+def _safe_exists(path: Path) -> bool:
+    """``Path.exists`` that treats an unreadable parent as "absent".
+
+    Under a non-root container user (``USER appuser`` in our Dockerfiles)
+    ``Path("/root/.cache/cve-bin-tool").exists()`` raises ``PermissionError``
+    rather than returning ``False``; swallow that so root discovery never
+    crashes enrichment.
+    """
+    try:
+        return path.exists()
+    except OSError:
+        return False
 
 
 def _candidate_roots() -> list[Path]:
@@ -47,7 +62,62 @@ def _candidate_roots() -> list[Path]:
         roots.append(Path(db_root))
     for path in _DEFAULT_ROOTS:
         roots.append(Path(path))
-    return [r for r in roots if r.exists()]
+    return [r for r in roots if _safe_exists(r)]
+
+
+# ---------------------------------------------------------------------------
+# Freshness / TTL (ADR-0004)
+# ---------------------------------------------------------------------------
+
+_EPSS_RELPATHS = ("epss/epss_scores-current.csv",)
+_KEV_RELPATHS = (
+    "kev/known_exploited_vulnerabilities.json",
+    "known_exploited_vulnerabilities.json",
+    "kev/kev.json",
+)
+
+
+def _first_existing(roots: Iterable[Path], relpaths: Iterable[str]) -> Path | None:
+    for root in roots:
+        for relpath in relpaths:
+            candidate = root / relpath
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _feed_freshness(path: Path | None, max_age_hours: float) -> dict[str, Any]:
+    if path is None:
+        return {"present": False, "path": None, "age_hours": None, "stale": None}
+    now = datetime.datetime.now(tz=_UTC).timestamp()
+    age_hours = round((now - path.stat().st_mtime) / 3600, 2)
+    return {
+        "present": True,
+        "path": str(path),
+        "age_hours": age_hours,
+        "max_age_hours": max_age_hours,
+        "stale": age_hours > max_age_hours,
+    }
+
+
+def source_freshness(
+    roots: Iterable[Path] | None = None,
+    *,
+    epss_max_age_hours: float = 24.0,
+    kev_max_age_hours: float = 168.0,
+) -> dict[str, dict[str, Any]]:
+    """Report on-disk age of the EPSS and KEV caches against TTL thresholds.
+
+    Returns ``{"epss": {...}, "kev": {...}}``; each entry carries ``present`` /
+    ``path`` / ``age_hours`` / ``max_age_hours`` / ``stale``.  A missing file
+    yields ``present=False`` and ``stale=None`` so callers can tell "absent"
+    from "present but stale".  Network-free, like the rest of this module.
+    """
+    roots_iter = list(roots) if roots is not None else _candidate_roots()
+    return {
+        "epss": _feed_freshness(_first_existing(roots_iter, _EPSS_RELPATHS), epss_max_age_hours),
+        "kev": _feed_freshness(_first_existing(roots_iter, _KEV_RELPATHS), kev_max_age_hours),
+    }
 
 
 # ---------------------------------------------------------------------------

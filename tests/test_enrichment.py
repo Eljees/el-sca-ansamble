@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import os
+import time
+
 from resilient_updates.enrichment import (
     enrich_findings,
     load_epss_scores,
     load_kev_set,
+    source_freshness,
 )
 
 
@@ -118,3 +122,34 @@ def test_enrich_findings_adds_epss_and_kev_columns(tmp_path: Path):
     assert by_id["CVE-2024-0002"]["kev"] == "yes"
     assert by_id["CVE-9999-0000"]["epss"] == ""
     assert by_id["CVE-9999-0000"]["kev"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Freshness / TTL (ADR-0004)
+# ---------------------------------------------------------------------------
+
+
+def test_source_freshness_missing_files_report_absent(tmp_path: Path):
+    result = source_freshness(roots=[tmp_path])
+    assert result["epss"]["present"] is False
+    assert result["epss"]["stale"] is None
+    assert result["kev"]["present"] is False
+
+
+def test_source_freshness_fresh_files_not_stale(tmp_path: Path):
+    _write_epss(tmp_path, [("CVE-2024-0001", "0.5", "0.9")])
+    _write_kev(tmp_path, ["CVE-2024-0002"])
+    result = source_freshness(roots=[tmp_path], epss_max_age_hours=24, kev_max_age_hours=168)
+    assert result["epss"]["present"] is True
+    assert result["epss"]["stale"] is False
+    assert result["epss"]["age_hours"] is not None
+    assert result["kev"]["stale"] is False
+
+
+def test_source_freshness_flags_stale_epss(tmp_path: Path):
+    path = _write_epss(tmp_path, [("CVE-2024-0001", "0.5", "0.9")])
+    old = time.time() - 73 * 3600  # 73h old
+    os.utime(path, (old, old))
+    result = source_freshness(roots=[tmp_path], epss_max_age_hours=24)
+    assert result["epss"]["stale"] is True
+    assert result["epss"]["age_hours"] >= 72
