@@ -14,6 +14,7 @@ from resilient_updates.cli import (
     _db_status_payload,
     _dedup_attempted_sources,
     _health_summary,
+    _render_trivy_flags,
 )
 from resilient_updates.config import load_config
 from resilient_updates.fallback import AttemptResult, FailureReason
@@ -243,3 +244,37 @@ def test_dedup_multiple_sources_preserve_order():
 
 def test_dedup_empty_input():
     assert _dedup_attempted_sources([]) == []
+
+
+# ---------------------------------------------------------------------------
+# render-flags — VEX layer (ADR-0003)
+# ---------------------------------------------------------------------------
+
+
+def test_render_trivy_flags_emits_vex_when_doc_present_and_enabled(tmp_path: Path):
+    """When vex_policy is enabled and a doc exists, --vex is appended."""
+    vex_dir = tmp_path / "vex"
+    vex_dir.mkdir()
+    doc = vex_dir / "internal-vex-hub.openvex.json"
+    doc.write_text("{}", encoding="utf-8")
+
+    config = deepcopy(load_config("tests/fixtures/feed_sources.example.yaml"))
+    config["trivy"]["cache_dir"] = str(tmp_path)
+    config["trivy"]["vex_policy"] = {"enabled": True, "mode": "apply"}
+
+    flags = _render_trivy_flags(config)
+    assert f"--vex {doc}" in flags
+
+
+def test_render_trivy_flags_omits_vex_when_disabled_or_absent(tmp_path: Path):
+    """Backward-compat contract: no VEX policy / no doc => no --vex flag."""
+    config = deepcopy(load_config("tests/fixtures/feed_sources.example.yaml"))
+    config["trivy"]["cache_dir"] = str(tmp_path)
+
+    # No vex_policy at all -> no --vex (existing scans unaffected).
+    assert "--vex" not in _render_trivy_flags(config)
+
+    # Policy enabled but the vex/ directory has no docs -> still no --vex.
+    config["trivy"]["vex_policy"] = {"enabled": True}
+    (tmp_path / "vex").mkdir()
+    assert "--vex" not in _render_trivy_flags(config)

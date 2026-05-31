@@ -104,8 +104,16 @@ trivy:
   vex_repositories:
     - name: internal-vex-hub
       url: "https://vex.example.invalid/api"
+      format: openvex          # openvex | csaf | cyclonedx
       priority: 10
       enabled: true
+  # VEX application policy (see docs/adr/0003-vex-feed.md).  Disabled by
+  # default — scans behave exactly as before until a VEX doc is published
+  # and this is flipped on.
+  vex_policy:
+    enabled: false
+    mode: apply                # apply (suppress) | annotate (mark only)
+    require_fresh_hours: 168
   cache_dir: "/var/lib/resilient-db/trivy"
   offline_policy:
     skip_db_update: false

@@ -146,6 +146,16 @@ def _render_trivy_flags(config: dict[str, Any]) -> str:
         parts.append(f"--java-db-repository {item.url.removeprefix('oci://')}")
     for item in build_sources(config, "trivy", "trivy-checks"):
         parts.append(f"--checks-bundle-repository {item.url.removeprefix('oci://')}")
+    # VEX layer (ADR-0003): apply published VEX docs only when the policy is
+    # enabled and at least one doc has been fetched to <cache_dir>/vex/.  When
+    # unconfigured this is a no-op, so existing scans are unaffected.
+    trivy_cfg = config.get("trivy", {})
+    if trivy_cfg.get("vex_policy", {}).get("enabled"):
+        vex_dir = Path(trivy_cfg.get("cache_dir", "/var/lib/resilient-db/trivy")) / "vex"
+        if vex_dir.is_dir():
+            for doc in sorted(vex_dir.glob("*")):
+                if doc.is_file():
+                    parts.append(f"--vex {doc}")
     return " ".join(parts)
 
 
