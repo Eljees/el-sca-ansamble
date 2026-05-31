@@ -547,7 +547,7 @@ def main() -> int:
         help="Leave existing sidecar JSONs untouched (default: regenerate every run)",
     )
     update = subparsers.add_parser("update")
-    update.add_argument("tool", choices=["trivy", "grype", "cve-bin-tool"])
+    update.add_argument("tool", choices=["trivy", "grype", "cve-bin-tool", "vex"])
     proxy_status = subparsers.add_parser(
         "proxy-status",
         help="Healthcheck every declared proxy chain and write artifacts/provenance/proxy.json",
@@ -684,6 +684,13 @@ def main() -> int:
         print(_render_trivy_flags(config))
         return EXIT_SUCCESS
     if args.command == "update":
+        if args.tool == "vex":
+            from .vex import fetch_vex
+
+            payload = fetch_vex(config, session=_session)
+            print(json.dumps(payload, indent=2))
+            published = payload.get("published") or payload.get("used_last_known_good")
+            return EXIT_SUCCESS if published else EXIT_ALL_SOURCES_FAILED
         if args.tool == "grype":
             return update_grype(config, session=_session)
         if args.tool == "trivy":
