@@ -677,26 +677,31 @@ def main() -> int:
         if args.tool == "grype":
             return update_grype(config, session=_session)
         if args.tool == "trivy":
+            trivy_retry = RetryPolicy.from_tool_config(config, "trivy")
             code, payload = _health_summary(
                 config,
                 "trivy",
                 "trivy-db",
                 timeout=int(config["trivy"]["source_health_policy"]["healthcheck_timeout_seconds"]),
-                retry_count=int(config["trivy"]["retry_backoff_policy"]["retry_count"]),
-                backoff_seconds=int(config["trivy"]["retry_backoff_policy"]["backoff_seconds"]),
-                retry_codes=list(config["trivy"]["retry_backoff_policy"]["retry_status_codes"]),
+                retry_count=trivy_retry.retry_count,
+                backoff_seconds=int(trivy_retry.backoff_seconds),
+                retry_codes=list(trivy_retry.retry_status_codes),
                 session=_session,
             )
             print(json.dumps(payload, indent=2))
             return code
+        # cve_bin_tool: retry_count lives in source_health_policy; backoff and
+        # status codes come from the shared RetryPolicy defaults (same values
+        # as the previous hardcoded 1 / 429,500,502,503,504).
+        cve_retry = RetryPolicy.from_tool_config(config, "cve_bin_tool")
         code, payload = _health_summary(
             config,
             "cve_bin_tool",
             "cve-bin-tool-mirror",
             timeout=int(config["cve_bin_tool"]["source_health_policy"]["source_timeout_seconds"]),
             retry_count=int(config["cve_bin_tool"]["source_health_policy"]["retry_count"]),
-            backoff_seconds=1,
-            retry_codes=[429, 500, 502, 503, 504],
+            backoff_seconds=int(cve_retry.backoff_seconds),
+            retry_codes=list(cve_retry.retry_status_codes),
             session=_session,
         )
         print(json.dumps(payload, indent=2))

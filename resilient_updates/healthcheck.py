@@ -85,7 +85,7 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
         "retry_status_codes": list(trivy_retry.retry_status_codes),
         "session": session,
     }
-    for layer in ("trivy-db", "trivy-java-db", "trivy-checks"):
+    for layer in ("trivy-db", "trivy-java-db", "trivy-checks", "trivy-vex"):
         result[layer] = _probe_layer(config, "trivy", layer, **trivy_kwargs)
 
     # ── Grype ──────────────────────────────────────────────────────────────
