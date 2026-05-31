@@ -54,3 +54,6 @@ temp/
 *.db
 *.sqlite
 *.sqlite3
+
+.coverage
+.coverage.*

@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._retry import RetryPolicy
 from .config import load_config, parse_proxy_config
 from .fallback import attempt_sources, build_session
 from .source_policy import build_sources
-
-# Default retry profile for tools whose YAML schema doesn't declare a
-# retry_backoff_policy at the same nesting depth as trivy's
-# (grype.timeout_policy / cve_bin_tool.source_health_policy).
-_DEFAULT_RETRY_STATUS_CODES = [429, 500, 502, 503, 504]
 
 
 def _probe_layer(
@@ -77,41 +73,51 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
     }
 
     # ── Trivy ──────────────────────────────────────────────────────────────
+    # Timeout comes from source_health_policy (healthcheck probe budget).
+    # Retry parameters come from retry_backoff_policy via RetryPolicy so
+    # there is one source of truth — consistent with how cli.py reads them.
     trivy_health = config["trivy"]["source_health_policy"]
-    trivy_retry_cfg = config["trivy"]["retry_backoff_policy"]
+    trivy_retry = RetryPolicy.from_tool_config(config, "trivy")
     trivy_kwargs = {
         "timeout": int(trivy_health["healthcheck_timeout_seconds"]),
-        "retry_count": int(trivy_retry_cfg["retry_count"]),
-        "backoff_seconds": int(trivy_retry_cfg["backoff_seconds"]),
-        "retry_status_codes": list(trivy_retry_cfg["retry_status_codes"]),
+        "retry_count": trivy_retry.retry_count,
+        "backoff_seconds": int(trivy_retry.backoff_seconds),
+        "retry_status_codes": list(trivy_retry.retry_status_codes),
         "session": session,
     }
     for layer in ("trivy-db", "trivy-java-db", "trivy-checks"):
         result[layer] = _probe_layer(config, "trivy", layer, **trivy_kwargs)
 
     # ── Grype ──────────────────────────────────────────────────────────────
+    # Timeout governs the listing-fetch probe; retry params come from
+    # grype.retry_backoff_policy (same as cli.update_grype uses).
+    grype_retry = RetryPolicy.from_tool_config(config, "grype")
     grype_timeout = int(config["grype"]["timeout_policy"]["update_available_timeout"])
     result["grype-db"] = _probe_layer(
         config,
         "grype",
         "grype-db",
         timeout=grype_timeout,
-        retry_count=1,
-        backoff_seconds=1,
-        retry_status_codes=_DEFAULT_RETRY_STATUS_CODES,
+        retry_count=grype_retry.retry_count,
+        backoff_seconds=int(grype_retry.backoff_seconds),
+        retry_status_codes=list(grype_retry.retry_status_codes),
         session=session,
     )
 
     # ── cve-bin-tool ───────────────────────────────────────────────────────
+    # cve_bin_tool has no retry_backoff_policy section; timeout and
+    # retry_count live in source_health_policy.  RetryPolicy.from_tool_config
+    # returns defaults for backoff and retry_status_codes when the key is absent.
     cve_health = config["cve_bin_tool"]["source_health_policy"]
+    cve_retry = RetryPolicy.from_tool_config(config, "cve_bin_tool")
     result["cve-bin-tool-mirror"] = _probe_layer(
         config,
         "cve_bin_tool",
         "cve-bin-tool-mirror",
         timeout=int(cve_health["source_timeout_seconds"]),
         retry_count=int(cve_health["retry_count"]),
-        backoff_seconds=1,
-        retry_status_codes=_DEFAULT_RETRY_STATUS_CODES,
+        backoff_seconds=int(cve_retry.backoff_seconds),
+        retry_status_codes=list(cve_retry.retry_status_codes),
         session=session,
     )
 
