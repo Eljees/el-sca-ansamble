@@ -14,6 +14,9 @@ Service/command names mirror ``scripts/run-scan.sh`` and the actual
 
 from __future__ import annotations
 
+import os
+import subprocess
+from collections.abc import Callable
 from typing import Any
 
 ALL_TOOLS = ("syft", "grype", "trivy", "cve-bin-tool")
@@ -93,3 +96,84 @@ def format_plan(plan: list[dict[str, Any]], *, target: str) -> str:
         suffix = f"   (timeout={step['timeout']}s)" if step.get("timeout") else ""
         lines.append(f"{i:>2}. {step['step']:<20} {' '.join(step['cmd'])}{suffix}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — execution
+# ---------------------------------------------------------------------------
+
+# A runner has the same shape as ``subprocess.run`` for the kwargs we use; it is
+# injectable so tests can drive the pipeline without docker.
+Runner = Callable[..., Any]
+
+
+def _step_ok(step_name: str, returncode: int) -> bool:
+    """cve-bin-tool exits 1 when CVEs are found — that is a *success* state, not
+    a pipeline failure (mirrors ``run-scan.sh``)."""
+    if step_name == "cve-bin-tool-scan":
+        return returncode in (0, 1)
+    return returncode == 0
+
+
+def run_scan(
+    *,
+    target: str,
+    tool: str = "all",
+    extract: bool = False,
+    sbom_scan: bool = False,
+    timeout: int = 1800,
+    update_db: bool = False,
+    profile: str = "default",
+    runner: Runner | None = None,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Execute the pipeline plan step by step and return a structured result.
+
+    Each step runs via ``runner`` (default :func:`subprocess.run`).  Execution
+    stops at the first hard failure (``die`` semantics from ``run-scan.sh``).
+    The stdout of ``trivy-render-flags`` is captured and threaded into the
+    ``trivy-scan`` step as ``TRIVY_RENDERED_FLAGS`` (same contract the compose
+    scanner expects).  Returns ``{"target", "status": "ok"|"failed", "steps":[...]}``.
+    """
+    run = runner or subprocess.run
+    base_env = dict(os.environ if env is None else env)
+    plan = build_plan(
+        target=target,
+        tool=tool,
+        extract=extract,
+        sbom_scan=sbom_scan,
+        timeout=timeout,
+        update_db=update_db,
+        profile=profile,
+    )
+
+    results: list[dict[str, Any]] = []
+    rendered_trivy_flags = ""
+    status = "ok"
+
+    for step in plan:
+        name = step["step"]
+        step_env = dict(base_env)
+        if name == "trivy-scan" and rendered_trivy_flags:
+            step_env["TRIVY_RENDERED_FLAGS"] = rendered_trivy_flags
+
+        completed = run(
+            step["cmd"],
+            timeout=step.get("timeout"),
+            capture_output=True,
+            text=True,
+            env=step_env,
+        )
+        returncode = int(getattr(completed, "returncode", 1))
+        ok = _step_ok(name, returncode)
+        stdout = getattr(completed, "stdout", "") or ""
+
+        if name == "trivy-render-flags" and ok:
+            rendered_trivy_flags = stdout.strip()
+
+        results.append({"step": name, "returncode": returncode, "ok": ok})
+        if not ok:
+            status = "failed"
+            break
+
+    return {"target": target, "status": status, "steps": results}

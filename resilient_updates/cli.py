@@ -733,9 +733,24 @@ def main() -> int:
         print(json.dumps(verdict, indent=2, ensure_ascii=False))
         return EXIT_VALIDATION_FAILED if verdict["should_fail"] else EXIT_SUCCESS
     if args.command == "scan":
-        from .scan import build_plan, format_plan
+        from .scan import build_plan, format_plan, run_scan
 
-        plan = build_plan(
+        if args.dry_run:
+            plan = build_plan(
+                target=args.target,
+                tool=args.tool,
+                extract=args.extract,
+                sbom_scan=args.sbom_scan,
+                timeout=args.timeout,
+                update_db=args.update_db,
+                profile=args.profile,
+            )
+            if args.json:
+                print(json.dumps({"target": args.target, "plan": plan}, indent=2, ensure_ascii=False))
+            else:
+                print(format_plan(plan, target=args.target))
+            return EXIT_SUCCESS
+        result = run_scan(
             target=args.target,
             tool=args.tool,
             extract=args.extract,
@@ -744,15 +759,8 @@ def main() -> int:
             update_db=args.update_db,
             profile=args.profile,
         )
-        if args.dry_run:
-            if args.json:
-                print(json.dumps({"target": args.target, "plan": plan}, indent=2, ensure_ascii=False))
-            else:
-                print(format_plan(plan, target=args.target))
-            return EXIT_SUCCESS
-        # Live execution lands in ADR-0005 P2; P1 ships the plan/dry-run only.
-        print("cli scan: live execution lands in ADR-0005 P2; use --dry-run to preview the plan")
-        return EXIT_VALIDATION_FAILED
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS if result["status"] == "ok" else EXIT_ALL_SOURCES_FAILED
     if args.command == "update":
         if args.tool == "vex":
             from .vex import fetch_vex

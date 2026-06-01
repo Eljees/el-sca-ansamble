@@ -1,8 +1,33 @@
-"""Tests for resilient_updates.scan — pipeline plan builder (ADR-0005 P1)."""
+"""Tests for resilient_updates.scan — pipeline plan builder (ADR-0005 P1) and
+the subprocess orchestrator (P2, exercised with a fake runner)."""
 
 from __future__ import annotations
 
-from resilient_updates.scan import build_plan, format_plan
+from types import SimpleNamespace
+
+from resilient_updates.scan import build_plan, format_plan, run_scan
+
+
+def _make_runner(*, codes=None, outs=None, recorder=None):
+    """Fake ``subprocess.run``: returncode/stdout chosen by substring of the cmd."""
+    codes = codes or {}
+    outs = outs or {}
+
+    def runner(cmd, *, timeout=None, capture_output=True, text=True, env=None):
+        if recorder is not None:
+            recorder.append({"cmd": cmd, "timeout": timeout, "env": env})
+        joined = " ".join(cmd)
+        rc = 0
+        for sub, c in codes.items():
+            if sub in joined:
+                rc = c
+        out = ""
+        for sub, o in outs.items():
+            if sub in joined:
+                out = o
+        return SimpleNamespace(returncode=rc, stdout=out, stderr="")
+
+    return runner
 
 
 def _names(plan):
@@ -66,3 +91,49 @@ def test_format_plan_human_readable():
     assert "cli scan plan" in out
     assert "preflight" in out
     assert "manifest" in out
+
+
+# ---------------------------------------------------------------------------
+# run_scan (P2) — driven by a fake subprocess runner
+# ---------------------------------------------------------------------------
+
+
+def test_run_scan_all_ok():
+    result = run_scan(target="x", runner=_make_runner(), env={})
+    assert result["status"] == "ok"
+    assert len(result["steps"]) == len(build_plan(target="x"))
+    assert all(s["ok"] for s in result["steps"])
+
+
+def test_run_scan_stops_on_first_failure():
+    runner = _make_runner(codes={"grype-scanner": 1})
+    result = run_scan(target="x", runner=runner, env={})
+    assert result["status"] == "failed"
+    # stopped at grype-scan; trivy/cve-bin-tool never ran
+    names = [s["step"] for s in result["steps"]]
+    assert names[-1] == "grype-scan"
+    assert "trivy-scan" not in names
+
+
+def test_run_scan_cve_bin_tool_exit1_is_success():
+    runner = _make_runner(codes={"cve-bin-tool-scanner": 1})
+    result = run_scan(target="x", tool="cve-bin-tool", runner=runner, env={})
+    assert result["status"] == "ok"
+    scan = next(s for s in result["steps"] if s["step"] == "cve-bin-tool-scan")
+    assert scan["returncode"] == 1 and scan["ok"] is True
+
+
+def test_run_scan_threads_render_flags_into_trivy_env():
+    recorder: list = []
+    runner = _make_runner(outs={"render-flags trivy": "--db-repository ghcr.io/x"}, recorder=recorder)
+    run_scan(target="x", tool="trivy", runner=runner, env={})
+    trivy_scan_call = next(c for c in recorder if "trivy-scanner" in " ".join(c["cmd"]))
+    assert trivy_scan_call["env"].get("TRIVY_RENDERED_FLAGS") == "--db-repository ghcr.io/x"
+
+
+def test_run_scan_passes_timeout_to_cve_bin_tool():
+    recorder: list = []
+    runner = _make_runner(recorder=recorder)
+    run_scan(target="x", tool="cve-bin-tool", timeout=900, runner=runner, env={})
+    cve_call = next(c for c in recorder if "cve-bin-tool-scanner" in " ".join(c["cmd"]))
+    assert cve_call["timeout"] == 900
