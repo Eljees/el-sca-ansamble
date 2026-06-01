@@ -10,6 +10,7 @@ import time
 
 from resilient_updates.enrichment import (
     enrich_findings,
+    evaluate_enrichment_policy,
     load_epss_scores,
     load_kev_set,
     source_freshness,
@@ -153,3 +154,54 @@ def test_source_freshness_flags_stale_epss(tmp_path: Path):
     result = source_freshness(roots=[tmp_path], epss_max_age_hours=24)
     assert result["epss"]["stale"] is True
     assert result["epss"]["age_hours"] >= 72
+
+
+# ---------------------------------------------------------------------------
+# evaluate_enrichment_policy (ADR-0004 P3)
+# ---------------------------------------------------------------------------
+
+
+def _stale_epss(tmp_path: Path, hours: int = 100):
+    path = _write_epss(tmp_path, [("CVE-2024-0001", "0.5", "0.9")])
+    old = time.time() - hours * 3600
+    os.utime(path, (old, old))
+    return path
+
+
+def test_policy_fresh_not_stale_no_fail(tmp_path: Path):
+    _write_epss(tmp_path, [("CVE-2024-0001", "0.5", "0.9")])
+    verdict = evaluate_enrichment_policy({"enrichment_policy": {"on_stale": "fail"}}, roots=[tmp_path])
+    assert verdict["stale"] is False
+    assert verdict["should_fail"] is False
+    assert verdict["on_stale"] == "fail"
+
+
+def test_policy_stale_fail_mode_sets_should_fail(tmp_path: Path):
+    _stale_epss(tmp_path)
+    verdict = evaluate_enrichment_policy(
+        {"enrichment_policy": {"epss_max_age_hours": 24, "on_stale": "fail"}}, roots=[tmp_path]
+    )
+    assert verdict["stale"] is True
+    assert verdict["should_fail"] is True
+
+
+def test_policy_stale_warn_mode_does_not_fail(tmp_path: Path):
+    _stale_epss(tmp_path)
+    verdict = evaluate_enrichment_policy(
+        {"enrichment_policy": {"epss_max_age_hours": 24, "on_stale": "warn"}}, roots=[tmp_path]
+    )
+    assert verdict["stale"] is True
+    assert verdict["should_fail"] is False
+
+
+def test_policy_absent_feeds_not_stale(tmp_path: Path):
+    verdict = evaluate_enrichment_policy({"enrichment_policy": {"on_stale": "fail"}}, roots=[tmp_path])
+    assert verdict["stale"] is False
+    assert verdict["should_fail"] is False
+
+
+def test_policy_defaults_when_no_config(tmp_path: Path):
+    _write_epss(tmp_path, [("CVE-2024-0001", "0.5", "0.9")])
+    verdict = evaluate_enrichment_policy(None, roots=[tmp_path])
+    assert verdict["on_stale"] == "warn"
+    assert verdict["should_fail"] is False

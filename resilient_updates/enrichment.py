@@ -120,6 +120,36 @@ def source_freshness(
     }
 
 
+def evaluate_enrichment_policy(
+    config: dict[str, Any] | None = None,
+    roots: Iterable[Path] | None = None,
+) -> dict[str, Any]:
+    """Combine :func:`source_freshness` with the configured ``enrichment_policy``.
+
+    Reads the top-level ``enrichment_policy`` block (TTL thresholds + an
+    ``on_stale`` mode of ``warn`` | ``ignore`` | ``fail``) and returns a verdict:
+
+    - ``freshness`` — the per-feed :func:`source_freshness` result;
+    - ``stale``     — True if any *present* feed exceeds its TTL (absent feeds
+      never count as stale);
+    - ``on_stale``  — the configured mode (default ``warn``);
+    - ``should_fail`` — True only when ``on_stale == "fail"`` and a feed is stale,
+      so callers (CI gates, ``cli freshness``) can map it to a non-zero exit.
+    """
+    policy = (config or {}).get("enrichment_policy") or {}
+    epss_max = float(policy.get("epss_max_age_hours", 24.0))
+    kev_max = float(policy.get("kev_max_age_hours", 168.0))
+    on_stale = str(policy.get("on_stale", "warn")).lower()
+    fresh = source_freshness(roots, epss_max_age_hours=epss_max, kev_max_age_hours=kev_max)
+    stale = any(feed.get("stale") for feed in fresh.values())
+    return {
+        "freshness": fresh,
+        "stale": stale,
+        "on_stale": on_stale,
+        "should_fail": stale and on_stale == "fail",
+    }
+
+
 # ---------------------------------------------------------------------------
 # EPSS
 # ---------------------------------------------------------------------------

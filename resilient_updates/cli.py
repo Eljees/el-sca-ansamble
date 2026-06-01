@@ -559,6 +559,10 @@ def main() -> int:
     )
     render_flags = subparsers.add_parser("render-flags")
     render_flags.add_argument("tool", choices=["trivy"])
+    subparsers.add_parser(
+        "freshness",
+        help="report EPSS/KEV cache age vs enrichment_policy TTL; non-zero exit when on_stale=fail",
+    )
     write_summary = subparsers.add_parser(
         "write-run-summary",
         help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
@@ -706,6 +710,12 @@ def main() -> int:
     if args.command == "render-flags":
         print(_render_trivy_flags(config))
         return EXIT_SUCCESS
+    if args.command == "freshness":
+        from .enrichment import evaluate_enrichment_policy
+
+        verdict = evaluate_enrichment_policy(config)
+        print(json.dumps(verdict, indent=2, ensure_ascii=False))
+        return EXIT_VALIDATION_FAILED if verdict["should_fail"] else EXIT_SUCCESS
     if args.command == "update":
         if args.tool == "vex":
             from .vex import fetch_vex
