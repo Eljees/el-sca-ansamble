@@ -69,15 +69,23 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 
 
 def _fresh_lkg(vex_dir: Path, max_age_hours: float) -> list[Path]:
-    """Previously-published VEX files still within the freshness window."""
-    if not vex_dir.is_dir():
-        return []
+    """Previously-published VEX files still within the freshness window.
+
+    Tolerant of an unreadable cache dir (``OSError``/``PermissionError`` under a
+    non-root container user): treated as "no LKG available" rather than raising.
+    """
     cutoff = datetime.now(timezone.utc).timestamp() - max_age_hours * 3600
-    return [
-        p
-        for p in sorted(vex_dir.glob("*"))
-        if p.is_file() and not p.name.endswith(".new") and p.stat().st_mtime >= cutoff
-    ]
+    try:
+        if not vex_dir.is_dir():
+            return []
+        candidates = sorted(vex_dir.glob("*"))
+        return [
+            p
+            for p in candidates
+            if p.is_file() and not p.name.endswith(".new") and p.stat().st_mtime >= cutoff
+        ]
+    except OSError:
+        return []
 
 
 def fetch_vex(

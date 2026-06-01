@@ -15,6 +15,8 @@ from resilient_updates.cli import (
     _dedup_attempted_sources,
     _health_summary,
     _render_trivy_flags,
+    _safe_exists,
+    _safe_is_dir,
 )
 from resilient_updates.config import load_config
 from resilient_updates.fallback import AttemptResult, FailureReason
@@ -278,3 +280,37 @@ def test_render_trivy_flags_omits_vex_when_disabled_or_absent(tmp_path: Path):
     config["trivy"]["vex_policy"] = {"enabled": True}
     (tmp_path / "vex").mkdir()
     assert "--vex" not in _render_trivy_flags(config)
+
+
+# ---------------------------------------------------------------------------
+# Filesystem probes survive an unreadable path (non-root container hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_exists_swallows_permission_error(tmp_path: Path, monkeypatch):
+    def _boom(self):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "exists", _boom)
+    assert _safe_exists(tmp_path) is False
+
+
+def test_safe_is_dir_swallows_permission_error(tmp_path: Path, monkeypatch):
+    def _boom(self):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "is_dir", _boom)
+    assert _safe_is_dir(tmp_path) is False
+
+
+def test_db_status_payload_handles_unreadable_path(tmp_path: Path, monkeypatch):
+    """db-status on a root-owned default path (e.g. /root/.cache/cve-bin-tool)
+    under USER appuser must report exists=false, not raise PermissionError."""
+
+    def _boom(self):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "exists", _boom)
+    payload = _db_status_payload("cve-bin-tool", tmp_path, "24h")
+    assert payload["exists"] is False
+    assert payload["age_hours"] is None

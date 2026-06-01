@@ -77,8 +77,31 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _safe_exists(path: Path) -> bool:
+    """``Path.exists`` that treats an unreadable parent as "absent".
+
+    Under a non-root container user (``USER appuser`` in our Dockerfiles),
+    probing a root-owned default path such as ``/root/.cache/cve-bin-tool``
+    raises ``PermissionError`` instead of returning ``False``.  Swallow that so
+    ``db-status`` / ``render-flags`` degrade gracefully instead of crashing.
+    """
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _safe_is_dir(path: Path) -> bool:
+    """``Path.is_dir`` variant that survives an unreadable parent (see
+    :func:`_safe_exists`)."""
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
 def _latest_mtime(path: Path) -> float | None:
-    if not path.exists():
+    if not _safe_exists(path):
         return None
     if path.is_file():
         return path.stat().st_mtime
@@ -94,13 +117,13 @@ def _latest_mtime(path: Path) -> float | None:
 def _db_status_payload(tool: str, path: Path, warning_age: str) -> dict[str, Any]:
     warning_hours = parse_duration_hours(warning_age)
     status_path = path
-    if tool == "cve-bin-tool" and path.exists():
-        cve_db = next(path.rglob("cve.db"), None) if path.is_dir() else None
+    if tool == "cve-bin-tool" and _safe_exists(path):
+        cve_db = next(path.rglob("cve.db"), None) if _safe_is_dir(path) else None
         if cve_db is None:
             return {
                 "tool": tool,
                 "path": str(path),
-                "exists": path.exists(),
+                "exists": _safe_exists(path),
                 "age_hours": None,
                 "warning_age_hours": warning_hours,
                 "warning": True,
@@ -113,7 +136,7 @@ def _db_status_payload(tool: str, path: Path, warning_age: str) -> dict[str, Any
         return {
             "tool": tool,
             "path": str(path),
-            "exists": path.exists(),
+            "exists": _safe_exists(path),
             "age_hours": None,
             "warning_age_hours": warning_hours,
             "warning": False,
@@ -125,7 +148,7 @@ def _db_status_payload(tool: str, path: Path, warning_age: str) -> dict[str, Any
     return {
         "tool": tool,
         "path": str(path),
-        "exists": path.exists(),
+        "exists": _safe_exists(path),
         "age_hours": age_hours,
         "warning_age_hours": warning_hours,
         "warning": warning,
@@ -152,7 +175,7 @@ def _render_trivy_flags(config: dict[str, Any]) -> str:
     trivy_cfg = config.get("trivy", {})
     if trivy_cfg.get("vex_policy", {}).get("enabled"):
         vex_dir = Path(trivy_cfg.get("cache_dir", "/var/lib/resilient-db/trivy")) / "vex"
-        if vex_dir.is_dir():
+        if _safe_is_dir(vex_dir):
             for doc in sorted(vex_dir.glob("*")):
                 if doc.is_file():
                     parts.append(f"--vex {doc}")
