@@ -16,3 +16,11 @@ PyYAML>=6.0
 requests>=2.31.0
 PySocks>=1.7.1
 pytest>=8.0.0
+
+# Dashboard (ADR-0006) — read-only run browser.  Optional at runtime: the
+# dashboard endpoints/tests are skipped when these are absent.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jinja2>=3.1
+# TestClient transport for the dashboard endpoint tests.
+httpx>=0.27
