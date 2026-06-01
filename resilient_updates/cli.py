@@ -563,6 +563,22 @@ def main() -> int:
         "freshness",
         help="report EPSS/KEV cache age vs enrichment_policy TTL; non-zero exit when on_stale=fail",
     )
+    scan_parser = subparsers.add_parser(
+        "scan",
+        help="unified pipeline orchestrator (ADR-0005); use --dry-run to preview the steps",
+    )
+    scan_parser.add_argument("--target", required=True)
+    scan_parser.add_argument(
+        "--tool", choices=["all", "syft", "grype", "trivy", "cve-bin-tool"], default="all"
+    )
+    scan_parser.add_argument("--extract", action="store_true")
+    scan_parser.add_argument("--extract-max-depth", type=int, default=4)
+    scan_parser.add_argument("--sbom-scan", action="store_true")
+    scan_parser.add_argument("--timeout", type=int, default=1800)
+    scan_parser.add_argument("--update-db", action="store_true")
+    scan_parser.add_argument("--profile", default="default")
+    scan_parser.add_argument("--dry-run", action="store_true")
+    scan_parser.add_argument("--json", action="store_true")
     write_summary = subparsers.add_parser(
         "write-run-summary",
         help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
@@ -716,6 +732,27 @@ def main() -> int:
         verdict = evaluate_enrichment_policy(config)
         print(json.dumps(verdict, indent=2, ensure_ascii=False))
         return EXIT_VALIDATION_FAILED if verdict["should_fail"] else EXIT_SUCCESS
+    if args.command == "scan":
+        from .scan import build_plan, format_plan
+
+        plan = build_plan(
+            target=args.target,
+            tool=args.tool,
+            extract=args.extract,
+            sbom_scan=args.sbom_scan,
+            timeout=args.timeout,
+            update_db=args.update_db,
+            profile=args.profile,
+        )
+        if args.dry_run:
+            if args.json:
+                print(json.dumps({"target": args.target, "plan": plan}, indent=2, ensure_ascii=False))
+            else:
+                print(format_plan(plan, target=args.target))
+            return EXIT_SUCCESS
+        # Live execution lands in ADR-0005 P2; P1 ships the plan/dry-run only.
+        print("cli scan: live execution lands in ADR-0005 P2; use --dry-run to preview the plan")
+        return EXIT_VALIDATION_FAILED
     if args.command == "update":
         if args.tool == "vex":
             from .vex import fetch_vex
