@@ -60,6 +60,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 - `adr/0003-vex-feed.md` — VEX feed via Trivy `--vex` (proposed).
 - `adr/0004-epss-kev-freshness.md` — EPSS/KEV freshness/TTL (proposed).
 - `adr/0005-unified-cli-scan.md` — unified `cli scan` orchestrator (proposed).
+- `adr/0006-fastapi-dashboard.md` — read-only FastAPI run dashboard (proposed).
 
 ## Reference
 
