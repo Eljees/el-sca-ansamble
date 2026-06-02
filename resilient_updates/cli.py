@@ -586,6 +586,12 @@ def main() -> int:
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
     dashboard_parser.add_argument("--artifacts-dir", default="artifacts")
+    doctor_parser = subparsers.add_parser(
+        "update-doctor",
+        help="probe every DB source over every proxy chain; print a reachability matrix (ADR-0007)",
+    )
+    doctor_parser.add_argument("--timeout", type=float, default=5.0)
+    doctor_parser.add_argument("--json", action="store_true")
     write_summary = subparsers.add_parser(
         "write-run-summary",
         help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
@@ -778,6 +784,16 @@ def main() -> int:
             return EXIT_VALIDATION_FAILED
         uvicorn.run(create_app(args.artifacts_dir), host=args.host, port=args.port)
         return EXIT_SUCCESS
+    if args.command == "update-doctor":
+        from .update_doctor import build_matrix, format_matrix
+
+        matrix = build_matrix(config, timeout=args.timeout)
+        if args.json:
+            print(json.dumps(matrix, indent=2, ensure_ascii=False))
+        else:
+            print(format_matrix(matrix))
+        unreachable = [tool for tool, chain in matrix["recommended"].items() if chain is None]
+        return EXIT_ALL_SOURCES_FAILED if unreachable else EXIT_SUCCESS
     if args.command == "update":
         if args.tool == "vex":
             from .vex import fetch_vex
