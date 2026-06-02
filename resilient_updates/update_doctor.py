@@ -8,10 +8,13 @@ with a recommended chain per tool.  Read-only.  The network probe is injectable
 
 from __future__ import annotations
 
+import os
+import socket
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
-from .fallback import classify_exception, classify_http_status
+from .fallback import classify_exception
 from .proxy_chain import ProxyChain, _proxies_for_chain, _session_from_proxies
 from .source_policy import build_sources
 
@@ -42,6 +45,79 @@ def enumerate_chains(config: dict[str, Any]) -> dict[str, dict[str, str]]:
     return chains
 
 
+# ---------------------------------------------------------------------------
+# Adaptive transport discovery (ADR-0007) — find the route that actually works
+# here, not only the ones named in feed_sources.yaml.  TCP-connect ("ping" at
+# the transport level) tells "proxy reachable" apart from "target blocked".
+# ---------------------------------------------------------------------------
+
+# Local SOCKS/HTTP proxy ports commonly used by v2rayN / xray / sing-box / Tor.
+_COMMON_LOCAL_PROXY_PORTS: tuple[int, ...] = (10808, 1080, 10809, 1081, 2080, 2081, 8889, 7890, 9150)
+
+TcpOpener = Callable[[str, int, float], bool]
+
+
+def tcp_open(host: str, port: int, timeout: float = 2.0) -> bool:
+    """True if a TCP connection to ``host:port`` succeeds within ``timeout``."""
+    try:
+        with socket.create_connection((host, int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _env_proxy_transports() -> dict[str, dict[str, str]]:
+    """Proxies declared via the standard environment variables (system settings)."""
+    out: dict[str, dict[str, str]] = {}
+    seen: set[str] = set()
+    for var in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        val = os.environ.get(var)
+        if val and val not in seen:
+            seen.add(val)
+            out[f"env:{var}"] = {"http": val, "https": val}
+    return out
+
+
+def discover_local_proxies(
+    *, ports: tuple[int, ...] = _COMMON_LOCAL_PROXY_PORTS, opener: TcpOpener = tcp_open
+) -> dict[str, dict[str, str]]:
+    """Scan loopback for a live local proxy (e.g. a running xray/v2rayN SOCKS)."""
+    out: dict[str, dict[str, str]] = {}
+    for port in ports:
+        if opener("127.0.0.1", port, 1.0):
+            url = f"socks5h://127.0.0.1:{port}"
+            out[f"local:127.0.0.1:{port}"] = {"http": url, "https": url}
+    return out
+
+
+def discover_transports(
+    config: dict[str, Any], *, opener: TcpOpener = tcp_open
+) -> dict[str, dict[str, str]]:
+    """All candidate routes: configured chains + env proxies + live local proxies.
+
+    This is what makes update-doctor *adaptive* — it tests the transport that
+    actually exists on this host, not only the placeholder chains in the YAML.
+    """
+    transports = dict(enumerate_chains(config))
+    transports.update(_env_proxy_transports())
+    transports.update(discover_local_proxies(opener=opener))
+    return transports
+
+
+def _proxy_endpoint(proxies: dict[str, str]) -> tuple[str, int] | None:
+    """``(host, port)`` of the proxy in ``proxies``, or ``None`` for a direct route."""
+    url = proxies.get("https") or proxies.get("http")
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return None
+    port = parsed.port or {"http": 80, "https": 443, "socks5": 1080, "socks5h": 1080}.get(
+        parsed.scheme, 1080
+    )
+    return parsed.hostname, int(port)
+
+
 def _probe_url_for(url: str) -> str | None:
     """The URL to HEAD for a reachability check, or ``None`` for local schemes."""
     if url.startswith("oci://"):
@@ -56,21 +132,45 @@ def default_prober(url: str, proxies: dict[str, str], timeout: float) -> dict[st
     probe_url = _probe_url_for(url)
     if probe_url is None:
         return {"status": "local", "code": None}
+    # TCP "ping" the proxy first: distinguishes "this proxy is down/unreachable"
+    # from "the target is blocked through an otherwise-healthy proxy".
+    endpoint = _proxy_endpoint(proxies)
+    if endpoint is not None and not tcp_open(endpoint[0], endpoint[1], min(timeout, 2.0)):
+        return {"status": "proxy-down", "code": None}
     session = _session_from_proxies(proxies)
     try:
         resp = session.head(probe_url, timeout=timeout, allow_redirects=True)
-        reason = classify_http_status(resp.status_code)
-        return {"status": "ok" if reason is None else reason.value, "code": resp.status_code}
+        code = resp.status_code
+        # Reachability != authorization.  ANY HTTP status proves the transport
+        # reached the server — a registry ``/v2/`` ping returns 401 *by design*,
+        # mirrors often return 403/404 on HEAD.  Only proxy-level codes are not
+        # "reached the target".
+        if code == 407:
+            status = "proxy-auth-required"
+        elif code in (502, 503, 504):
+            status = "gateway-error"
+        else:
+            status = "ok"
+        return {"status": status, "code": code}
     except Exception as exc:  # noqa: BLE001 — fold any transport error into a reason
         return {"status": classify_exception(exc).value, "code": None}
 
 
 def build_matrix(
-    config: dict[str, Any], *, prober: Prober | None = None, timeout: float = 5.0
+    config: dict[str, Any],
+    *,
+    prober: Prober | None = None,
+    timeout: float = 5.0,
+    opener: TcpOpener = tcp_open,
 ) -> dict[str, Any]:
-    """Probe every source across every chain; return the reachability matrix."""
+    """Probe every source across every discovered transport; return the matrix.
+
+    Transports include the configured chains **plus** adaptively-discovered
+    routes (env proxies, a live local SOCKS) so the matrix reflects what
+    actually works on this host.
+    """
     probe = prober or default_prober
-    chains = enumerate_chains(config)
+    chains = discover_transports(config, opener=opener)
     chain_order = list(chains.keys())
     rows: list[dict[str, Any]] = []
     for tool, layers in _TOOL_LAYERS.items():
