@@ -300,6 +300,23 @@ services:
       - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
     networks: [scanner-net]
 
+  # Read-only run dashboard (ADR-0006).  Browses artifacts/ over HTTP; holds no
+  # secrets and performs no scans.  Published on loopback only.  Requires
+  # fastapi + uvicorn in the image — regenerate requirements with `make lock`
+  # and rebuild before `--profile dashboard up`.
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.resilient-updater
+    profiles: ["dashboard"]
+    working_dir: /workspace
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8080", "--artifacts-dir", "/workspace/artifacts"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./artifacts:/workspace/artifacts:ro
+    networks: [scanner-net]
+
   mock-feed-server:
     build:
       context: .
