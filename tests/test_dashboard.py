@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from resilient_updates.dashboard import list_runs, run_detail
+from resilient_updates.dashboard import list_runs, render_index, render_run, run_detail
 
 
 def _populate(artifacts: Path) -> None:
@@ -89,3 +89,33 @@ def test_api_freshness_shape(tmp_path: Path):
     assert resp.status_code == 200
     body = resp.json()
     assert "should_fail" in body and "on_stale" in body
+
+
+# --- HTML rendering (P2) ----------------------------------------------------
+
+
+def test_render_index_empty_and_populated(tmp_path: Path):
+    assert "No runs yet" in render_index(tmp_path)
+    _populate(tmp_path)
+    html = render_index(tmp_path)
+    assert "<h1>Runs</h1>" in html
+    assert "/runs/current" in html
+
+
+def test_render_run_unknown_is_none(tmp_path: Path):
+    _populate(tmp_path)
+    assert render_run(tmp_path, "bogus") is None
+    assert "trivy" in render_run(tmp_path, "current")
+
+
+def test_html_index_and_run_page(tmp_path: Path):
+    _populate(tmp_path)
+    client = _client(tmp_path)
+    index = client.get("/")
+    assert index.status_code == 200
+    assert "text/html" in index.headers["content-type"]
+    assert "Runs" in index.text
+    run = client.get("/runs/current")
+    assert run.status_code == 200
+    assert "trivy" in run.text
+    assert client.get("/runs/bogus").status_code == 404

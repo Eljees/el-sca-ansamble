@@ -79,9 +79,68 @@ def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
     }
 
 
+def _provenance_status(payload: Any) -> str:
+    if isinstance(payload, dict):
+        return str(payload.get("activation_status") or payload.get("status") or "?")
+    return "?"
+
+
+def render_index(artifacts_dir: Path) -> str:
+    """Server-side HTML index of runs (plain stdlib rendering, no template engine)."""
+    import html
+
+    runs = list_runs(artifacts_dir)
+    if runs:
+        items = "".join(
+            "<li><a href='/runs/{id}'>{id}</a> — tools: {tools}; reports: {rc}; manifest: {mp}</li>".format(
+                id=html.escape(r["id"]),
+                tools=html.escape(", ".join(r["provenance_tools"]) or "—"),
+                rc=r["report_count"],
+                mp=r["manifest_present"],
+            )
+            for r in runs
+        )
+    else:
+        items = "<li>No runs yet.</li>"
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>el-sca-ansamble dashboard</title></head><body>"
+        "<h1>Runs</h1><ul>" + items + "</ul>"
+        "<p><a href='/api/runs'>runs JSON</a> · <a href='/api/freshness'>freshness JSON</a></p>"
+        "</body></html>"
+    )
+
+
+def render_run(artifacts_dir: Path, run_id: str) -> str | None:
+    """Server-side HTML for one run, or ``None`` when the run is unknown."""
+    import html
+
+    detail = run_detail(artifacts_dir, run_id)
+    if detail is None:
+        return None
+    prov = (
+        "".join(
+            f"<li>{html.escape(k)}: {html.escape(_provenance_status(v))}</li>"
+            for k, v in detail["provenance"].items()
+        )
+        or "<li>none</li>"
+    )
+    reports = "".join(f"<li>{html.escape(p)}</li>" for p in detail["reports"]) or "<li>none</li>"
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        f"<title>run {html.escape(run_id)}</title></head><body>"
+        f"<p><a href='/'>&larr; runs</a></p><h1>Run {html.escape(run_id)}</h1>"
+        "<h2>Provenance</h2><ul>" + prov + "</ul>"
+        "<h2>Reports</h2><ul>" + reports + "</ul>"
+        f"<p><a href='/api/runs/{html.escape(run_id)}'>this run as JSON</a></p>"
+        "</body></html>"
+    )
+
+
 def create_app(artifacts_dir: Path | str):
     """Build the read-only FastAPI app bound to ``artifacts_dir``."""
     from fastapi import FastAPI, HTTPException
+    from fastapi.responses import HTMLResponse
 
     root = Path(artifacts_dir)
     app = FastAPI(title="el-sca-ansamble dashboard", version="0.1.0")
@@ -89,6 +148,17 @@ def create_app(artifacts_dir: Path | str):
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> str:
+        return render_index(root)
+
+    @app.get("/runs/{run_id}", response_class=HTMLResponse)
+    def run_page(run_id: str) -> str:
+        page = render_run(root, run_id)
+        if page is None:
+            raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        return page
 
     @app.get("/api/runs")
     def runs() -> dict[str, Any]:

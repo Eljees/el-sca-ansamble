@@ -579,6 +579,13 @@ def main() -> int:
     scan_parser.add_argument("--profile", default="default")
     scan_parser.add_argument("--dry-run", action="store_true")
     scan_parser.add_argument("--json", action="store_true")
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        help="launch the read-only run dashboard (ADR-0006); requires fastapi + uvicorn",
+    )
+    dashboard_parser.add_argument("--host", default="127.0.0.1")
+    dashboard_parser.add_argument("--port", type=int, default=8080)
+    dashboard_parser.add_argument("--artifacts-dir", default="artifacts")
     write_summary = subparsers.add_parser(
         "write-run-summary",
         help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
@@ -761,6 +768,16 @@ def main() -> int:
         )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS if result["status"] == "ok" else EXIT_ALL_SOURCES_FAILED
+    if args.command == "dashboard":
+        from .dashboard import create_app
+
+        try:
+            import uvicorn
+        except ImportError:
+            print("dashboard requires uvicorn: pip install 'uvicorn[standard]' fastapi")
+            return EXIT_VALIDATION_FAILED
+        uvicorn.run(create_app(args.artifacts_dir), host=args.host, port=args.port)
+        return EXIT_SUCCESS
     if args.command == "update":
         if args.tool == "vex":
             from .vex import fetch_vex
