@@ -590,7 +590,7 @@ def main() -> int:
         "update-doctor",
         help="probe every DB source over every proxy chain; print a reachability matrix (ADR-0007)",
     )
-    doctor_parser.add_argument("--timeout", type=float, default=5.0)
+    doctor_parser.add_argument("--timeout", type=float, default=8.0)
     doctor_parser.add_argument("--json", action="store_true")
     write_summary = subparsers.add_parser(
         "write-run-summary",

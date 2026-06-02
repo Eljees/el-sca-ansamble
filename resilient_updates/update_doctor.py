@@ -85,8 +85,14 @@ def discover_local_proxies(
     out: dict[str, dict[str, str]] = {}
     for port in ports:
         if opener("127.0.0.1", port, 1.0):
-            url = f"socks5h://127.0.0.1:{port}"
-            out[f"local:127.0.0.1:{port}"] = {"http": url, "https": url}
+            # A v2rayN/xray "mixed" inbound speaks BOTH SOCKS5 and HTTP on the
+            # same port.  Offer both so the matrix shows which one Python can
+            # actually use here (HTTP needs no PySocks; socks5h resolves DNS at
+            # the proxy, dodging local DNS blocks).
+            socks = f"socks5h://127.0.0.1:{port}"
+            http = f"http://127.0.0.1:{port}"
+            out[f"local:127.0.0.1:{port}"] = {"http": socks, "https": socks}
+            out[f"local-http:127.0.0.1:{port}"] = {"http": http, "https": http}
     return out
 
 
@@ -139,8 +145,11 @@ def default_prober(url: str, proxies: dict[str, str], timeout: float) -> dict[st
         return {"status": "proxy-down", "code": None}
     session = _session_from_proxies(proxies)
     try:
-        resp = session.head(probe_url, timeout=timeout, allow_redirects=True)
+        # GET (stream) rather than HEAD: some registries/CDNs ignore or hang on
+        # HEAD.  stream=True means only headers are read, body is never pulled.
+        resp = session.get(probe_url, timeout=timeout, allow_redirects=True, stream=True)
         code = resp.status_code
+        resp.close()
         # Reachability != authorization.  ANY HTTP status proves the transport
         # reached the server — a registry ``/v2/`` ping returns 401 *by design*,
         # mirrors often return 403/404 on HEAD.  Only proxy-level codes are not

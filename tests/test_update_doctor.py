@@ -119,8 +119,11 @@ def test_default_prober_treats_401_as_reachable(monkeypatch):
     class _Resp:
         status_code = 401
 
+        def close(self):
+            pass
+
     class _Session:
-        def head(self, *a, **k):
+        def get(self, *a, **k):
             return _Resp()
 
     monkeypatch.setattr(ud, "_session_from_proxies", lambda proxies: _Session())
