@@ -188,6 +188,23 @@ def _provenance_path(config: dict[str, Any], tool: str) -> Path:
     return Path("artifacts/provenance") / f"{tool}.json"
 
 
+def _health_probe_sources(sources):
+    """Healthcheck-only: rewrite ``oci://`` sources to the registry https ``/v2/``
+    ping.  ``requests`` cannot fetch ``oci://`` (it raises ``invalid_schema``);
+    the real DB pull is delegated to the scanner binary's OCI client.  A 401 from
+    the rewritten probe means "registry reachable, auth handled by the tool" — far
+    clearer than "No connection adapters for oci://".  See ADR-0007 §D1."""
+    from dataclasses import replace
+
+    from .update_doctor import _probe_url_for
+
+    out = []
+    for src in sources:
+        probe = _probe_url_for(src.url)
+        out.append(replace(src, url=probe) if probe and probe != src.url else src)
+    return out
+
+
 def _health_summary(
     config: dict[str, Any],
     tool: str,
@@ -199,7 +216,7 @@ def _health_summary(
     session: requests.Session | None = None,
 ) -> tuple[int, dict[str, Any]]:
     source, _payload, attempts = attempt_sources(
-        build_sources(config, tool, layer),
+        _health_probe_sources(build_sources(config, tool, layer)),
         timeout=timeout,
         retry_count=retry_count,
         backoff_seconds=backoff_seconds,
