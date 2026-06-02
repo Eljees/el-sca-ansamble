@@ -10,6 +10,7 @@ from copy import deepcopy
 from resilient_updates.config import load_config
 from resilient_updates.update_doctor import (
     _env_proxy_transports,
+    _nvd_probe_sources,
     _probe_url_for,
     _proxy_endpoint,
     build_matrix,
@@ -130,3 +131,24 @@ def test_default_prober_treats_401_as_reachable(monkeypatch):
     result = ud.default_prober("oci://ghcr.io/x:1", {"https": "socks5h://127.0.0.1:10808"}, 2.0)
     assert result["status"] == "ok"
     assert result["code"] == 401
+
+
+# --- D2: cve-bin-tool probes NVD endpoints (mirrors are usually empty) -------
+
+
+def test_nvd_probe_sources_from_modes():
+    sources = _nvd_probe_sources({"cve_bin_tool": {"nvd_modes": ["api2", "json-nvd"]}})
+    names = {s.name for s in sources}
+    assert "nvd-api2" in names
+    assert any("nvd.nist.gov" in s.url for s in sources)
+
+
+def test_cve_bin_tool_route_found_via_nvd(monkeypatch):
+    for v in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(v, raising=False)
+    config = _cfg()
+    config["cve_bin_tool"] = {"nvd_modes": ["api2", "json-nvd"]}
+    matrix = build_matrix(config, prober=_prober(corp_ok=True), opener=_NO_LOCAL)
+    cve_rows = [r for r in matrix["rows"] if r["tool"] == "cve_bin_tool"]
+    assert cve_rows  # no longer empty -> no bogus "NO REACHABLE ROUTE"
+    assert matrix["recommended"]["cve_bin_tool"] == "corp"

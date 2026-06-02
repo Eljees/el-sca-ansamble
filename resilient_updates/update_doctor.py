@@ -16,12 +16,22 @@ from urllib.parse import urlparse
 
 from .fallback import classify_exception
 from .proxy_chain import ProxyChain, _proxies_for_chain, _session_from_proxies
-from .source_policy import build_sources
+from .source_policy import SourceCandidate, build_sources
 
 _TOOL_LAYERS: dict[str, list[str]] = {
     "trivy": ["trivy-db", "trivy-java-db", "trivy-checks", "trivy-vex"],
     "grype": ["grype-db"],
     "cve_bin_tool": ["cve-bin-tool-mirror"],
+}
+
+# cve-bin-tool updates from NVD (per cve_bin_tool.nvd_modes), NOT from an OCI
+# mirror — so build_sources(cve-bin-tool-mirror) is usually empty.  Map each
+# declared mode to the endpoint that proves NVD is reachable from here, so
+# update-doctor stops reporting a bogus "NO REACHABLE ROUTE".
+_NVD_ENDPOINTS: dict[str, tuple[str, str]] = {
+    "api2": ("nvd-api2", "https://services.nvd.nist.gov/rest/json/cves/2.0"),
+    "json-nvd": ("nvd-json-feeds", "https://nvd.nist.gov/feeds/json/cve/1.1/"),
+    "json-mirror": ("nvd-json-mirror", "https://nvd.nist.gov/feeds/json/cve/1.1/"),
 }
 
 # (url, proxies, timeout) -> {"status": str, "code": int | None}
@@ -165,6 +175,30 @@ def default_prober(url: str, proxies: dict[str, str], timeout: float) -> dict[st
         return {"status": classify_exception(exc).value, "code": None}
 
 
+def _nvd_probe_sources(config: dict[str, Any]) -> list[SourceCandidate]:
+    """Synthetic probe targets for cve-bin-tool's NVD modes (see _NVD_ENDPOINTS)."""
+    modes = (config.get("cve_bin_tool") or {}).get("nvd_modes") or []
+    out: list[SourceCandidate] = []
+    seen: set[str] = set()
+    for mode in modes:
+        endpoint = _NVD_ENDPOINTS.get(str(mode))
+        if endpoint and endpoint[1] not in seen:
+            seen.add(endpoint[1])
+            name, url = endpoint
+            out.append(
+                SourceCandidate(priority=10, name=name, url=url, tool="cve_bin_tool", layer="nvd")
+            )
+    return out
+
+
+def _sources_for(config: dict[str, Any], tool: str, layer: str) -> list[SourceCandidate]:
+    """Configured sources, augmented with cve-bin-tool's NVD endpoints."""
+    sources = list(build_sources(config, tool, layer))
+    if tool == "cve_bin_tool":
+        sources += _nvd_probe_sources(config)
+    return sources
+
+
 def build_matrix(
     config: dict[str, Any],
     *,
@@ -184,7 +218,7 @@ def build_matrix(
     rows: list[dict[str, Any]] = []
     for tool, layers in _TOOL_LAYERS.items():
         for layer in layers:
-            for src in build_sources(config, tool, layer):
+            for src in _sources_for(config, tool, layer):
                 cells = {name: probe(src.url, proxies, timeout) for name, proxies in chains.items()}
                 rows.append(
                     {"tool": tool, "layer": layer, "source": src.name, "url": src.url, "chains": cells}
