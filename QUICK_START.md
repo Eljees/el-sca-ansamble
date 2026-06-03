@@ -4,6 +4,50 @@
 
 ---
 
+## 🚀 From a fresh clone (any OS, pure Docker Compose)
+
+Nothing host-specific required — only Docker with Compose v2. After `git clone`
+(or `git pull`) the pipeline runs in two commands once `.env` is set up:
+
+```bash
+# 1. One-time setup: create your local config from the template
+cp .env.example .env
+#    then edit .env and set SCAN_TARGET_HOST to the absolute path of the
+#    archive or directory you want to scan, e.g.
+#       SCAN_TARGET_HOST=/data/myapp-1.0.0.tar.gz
+#    (set a proxy under "Proxy settings" only if your host needs one;
+#     by default the connection is direct)
+
+# 2. One-time: pull the CVE databases (Trivy / Grype / cve-bin-tool)
+docker compose --profile update up --abort-on-container-exit
+
+# 3. Run a scan (extract → SBOM → Grype → Trivy → cve-bin-tool → report)
+docker compose --profile scan up --abort-on-container-exit
+```
+
+Reports land in `artifacts/reports/` (per-tool JSON) and
+`artifacts/reports/final/` (aggregated `cve_analysis_report_generated_ru.md`
++ `index.html`). Re-run step 3 for each new target; re-run step 2 to refresh
+the databases.
+
+Useful variants:
+
+```bash
+docker compose --profile report run --rm report-collector   # re-aggregate only
+docker compose down -v                                       # stop + drop DB volumes
+```
+
+Notes for a clean machine:
+
+- Images either pull from public registries (`ghcr.io`, `aquasec`,
+  `python:3.12-slim`) or build locally from the `Dockerfile.*` in the repo —
+  the first `update`/`scan` run does this automatically.
+- No secrets are needed for the default `json-mirror` DB route. An NVD API key
+  (if you add one) goes in `.env.local`, never in `.env` or git.
+- On Windows, `SCAN_TARGET_HOST` may be a Windows path (e.g. `C:\data\app.tar.gz`).
+
+---
+
 ## ⚡ In One Command (Windows)
 
 ```powershell
