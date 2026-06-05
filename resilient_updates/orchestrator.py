@@ -418,6 +418,8 @@ class JobRegistry:
         sc_env["SYFT_TARGET"] = "/scan-target"
         sc_env["SYFT_FROM"] = "dir"
         sc_env["CVE_BIN_TOOL_TARGET"] = "/scan-target"
+        # Trivy defaults to scanning "alpine:latest"; point it at the artifact.
+        sc_env["TRIVY_TARGET"] = "/scan-target"
 
         # Light deployments ship without the (huge) cve-bin-tool DB; set
         # EL_SCA_SKIP_CVEBT=1 to drop that stage from the GUI scan.
@@ -441,6 +443,10 @@ class JobRegistry:
             run_cmd = [*compose, "--profile", "scan", "run", "--rm"]
             if service == "trivy-scanner":
                 run_cmd += ["-e", f"TRIVY_RENDERED_FLAGS={trivy_flags}"]
+            if service == "report-collector":
+                # Run as root so it can always write into the bind-mounted
+                # artifacts/ (scanners run as root and may own report dirs).
+                run_cmd += ["-u", "0"]
             run_cmd.append(service)
             rc = self._run_stream(job, run_cmd, sc_env)
             job.end_stage(key, rc in ok_codes)
