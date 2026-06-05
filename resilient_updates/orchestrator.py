@@ -361,6 +361,25 @@ class JobRegistry:
 
         threading.Thread(target=run, name=f"job-{job.id}", daemon=True).start()
 
+    def _render_trivy_flags(self) -> str:
+        """Render Trivy CLI flags on the host — the aquasec/trivy image has no
+        python to render them itself (see scripts/update_trivy.sh)."""
+        import sys
+
+        try:
+            out = subprocess.run(  # noqa: S603 - fixed args, no shell
+                [sys.executable, "-m", "resilient_updates.cli", "render-flags", "trivy"],
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if out.returncode == 0:
+                return out.stdout.strip()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return ""
+
     def _run_scan(self, job: Job, target_host: str) -> None:
         """Extract → re-point the target to artifacts/extracted/current → run
         each scanner stage sequentially → aggregate the report.
@@ -372,6 +391,14 @@ class JobRegistry:
         """
         compose = self.compose
         extracted_host = str((self.repo_root / "artifacts" / "extracted" / "current").resolve())
+
+        # Pre-create report/artefact dirs on the host so a root-running scanner
+        # can't leave a dir the (uid 1001) report-collector then can't write to.
+        for _sub in ("reports/grype", "reports/trivy", "reports/cve-bin-tool",
+                     "reports/final", "sbom", "extracted/current", "uploads"):
+            (self.repo_root / "artifacts" / _sub).mkdir(parents=True, exist_ok=True)
+        # Trivy's image has no python -> render its flags on the host (run-scan.sh).
+        trivy_flags = self._render_trivy_flags()
 
         # Stage 1 — extract.
         job.begin_stage("extract")
@@ -411,9 +438,11 @@ class JobRegistry:
                 job.feed_line("cve-bin-tool: пропущен (EL_SCA_SKIP_CVEBT=1)")
                 job.end_stage(key, True)
                 continue
-            rc = self._run_stream(
-                job, [*compose, "--profile", "scan", "run", "--rm", service], sc_env
-            )
+            run_cmd = [*compose, "--profile", "scan", "run", "--rm"]
+            if service == "trivy-scanner":
+                run_cmd += ["-e", f"TRIVY_RENDERED_FLAGS={trivy_flags}"]
+            run_cmd.append(service)
+            rc = self._run_stream(job, run_cmd, sc_env)
             job.end_stage(key, rc in ok_codes)
 
         # Stop the lingering grype-static dependency container (best effort).

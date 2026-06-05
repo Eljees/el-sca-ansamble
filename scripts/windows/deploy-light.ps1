@@ -20,10 +20,18 @@ Write-Host "==> [1/4] configuring .env (strict offline + skip cve-bin-tool)"
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 $envText = Get-Content .env -Raw
 if ($envText -notmatch "(?m)^\s*COMPOSE_FILE=") {
-  Add-Content .env "COMPOSE_FILE=docker-compose.yml:docker-compose.offline.yml"
+  # Windows uses ';' as the COMPOSE_FILE path separator (Linux uses ':').
+  Add-Content .env "COMPOSE_FILE=docker-compose.yml;docker-compose.offline.yml"
 }
 if ($envText -notmatch "(?m)^\s*EL_SCA_SKIP_CVEBT=") {
   Add-Content .env "EL_SCA_SKIP_CVEBT=1"
+}
+# Pin the project name so compose finds the bundled el-sca-ansamble-* images and
+# the restored el-sca-ansamble_* volumes regardless of the clone folder name.
+# Without this, a folder called e.g. "el-sca-test" makes compose look for
+# "el-sca-test-*" images, not find them, and try to BUILD (which fails offline).
+if ($envText -notmatch "(?m)^\s*COMPOSE_PROJECT_NAME=") {
+  Add-Content .env "COMPOSE_PROJECT_NAME=el-sca-ansamble"
 }
 
 Write-Host "==> [2/4] loading images"

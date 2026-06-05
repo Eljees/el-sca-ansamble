@@ -21,6 +21,11 @@ grep -qE '^[[:space:]]*COMPOSE_FILE=' .env || \
   echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.offline.yml' >> .env
 grep -qE '^[[:space:]]*EL_SCA_SKIP_CVEBT=' .env || \
   echo 'EL_SCA_SKIP_CVEBT=1' >> .env
+# Pin the project name so compose finds the bundled el-sca-ansamble-* images and
+# el-sca-ansamble_* volumes regardless of the clone folder name (otherwise a
+# folder like "el-sca-test" makes compose look for "el-sca-test-*" and rebuild).
+grep -qE '^[[:space:]]*COMPOSE_PROJECT_NAME=' .env || \
+  echo 'COMPOSE_PROJECT_NAME=el-sca-ansamble' >> .env
 
 echo "==> [2/4] loading images from $BUNDLE_DIR/el-sca-images-light.tar"
 docker load -i "$BUNDLE_DIR/el-sca-images-light.tar"
