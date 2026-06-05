@@ -19,8 +19,14 @@ echo "==> [1/4] configuring .env (strict offline + skip cve-bin-tool)"
 [ -f .env ] || cp .env.example .env
 grep -qE '^[[:space:]]*COMPOSE_FILE=' .env || \
   echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.offline.yml' >> .env
-grep -qE '^[[:space:]]*EL_SCA_SKIP_CVEBT=' .env || \
-  echo 'EL_SCA_SKIP_CVEBT=1' >> .env
+if ! grep -qE '^[[:space:]]*EL_SCA_SKIP_CVEBT=' .env; then
+  # Skip cve-bin-tool only if its DB (cve-bin-tool-cache) is NOT in the bundle.
+  if ls "$BUNDLE_DIR"/cve-bin-tool-cache.tar.gz "$BUNDLE_DIR"/cve-bin-tool-cache.tar.gz.part* >/dev/null 2>&1; then
+    echo 'EL_SCA_SKIP_CVEBT=0' >> .env
+  else
+    echo 'EL_SCA_SKIP_CVEBT=1' >> .env
+  fi
+fi
 # Pin the project name so compose finds the bundled el-sca-ansamble-* images and
 # el-sca-ansamble_* volumes regardless of the clone folder name (otherwise a
 # folder like "el-sca-test" makes compose look for "el-sca-test-*" and rebuild).
@@ -29,7 +35,7 @@ grep -qE '^[[:space:]]*COMPOSE_PROJECT_NAME=' .env || \
 
 # Reassemble any split bundle files (<name>.partNNN -> <name>); large files are
 # chunked under ~500 MB so GitLab LFS accepts them (HTTP 413 on big objects).
-for _base in el-sca-images-light.tar grype-db.tar.gz trivy-cache.tar.gz; do
+for _base in el-sca-images-light.tar grype-db.tar.gz trivy-cache.tar.gz cve-bin-tool-cache.tar.gz; do
   if [ ! -f "$BUNDLE_DIR/$_base" ] && ls "$BUNDLE_DIR/$_base".part* >/dev/null 2>&1; then
     echo "==> reassembling $_base from parts"
     cat "$BUNDLE_DIR/$_base".part* > "$BUNDLE_DIR/$_base"

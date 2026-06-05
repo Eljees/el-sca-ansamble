@@ -19,6 +19,7 @@ Design notes
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -27,9 +28,10 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Iterator
+from typing import Any
 
 # ── Stage pipelines ─────────────────────────────────────────────────────────
 # Each entry: (stage_key, human_label, [compose service names feeding it]).
@@ -230,7 +232,7 @@ class Job:
             "finished_at": self.finished_at,
         }
 
-    def subscribe(self) -> "Queue[dict[str, Any] | None]":
+    def subscribe(self) -> Queue[dict[str, Any] | None]:
         q: Queue = Queue()
         with self._lock:
             # Replay current state so a late subscriber is immediately caught up.
@@ -314,8 +316,8 @@ class JobRegistry:
         # Compose interpolates the whole file (incl. the ${SCAN_TARGET_HOST:?}
         # guard on the scanner services) before selecting the `update` profile,
         # so set a harmless value — the update services don't read it.
-        env.setdefault("SCAN_TARGET_HOST", "/tmp/el-sca-db-update-noscan")
-        env.setdefault("EXTRACT_INPUT_HOST", "/tmp/el-sca-db-update-noscan")
+        env.setdefault("SCAN_TARGET_HOST", "/tmp/el-sca-db-update-noscan")  # nosec B108
+        env.setdefault("EXTRACT_INPUT_HOST", "/tmp/el-sca-db-update-noscan")  # nosec B108
         cmd = build_update_command(self.compose)
         self._spawn(job, cmd, env)
         return job
@@ -325,7 +327,7 @@ class JobRegistry:
         return its exit code.  Never raises — a launch/read failure is reported
         in the log and surfaced as a non-zero code."""
         try:
-            proc = subprocess.Popen(  # noqa: S603 - fixed arg list, no shell
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(self.repo_root),
                 env=env,
@@ -350,10 +352,8 @@ class JobRegistry:
             return proc.returncode
         except Exception as exc:  # pragma: no cover - defensive
             job.feed_line(f"ERROR: stream read failed: {exc!r}")
-            try:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
             return 1
 
     def _spawn(self, job: Job, cmd: list[str], env: dict[str, str]) -> None:
@@ -381,7 +381,7 @@ class JobRegistry:
         import sys
 
         try:
-            out = subprocess.run(  # noqa: S603 - fixed args, no shell
+            out = subprocess.run(
                 [sys.executable, "-m", "resilient_updates.cli", "render-flags", "trivy"],
                 cwd=str(self.repo_root),
                 capture_output=True,

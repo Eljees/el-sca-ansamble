@@ -567,7 +567,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     parent of ``artifacts_dir``).  Scans and DB updates run as host
     subprocesses via :mod:`resilient_updates.orchestrator`.
     """
-    from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+    from fastapi import FastAPI, File, Form, HTTPException
     from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
     from .orchestrator import JobRegistry, sse_stream

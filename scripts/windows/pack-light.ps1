@@ -10,7 +10,7 @@
   A clone then brings everything; deploy with scripts/windows/deploy-light.ps1.
   Run on a machine WITH network + Docker.
 #>
-param([string]$Out = "bundle")
+param([string]$Out = "bundle", [switch]$WithCveBinTool)
 $ErrorActionPreference = "Stop"
 $env:SCAN_TARGET_HOST = "/tmp/x"   # satisfies the ${SCAN_TARGET_HOST:?} compose guard
 $env:COMPOSE_PROJECT_NAME = "el-sca-ansamble"   # stable image prefix for the bundle
@@ -32,7 +32,15 @@ Write-Host "==> [4/5] exporting Grype + Trivy DBs"
 docker compose --profile db-bundle run --rm db-exporter
 
 Write-Host "==> [5/5] collecting DBs into $Out"
-Copy-Item artifacts\db-image\grype-db.tar.gz, artifacts\db-image\trivy-cache.tar.gz $Out -Force
+$dbfiles = @("grype-db.tar.gz", "trivy-cache.tar.gz")
+if ($WithCveBinTool) {
+  # Ship the cve-bin-tool SCAN db (cve-bin-tool-cache holds cve.db).  The 45 GB
+  # internal-mirror-data (json-mirror source) is NOT shipped — the scanner only
+  # needs cve.db.  Build a slim NVD-only cve.db first (see docs) to keep it small.
+  $dbfiles += "cve-bin-tool-cache.tar.gz"
+  Write-Host "    + cve-bin-tool-cache (cve.db) — internal-mirror-data (45GB) NOT included"
+}
+Copy-Item ($dbfiles | ForEach-Object { "artifacts\db-image\$_" }) $Out -Force
 # grype-cache is regenerated on the target from grype-db; ship it too if you want
 # faster first scan: Copy-Item artifacts\db-image\grype-cache.tar.gz $Out -Force
 

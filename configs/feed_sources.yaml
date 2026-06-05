@@ -222,19 +222,15 @@ cve_bin_tool:
       - npm
       - Rust
   db_audit:
-    db_policy: "strict"
+    # NVD-only slim build (api2 with NVD API keys): the scanner only needs the
+    # NVD-derived cve.db, so GAD/REDHAT/CURL/PURL2CPE are no longer required and
+    # the 45 GB json-mirror is not built.  Restore the full list to go back to
+    # the json-mirror multi-source build.
+    db_policy: "degraded-ok"
     required_sources:
       - NVD
-      - GAD
-      - REDHAT
-      - CURL
-      - PURL2CPE
     min_entries:
       NVD: 1000
-      GAD: 100
-      REDHAT: 100
-      CURL: 1
-      PURL2CPE: 1000
     max_cache_age: "168h"
     fail_closed_if_required_missing: true
     activation_policy:

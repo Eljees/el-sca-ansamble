@@ -45,6 +45,10 @@ ignore = [
   "S101",   # asserts are fine in tests
   "B017",   # broad pytest.raises is fine in tests
   "PT011",
+  "UP036",  # version guards may target py3.10 sandbox even though target-version = py312
+]
+"resilient_updates/dashboard.py" = [
+  "RUF001", # HTML template intentionally uses Cyrillic uppercase (НЕ = NOT in Russian)
 ]
 "scripts/**.py" = [
   "T201",   # print() is the point of a script

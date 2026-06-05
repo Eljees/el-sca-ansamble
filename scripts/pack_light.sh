@@ -32,6 +32,12 @@ docker compose --profile db-bundle run --rm db-exporter
 
 echo "==> [5/5] collecting DBs into $OUT"
 cp artifacts/db-image/grype-db.tar.gz artifacts/db-image/trivy-cache.tar.gz "$OUT"/
+# WITH_CVEBT=1 also ships the cve-bin-tool SCAN db (cve-bin-tool-cache = cve.db).
+# The 45GB internal-mirror-data is never shipped — the scanner only needs cve.db.
+if [ "${WITH_CVEBT:-0}" != "0" ]; then
+  echo "    + cve-bin-tool-cache (cve.db) — internal-mirror-data (45GB) NOT included"
+  cp artifacts/db-image/cve-bin-tool-cache.tar.gz "$OUT"/
+fi
 
 echo "==> splitting files >480MB into .partNNN (GitLab LFS rejects big objects with HTTP 413)"
 for f in "$OUT"/*.tar "$OUT"/*.tar.gz; do
