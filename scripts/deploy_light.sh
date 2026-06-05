@@ -27,6 +27,15 @@ grep -qE '^[[:space:]]*EL_SCA_SKIP_CVEBT=' .env || \
 grep -qE '^[[:space:]]*COMPOSE_PROJECT_NAME=' .env || \
   echo 'COMPOSE_PROJECT_NAME=el-sca-ansamble' >> .env
 
+# Reassemble any split bundle files (<name>.partNNN -> <name>); large files are
+# chunked under ~500 MB so GitLab LFS accepts them (HTTP 413 on big objects).
+for _base in el-sca-images-light.tar grype-db.tar.gz trivy-cache.tar.gz; do
+  if [ ! -f "$BUNDLE_DIR/$_base" ] && ls "$BUNDLE_DIR/$_base".part* >/dev/null 2>&1; then
+    echo "==> reassembling $_base from parts"
+    cat "$BUNDLE_DIR/$_base".part* > "$BUNDLE_DIR/$_base"
+  fi
+done
+
 echo "==> [2/4] loading images from $BUNDLE_DIR/el-sca-images-light.tar"
 docker load -i "$BUNDLE_DIR/el-sca-images-light.tar"
 

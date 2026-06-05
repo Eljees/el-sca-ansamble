@@ -8,3 +8,6 @@
 # default on self-managed GitLab).
 bundle/*.tar filter=lfs diff=lfs merge=lfs -text
 bundle/*.tar.gz filter=lfs diff=lfs merge=lfs -text
+# Large files are split into <500 MB .partNNN chunks (some GitLab servers reject
+# big LFS objects with HTTP 413); deploy_light.* reassembles them.
+bundle/*.part* filter=lfs diff=lfs merge=lfs -text

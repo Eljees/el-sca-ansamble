@@ -33,6 +33,17 @@ docker compose --profile db-bundle run --rm db-exporter
 echo "==> [5/5] collecting DBs into $OUT"
 cp artifacts/db-image/grype-db.tar.gz artifacts/db-image/trivy-cache.tar.gz "$OUT"/
 
+echo "==> splitting files >480MB into .partNNN (GitLab LFS rejects big objects with HTTP 413)"
+for f in "$OUT"/*.tar "$OUT"/*.tar.gz; do
+  [ -f "$f" ] || continue
+  sz=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+  if [ "$sz" -gt 503316480 ]; then
+    split -b 480m -d -a 3 "$f" "$f.part"
+    rm -f "$f"
+    echo "    $(basename "$f") split"
+  fi
+done
+
 echo
-echo "done.  bundle ready in $OUT/  (images + Grype/Trivy DBs)"
+echo "done.  bundle ready in $OUT/ (large files split into <500MB parts; deploy reassembles)"
 echo "Next:  git lfs install; git add -A; git commit -m 'ship bundle'; git push <remote> master"

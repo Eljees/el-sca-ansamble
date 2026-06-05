@@ -36,7 +36,17 @@ Copy-Item artifacts\db-image\grype-db.tar.gz, artifacts\db-image\trivy-cache.tar
 # grype-cache is regenerated on the target from grype-db; ship it too if you want
 # faster first scan: Copy-Item artifacts\db-image\grype-cache.tar.gz $Out -Force
 
-$tar = Join-Path $Out "el-sca-images-light.tar"
+Write-Host "==> splitting files >480MB into .partNNN (GitLab LFS rejects big objects with HTTP 413)"
+$chunk = 480MB
+Get-ChildItem (Join-Path $Out "*.tar"), (Join-Path $Out "*.tar.gz") -ErrorAction SilentlyContinue |
+  Where-Object { $_.Length -gt $chunk } | ForEach-Object {
+    $f = $_.FullName; $fs = [IO.File]::OpenRead($f); $buf = New-Object byte[] $chunk; $i = 0
+    while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) {
+      $part = "{0}.part{1:D3}" -f $f, $i
+      $o = [IO.File]::OpenWrite($part); $o.Write($buf, 0, $n); $o.Close(); $i++
+    }
+    $fs.Close(); Remove-Item $f; Write-Host ("    {0} -> {1} parts" -f $_.Name, $i)
+  }
 Write-Host ""
-Write-Host ("done.  bundle ready in {0}\  ({1:N2} GB images + Grype/Trivy DBs)" -f $Out, ((Get-Item $tar).Length / 1GB))
+Write-Host "done.  bundle ready in $Out\ (large files split into <500MB parts; deploy reassembles)."
 Write-Host "Next:  git lfs install; git add -A; git commit -m 'ship bundle'; git push gitlab master"

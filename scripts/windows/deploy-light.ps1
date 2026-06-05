@@ -34,6 +34,19 @@ if ($envText -notmatch "(?m)^\s*COMPOSE_PROJECT_NAME=") {
   Add-Content .env "COMPOSE_PROJECT_NAME=el-sca-ansamble"
 }
 
+# Reassemble any split bundle files (<name>.partNNN -> <name>); large files are
+# chunked under ~500 MB so GitLab LFS accepts them (HTTP 413 on big objects).
+foreach ($base in @("el-sca-images-light.tar", "grype-db.tar.gz", "trivy-cache.tar.gz")) {
+  $full = Join-Path $BundleDir $base
+  $parts = Get-ChildItem "$full.part*" -ErrorAction SilentlyContinue | Sort-Object Name
+  if ((-not (Test-Path $full)) -and $parts) {
+    Write-Host "==> reassembling $base from $($parts.Count) parts"
+    $out = [IO.File]::OpenWrite($full)
+    foreach ($p in $parts) { $b = [IO.File]::ReadAllBytes($p.FullName); $out.Write($b, 0, $b.Length) }
+    $out.Close()
+  }
+}
+
 Write-Host "==> [2/4] loading images"
 docker load -i (Join-Path $BundleDir "el-sca-images-light.tar")
 

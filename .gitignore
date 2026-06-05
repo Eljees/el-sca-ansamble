@@ -72,3 +72,9 @@ incoming/images.tar
 # Per-run scan log + DB status snapshots (runtime output, not source).
 artifacts/run-scan.log
 artifacts/db_status/
+
+# *.tar / *.tar.gz are ignored above, but the LFS-tracked deploy bundle MUST be
+# committed so `git clone` brings the runnable images + DBs. Un-ignore it.
+!bundle/
+!bundle/*.tar
+!bundle/*.tar.gz
