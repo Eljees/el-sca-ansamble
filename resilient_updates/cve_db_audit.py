@@ -11,6 +11,7 @@ try:
     from datetime import UTC  # py3.11+
 except ImportError:
     from datetime import timezone as _tz
+
     UTC = _tz.utc  # noqa: UP017
 from datetime import datetime
 from pathlib import Path
@@ -65,14 +66,19 @@ def _dir_info(path: Path) -> dict[str, Any]:
     }
 
 
+# Table names passed to the helpers below are always hardcoded literals supplied
+# by this module (cve_range / cve_severity / purl2cpe) — never user input — so the
+# f-string interpolation cannot be a SQL-injection vector (bandit B608 suppressed).
 def _query_table_count(cursor: sqlite3.Cursor, table_name: str) -> int:
-    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+    cursor.execute(f"SELECT COUNT(*) FROM {table_name}")  # nosec B608
     row = cursor.fetchone()
     return int(row[0]) if row else 0
 
 
 def _query_group_counts(cursor: sqlite3.Cursor, table_name: str) -> dict[str, int]:
-    cursor.execute(f"SELECT data_source, COUNT(*) FROM {table_name} GROUP BY data_source")
+    cursor.execute(
+        f"SELECT data_source, COUNT(*) FROM {table_name} GROUP BY data_source"  # nosec B608
+    )
     return {str(name): int(count) for name, count in cursor.fetchall()}
 
 

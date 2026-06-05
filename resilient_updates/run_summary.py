@@ -34,6 +34,7 @@ try:
     from datetime import UTC  # py3.11+
 except ImportError:
     from datetime import timezone as _tz
+
     UTC = _tz.utc  # noqa: UP017
 from datetime import datetime
 from pathlib import Path
@@ -223,6 +224,42 @@ def _trivy_provenance_state(prov_trivy: Any) -> dict[str, str]:
     }
 
 
+def _db_status_probe(base: Path, tool: str) -> dict[str, Any] | None:
+    """Read a scan-only DB freshness probe (``artifacts/db_status/<tool>.json``).
+
+    Written by ``run-scan.sh`` from ``db-admin db-status`` on every run, even
+    when no updater ran.  Lets the report show the *cached* DB state (present /
+    age) instead of a bare ``unknown`` when provenance is absent.
+    """
+    probe = _read_json(base / "db_status" / f"{tool}.json")
+    return probe if isinstance(probe, dict) else None
+
+
+def _apply_db_probe(
+    state: dict[str, str],
+    *,
+    state_key: str,
+    version_key: str,
+    updated_key: str,
+    probe: dict[str, Any] | None,
+) -> dict[str, str]:
+    """Fill DB-state fields from a db-status probe, but only when real
+    provenance produced nothing (``unknown``/blank). Provenance always wins."""
+    if not isinstance(probe, dict):
+        return state
+    if str(state.get(state_key) or "unknown") not in ("", "unknown"):
+        return state
+    out = dict(state)
+    exists = bool(probe.get("exists"))
+    age = probe.get("age_hours")
+    out[state_key] = "cached-present" if exists else "missing"
+    if exists and not out.get(version_key):
+        out[version_key] = f"cached (age {age}h)" if age is not None else "cached"
+    if not out.get(updated_key):
+        out[updated_key] = str(probe.get("timestamp_utc") or "")
+    return out
+
+
 def _db_snapshot_id(prov_grype: Any, prov_cve: Any) -> str:
     """Stable per-DB-state identifier.
 
@@ -249,22 +286,15 @@ def _db_snapshot_id(prov_grype: Any, prov_cve: Any) -> str:
 def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
     """Return a list of scanner names whose output is suspicious.
 
-    Heuristics — same signal humans look at:
-    - cve-bin-tool report exists but ``timeout.flag`` is present
-    - any of {grype, trivy, cve-bin-tool} returned an empty top-level
-      container (matches: [] / Results: [] / [])
-    - syft.json missing artifacts
+    Findings are not execution errors. A scanner that ran successfully and
+    found zero vulnerabilities must not be marked as failed.
+
+    The only hard failure signal we currently persist explicitly is the
+    cve-bin-tool timeout flag written by the wrapper. Missing-report cases are
+    handled upstream by report collection placeholders and warnings.
     """
     failed: list[str] = []
     if (root / "reports" / "cve-bin-tool" / "timeout.flag").exists():
-        failed.append("cve-bin-tool")
-    if isinstance(grype, dict) and not (grype.get("matches") or []):
-        failed.append("grype")
-    if isinstance(trivy, dict):
-        results = trivy.get("Results") or []
-        if all(not (r.get("Vulnerabilities") or []) for r in results):
-            failed.append("trivy")
-    if isinstance(cve, list) and not cve and "cve-bin-tool" not in failed:
         failed.append("cve-bin-tool")
     # De-duplicate, preserve order.
     seen: set[str] = set()
@@ -323,7 +353,38 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
     grype_state = _grype_provenance_state(prov_grype)
     cve_state = _cve_provenance_state(prov_cve)
     trivy_state = _trivy_provenance_state(prov_trivy)
+    # Scan-only fallback: when no updater ran (provenance absent) surface the
+    # cached DB freshness probed by db-admin instead of a bare "unknown".
+    grype_state = _apply_db_probe(
+        grype_state,
+        state_key="update_grype_db",
+        version_key="grype_db_version",
+        updated_key="grype_updated_at",
+        probe=_db_status_probe(base, "grype"),
+    )
+    cve_state = _apply_db_probe(
+        cve_state,
+        state_key="update_cve_db",
+        version_key="cve_db_version",
+        updated_key="cve_updated_at",
+        probe=_db_status_probe(base, "cve-bin-tool"),
+    )
+    trivy_state = _apply_db_probe(
+        trivy_state,
+        state_key="update_trivy_db",
+        version_key="trivy_db_version",
+        updated_key="trivy_updated_at",
+        probe=_db_status_probe(base, "trivy"),
+    )
     snapshot_id = _db_snapshot_id(prov_grype, prov_cve)
+    if not snapshot_id:
+        probe_parts = [
+            str((_db_status_probe(base, t) or {}).get("timestamp_utc") or "")
+            for t in ("grype", "trivy", "cve-bin-tool")
+        ]
+        probe_parts = [p for p in probe_parts if p]
+        if probe_parts:
+            snapshot_id = _short_hash(*probe_parts)
     failures = _tool_failures(base, grype, trivy, cve)
     drift = _db_drift(base, grype_state, cve_state, trivy_state)
 

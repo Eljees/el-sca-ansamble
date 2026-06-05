@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -66,6 +68,26 @@ def test_extract_artifacts_marks_empty_file_input_as_failure(tmp_path: Path):
     assert "no supported archive entries" in manifest["failures"][0]["error"]
 
 
+def test_extract_tar_allows_root_dot_directory_entry(tmp_path: Path):
+    archive = tmp_path / "sample.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        root = tarfile.TarInfo(".")
+        root.type = tarfile.DIRTYPE
+        tar.addfile(root)
+
+        payload = b"hello"
+        member = tarfile.TarInfo("./bin/tool")
+        member.size = len(payload)
+        tar.addfile(member, io.BytesIO(payload))
+
+    output = tmp_path / "out"
+    manifest = extract_artifacts(archive, output)
+
+    assert manifest["status"] == "pass"
+    assert manifest["extracted_count"] == 1
+    assert list(output.rglob("tool"))
+
+
 # ---------------------------------------------------------------------------
 # _strip_archive_suffix — §12 regression guard
 # ---------------------------------------------------------------------------
@@ -127,3 +149,31 @@ def test_manifest_contains_manifest_path_key(tmp_path: Path):
 
 def test_pre_filter_counts_skipped_by_extension(tmp_path: Path):
     archive = tmp_path  # noqa: F841 — test body incomplete, placeholder
+
+
+from resilient_updates.extractor import _ensure_safe_member  # noqa: E402
+
+
+def test_ensure_safe_member_strips_trailing_dot_component(tmp_path: Path):
+    """``app./lib`` must normalize to the same path as ``app/lib`` (no ``app.`` dir).
+
+    Regression for the duplicate ``app/`` + ``app.`` trees produced when a
+    Windows app-image archive is unpacked in a Linux container.
+    """
+    dotted = _ensure_safe_member(tmp_path, "app./lib/x.txt")
+    plain = _ensure_safe_member(tmp_path, "app/lib/x.txt")
+    assert dotted == plain
+    assert "app." not in dotted.parts
+    assert "app" in dotted.parts
+
+
+def test_ensure_safe_member_trailing_space_and_dots(tmp_path: Path):
+    assert _ensure_safe_member(tmp_path, "dir .  /f").parts[-2] == "dir"
+    # A component that is all dots/spaces collapses to a placeholder, not empty.
+    assert _ensure_safe_member(tmp_path, ".../f").parts[-2] == "_"
+
+
+def test_ensure_safe_member_still_blocks_traversal(tmp_path: Path):
+    for bad in ("../evil", "a/../../evil", "/abs/path"):
+        with pytest.raises(ValueError):
+            _ensure_safe_member(tmp_path, bad)

@@ -18,6 +18,7 @@ from resilient_updates.update_doctor import (
     discover_local_proxies,
     enumerate_chains,
     format_matrix,
+    recommended_proxy,
 )
 
 # Never touch real loopback sockets in tests.
@@ -152,3 +153,40 @@ def test_cve_bin_tool_route_found_via_nvd(monkeypatch):
     cve_rows = [r for r in matrix["rows"] if r["tool"] == "cve_bin_tool"]
     assert cve_rows  # no longer empty -> no bogus "NO REACHABLE ROUTE"
     assert matrix["recommended"]["cve_bin_tool"] == "corp"
+
+
+# --- D3/P2: recommended_proxy (auto-apply a working route) -------------------
+
+
+def _clear_env_proxy(monkeypatch):
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_recommended_proxy_picks_working_transport(monkeypatch):
+    _clear_env_proxy(monkeypatch)
+    url = recommended_proxy(_cfg(), prober=_prober(corp_ok=True), opener=_NO_LOCAL)
+    assert url == "http://corp-proxy:8080"
+
+
+def test_recommended_proxy_none_when_only_direct(monkeypatch):
+    _clear_env_proxy(monkeypatch)
+
+    def prober(url, proxies, timeout):  # only the proxy-less 'direct' route works
+        reachable = not (proxies.get("http") or proxies.get("https"))
+        return {"status": "ok" if reachable else "timeout", "code": 200 if reachable else None}
+
+    assert recommended_proxy(_cfg(), prober=prober, opener=_NO_LOCAL) is None
+
+
+def test_recommended_proxy_for_container_translates(monkeypatch):
+    _clear_env_proxy(monkeypatch)
+
+    def prober(url, proxies, timeout):  # only the 127.0.0.1 (via-vpn) route works
+        blob = proxies.get("http", "") + proxies.get("https", "")
+        return {"status": "ok" if "127.0.0.1" in blob else "timeout", "code": 200}
+
+    url = recommended_proxy(_cfg(), prober=prober, opener=_NO_LOCAL, for_container=True)
+    assert url is not None
+    assert "host.docker.internal" in url
+    assert "127.0.0.1" not in url

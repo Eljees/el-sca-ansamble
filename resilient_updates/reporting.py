@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ._io import (
+    normalize_severity as _normalize_severity,
     read_json as _read_json,
     sha256_dir as _sha256_dir,
     sha256_file as _sha256_file,
@@ -31,10 +32,9 @@ def target_digest(path: str | Path) -> str | None:
     return _sha256_dir(resolved)
 
 
-def _normalize_severity(value: Any) -> str:
-    if not value:
-        return "UNKNOWN"
-    return str(value).upper()
+# _normalize_severity is imported from ._io (canonical shared implementation).
+# The alias is preserved here so existing callers (including test_reporting_helpers.py)
+# that import ``_normalize_severity`` from this module continue to work unchanged.
 
 
 def _syft_count(data: Any) -> int:
@@ -128,7 +128,12 @@ def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
     return findings
 
 
-def _collect_json(root: Path, names: list[str]) -> Any:
+def _find_json_by_name(root: Path, names: list[str]) -> Any:
+    """Search *root* recursively for the first file matching any of *names*.
+
+    Unlike ``_io.collect_json`` (which reads a list of explicit paths), this
+    helper finds files by filename pattern via ``rglob`` — hence the distinct name.
+    """
     for name in names:
         found = sorted(root.rglob(name))
         if found:
@@ -144,7 +149,7 @@ def _collect_json_from_paths(
         if data is not None:
             return data
     if fallback_names:
-        return _collect_json(root, fallback_names)
+        return _find_json_by_name(root, fallback_names)
     return None
 
 
@@ -304,11 +309,11 @@ def build_report(
         ],
         ["cve-bin-tool_report.json", "cve_raw.json"],
     )
-    status = _collect_json(root, ["status.json"]) or {}
-    summary = _collect_json(root, ["summary.json"]) or {}
-    run_manifest = _collect_json(root, ["run_manifest.json"]) or {}
-    db_snapshot = _collect_json(root, ["db_snapshot.json"]) or {}
-    extraction_manifest = _collect_json(root, ["extraction_manifest.json"]) or {}
+    status = _find_json_by_name(root, ["status.json"]) or {}
+    summary = _find_json_by_name(root, ["summary.json"]) or {}
+    run_manifest = _find_json_by_name(root, ["run_manifest.json"]) or {}
+    db_snapshot = _find_json_by_name(root, ["db_snapshot.json"]) or {}
+    extraction_manifest = _find_json_by_name(root, ["extraction_manifest.json"]) or {}
 
     # Phase 5.8 — when the sidecar JSONs aren't on disk (the historical
     # default — no stage writes them) derive them in-memory from the

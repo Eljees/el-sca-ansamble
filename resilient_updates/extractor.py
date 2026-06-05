@@ -13,6 +13,7 @@ try:
     from datetime import UTC  # py3.11+
 except ImportError:
     from datetime import timezone as _tz
+
     UTC = _tz.utc  # noqa: UP017
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -103,6 +104,21 @@ def _safe_name(value: str) -> str:
     return cleaned.strip("._") or "artifact"
 
 
+def _sanitize_component(part: str) -> str:
+    """Normalize a single archive path component for cross-platform safety.
+
+    Windows silently strips trailing dots and spaces from path components, so an
+    archive member like ``app./lib`` collapses to ``app/lib`` there but creates a
+    literal ``app.`` directory on Linux — producing duplicate ``app/`` and
+    ``app.`` trees when the same archive is unpacked in a Linux container.  We
+    normalize eagerly so extraction is deterministic regardless of host OS.
+    Called only after the ``..``/absolute-path checks in ``_ensure_safe_member``,
+    so it can never reintroduce a traversal component.
+    """
+    cleaned = part.rstrip(" .")
+    return cleaned or "_"
+
+
 def _archive_kind(path: Path) -> str | None:
     name = path.name.lower()
     for suffix in ARCHIVE_SUFFIXES:
@@ -158,7 +174,10 @@ def _ensure_safe_member(target_dir: Path, member_name: str, _root: Path | None =
         raise ValueError(f"unsafe archive member path: {member_name}")
     if not posix.parts:
         raise ValueError(f"archive member has empty name: {member_name!r}")
-    target = Path(os.path.normpath(target_dir / Path(*posix.parts)))
+    # Normalize each component (strip trailing dots/spaces) so trailing-dot
+    # directories like ``app.`` do not diverge from ``app`` on Linux hosts.
+    safe_parts = tuple(_sanitize_component(part) for part in posix.parts)
+    target = Path(os.path.normpath(target_dir / Path(*safe_parts)))
     root = _root if _root is not None else Path(os.path.normpath(target_dir))
     if root != target and root not in target.parents:
         raise ValueError(f"archive member escapes target dir: {member_name}")
@@ -214,6 +233,13 @@ def _extract_tar(
     stats = stats or ExtractionStats()
     with tarfile.open(path) as archive:
         for member in archive.getmembers():
+            # Many tar producers include a synthetic root directory entry "."
+            # before the real members. Treat it as a harmless no-op instead of
+            # rejecting the whole archive as "empty name".
+            raw_name = member.name.replace("\\", "/").strip("/")
+            if raw_name in {"", "."} and member.isdir():
+                target_dir.mkdir(parents=True, exist_ok=True)
+                continue
             target = _ensure_safe_member(target_dir, member.name, _root)
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
@@ -240,9 +266,7 @@ def _extract_gzip(path: Path, target_dir: Path) -> None:
 
 def _run_checked(command: list[str], cwd: Path | None = None) -> None:
     try:
-        subprocess.run(
-            command, cwd=cwd, check=True, capture_output=True, text=True
-        )
+        subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise RuntimeError(f"required extractor tool is unavailable: {command[0]}") from exc
     except subprocess.CalledProcessError as exc:
@@ -361,6 +385,19 @@ def extract_artifacts(
         skip_extensions=skip_ext_tuple,
     )
     stats = ExtractionStats()
+    # Purge any previous run's extraction so scanning a different target cannot
+    # inherit stale files from `current/` (the scanners walk the whole output
+    # tree → cross-target contamination of counts otherwise). The extractor runs
+    # as root in-container, so it can remove root-owned files the host cannot.
+    if destination_root.exists():
+        for child in destination_root.iterdir():
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                try:
+                    child.unlink()
+                except OSError:
+                    pass
     destination_root.mkdir(parents=True, exist_ok=True)
 
     manifest: dict[str, Any] = {

@@ -6,6 +6,19 @@
 `Wrapper-first` означает, что логика отказоустойчивости и orchestration вынесена во внешние скрипты и Python-модули, а не реализована форком upstream-инструментов.  
 `Provenance` означает машинно-читаемую фиксацию происхождения результата: какие источники обновления были опрошены, какой источник выбран, какие ошибки были до fallback.
 
+## Что нового (2026-06-05)
+
+- **GUI с drag-and-drop.** Перетащите артефакт в веб-интерфейс — анализ
+  стартует автоматически, стадии конвейера и лог идут в реальном времени,
+  карточки показывают версии и время обновления баз, есть кнопка разового
+  обновления баз. Запуск: `python -m resilient_updates.cli dashboard
+  --repo-root . --port 8080` (см. секцию 5.1).
+- **Выгрузка проекта с базами на GitLab/Docker.** Текущие базы пакуются в
+  data-образ и едут в Container Registry; на целевой машине разворачиваются
+  одной командой. Скрипты `scripts/export_db_image.sh` /
+  `import_db_image.sh` (+ Make-цели `db-export-image` / `db-import-image`) и
+  руководство `docs/SHIP_AND_DEPLOY.md`.
+
 ## Что нового (2026-05-17)
 
 - **Batch-runner для нескольких артефактов.** Готовый запуск пачки тикетов одной командой — см. `scripts/windows/batch-scan.ps1` / `scripts/batch-scan.sh` и шаблоны в `batches/`. Подробности — `docs/operations.md` секция «Batch».
@@ -264,7 +277,7 @@ docker compose build
 Пример целевого каталога:
 
 ```text
-D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\_to_verify_logic_CYBERSEC-11531\test\prometheus-3.11.0.linux-amd64.tar.gz_extracted\prometheus-3.11.0.linux-amd64\prometheus-3.11.0.linux-amd64
+C:\scans\CYBERSEC-11531\prometheus-3.11.0.linux-amd64.tar.gz_extracted\prometheus-3.11.0.linux-amd64\prometheus-3.11.0.linux-amd64
 ```
 
 ### 4.1. Полный цикл на Windows PowerShell
@@ -272,7 +285,7 @@ D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\_to_verify_logic_CYBERSEC-11531\t
 #### Шаг 1. Задать target
 
 ```powershell
-$env:SCAN_TARGET_HOST = "D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\_to_verify_logic_CYBERSEC-11531\test\prometheus-3.11.0.linux-amd64.tar.gz_extracted\prometheus-3.11.0.linux-amd64\prometheus-3.11.0.linux-amd64"
+$env:SCAN_TARGET_HOST = "C:\scans\CYBERSEC-11531\prometheus-3.11.0.linux-amd64.tar.gz_extracted\prometheus-3.11.0.linux-amd64\prometheus-3.11.0.linux-amd64"
 $env:SCAN_TARGET_CONTAINER = "/scan-target"
 $env:SCAN_TARGET_DISPLAY = $env:SCAN_TARGET_HOST
 $env:SYFT_TARGET = "/scan-target"
@@ -314,7 +327,7 @@ python -m resilient_updates.cli collect-report `
   --reports-dir artifacts `
   --target $env:SCAN_TARGET_HOST `
   --display-target $env:SCAN_TARGET_DISPLAY `
-  --output "D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\_to_verify_logic_CYBERSEC-11531\test\cve_analysis_report_2026-05-14_ru.md"
+  --output "C:\scans\CYBERSEC-11531\cve_analysis_report_2026-05-14_ru.md"
 ```
 
 #### Шаг 6. Где лежат результаты
@@ -393,11 +406,11 @@ Write-Host "SBOM:        artifacts\sbom\syft.json"
 .\scripts\windows\run-scan.ps1 -Target "D:\path\to\artifact-folder" -Tool all -ReportOutput "artifacts\reports\final\cve_analysis_report_windows_ru.md"
 ```
 
-Для пакетной распаковки каталога с кейсами, например `D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\__projects`, используйте:
+Для пакетной распаковки каталога с кейсами, например `C:\scans\projects`, используйте:
 
 ```powershell
 .\scripts\windows\extract-projects.ps1 `
-  -Root "D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\__projects" `
+  -Root "C:\scans\projects" `
   -OutputRoot "artifacts\extracted\projects" `
   -MaxDepth 4
 ```
@@ -520,9 +533,45 @@ python3 -m resilient_updates.cli collect-report --reports-dir artifacts --target
 
 ```powershell
 .\scripts\windows\run-scan.ps1 `
-  -Target "D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\_to_verify_logic_CYBERSEC-11531\test\prometheus-3.11.0.linux-amd64.tar.gz_extracted\prometheus-3.11.0.linux-amd64\prometheus-3.11.0.linux-amd64" `
-  -ReportOutput "D:\!ya_drive_sync\YandexDisk\rostel\to_analyze\_to_verify_logic_CYBERSEC-11531\test\cve_analysis_report_2026-05-14_ru.generated.md"
+  -Target "C:\scans\CYBERSEC-11531\prometheus-3.11.0.linux-amd64.tar.gz_extracted\prometheus-3.11.0.linux-amd64\prometheus-3.11.0.linux-amd64" `
+  -ReportOutput "C:\scans\CYBERSEC-11531\cve_analysis_report_2026-05-14_ru.generated.md"
 ```
+
+## 5.1. Графический интерфейс (GUI) — drag-and-drop
+
+Активный веб-интерфейс: перетащите артефакт в окно — анализ начнётся
+автоматически, стадии конвейера (extract → SBOM → Grype → Trivy →
+cve-bin-tool → report) подсвечиваются в реальном времени, ниже идёт живой лог.
+Карточки «Базы инструментов» показывают версию каждого сканера и время
+последнего обновления его БД. Обновление баз по умолчанию **выключено** —
+скан использует уже загруженный снимок; отдельная кнопка «Обновить базы
+(разово)» запускает обновление только по требованию.
+
+**Зависимости.** GUI запускается на хосте (ему нужен доступ к `docker
+compose`). Ставьте веб-зависимости тем же интерпретатором, которым запускаете
+GUI — используйте `python -m pip`, а не голый `pip` (иначе пакеты уедут в
+другой Python и появится ошибка `dashboard requires uvicorn`):
+
+```powershell
+python -m pip install fastapi "uvicorn[standard]" python-multipart
+```
+
+**Запуск:**
+
+```powershell
+python -m resilient_updates.cli dashboard --repo-root . --port 8080
+# затем откройте http://127.0.0.1:8080
+```
+
+`--repo-root .` указывает, из какой папки вызывать `docker compose` для сканов
+и обновления баз (по умолчанию — родитель `--artifacts-dir`). Перетащите
+артефакт в зону загрузки — он сохранится в `artifacts/uploads/`, и поднимется
+`docker compose --profile scan`. Отчёты появятся в `artifacts/reports/` (как и
+при запуске из CLI, см. ниже).
+
+> Контейнерный compose-сервис `dashboard` остаётся read-only (только просмотр
+> прошлых прогонов). Активный GUI с загрузкой артефактов и обновлением баз
+> работает именно при запуске на хосте через `cli dashboard`.
 
 ## 6. Что именно даёт итоговый отчёт
 

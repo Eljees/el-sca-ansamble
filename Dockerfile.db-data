@@ -1,0 +1,20 @@
+# NOTE: deliberately NO `# syntax=docker/dockerfile:...` directive here — that
+# would force BuildKit to pull the frontend image from docker.io, which fails
+# in proxy-restricted contours.  A plain COPY needs no external frontend.
+# ---------------------------------------------------------------------------
+# Data-only image carrying the CURRENT vulnerability DB snapshot.
+#
+# Build context is ./artifacts/db-image (produced by `db-exporter`), NOT the
+# repo root — keeps the image tiny and the build fast.  Build via:
+#
+#   scripts/export_db_image.sh            # exports volumes + builds this image
+#   docker build -f Dockerfile.db-data -t <reg>/db-data:TAG artifacts/db-image
+#
+# On the target host, import_db_image.sh pulls this image and unpacks
+# /db-bundle/*.tar.gz back into the scanner volumes.  See docs/SHIP_AND_DEPLOY.md.
+# ---------------------------------------------------------------------------
+FROM alpine:3.20
+LABEL org.opencontainers.image.title="el-sca-ansamble DB bundle" \
+      org.opencontainers.image.description="Trivy + Grype + cve-bin-tool vulnerability DB snapshot"
+COPY *.tar.gz /db-bundle/
+CMD ["/bin/sh", "-c", "ls -lh /db-bundle"]

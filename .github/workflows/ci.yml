@@ -191,15 +191,14 @@ jobs:
       - name: Install runtime + test deps
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.lock ]; then
-            pip install -r requirements.lock
-          else
-            pip install -r requirements.txt
-          fi
+          # requirements.txt is the canonical lockfile (produced by `make lock`).
+          # Keep this consistent with the smoke job; do not branch on the stale
+          # requirements.lock placeholder.
+          pip install -r requirements.txt
           pip install "pytest>=8" "pytest-cov>=5"
       - name: pytest with coverage gate
         run: |
-          pytest -q --maxfail=1 --disable-warnings \
+          pytest -q --disable-warnings \
             --cov=resilient_updates \
             --cov-report=term-missing \
             --cov-report=xml \

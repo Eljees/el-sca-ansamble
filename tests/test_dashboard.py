@@ -12,7 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from resilient_updates.dashboard import list_runs, render_index, render_run, run_detail
+from resilient_updates.dashboard import (
+    list_runs,
+    render_index,
+    render_run,
+    run_detail,
+    tool_status,
+)
 
 
 def _populate(artifacts: Path) -> None:
@@ -114,8 +120,71 @@ def test_html_index_and_run_page(tmp_path: Path):
     index = client.get("/")
     assert index.status_code == 200
     assert "text/html" in index.headers["content-type"]
+    # The active GUI now lives at "/"; the legacy run browser moved to "/runs".
     assert "Runs" in index.text
+    assert client.get("/runs").status_code == 200
     run = client.get("/runs/current")
     assert run.status_code == 200
     assert "trivy" in run.text
     assert client.get("/runs/bogus").status_code == 404
+
+
+# --- active GUI: tool status + endpoints (ADR-0008) -------------------------
+
+
+def _populate_provenance(artifacts: Path) -> None:
+    pdir = artifacts / "provenance"
+    pdir.mkdir(parents=True)
+    (pdir / "grype.json").write_text(
+        json.dumps({"activation_status": "active", "built": "2026-06-04T07:57:06Z",
+                    "checksum": "sha256:deadbeef"}),
+        encoding="utf-8",
+    )
+    (pdir / "trivy.json").write_text(
+        json.dumps({"activation_status": "healthcheck-only"}), encoding="utf-8"
+    )
+    (pdir / "cve-bin-tool-db.json").write_text(
+        json.dumps({"activation_status": "fresh",
+                    "selected_audit": {"counts": {"cve_range_total": 1480394},
+                                       "files": {"cve.db": {"mtime_utc": "2026-06-02T23:50:01+00:00"}}}}),
+        encoding="utf-8",
+    )
+
+
+def test_tool_status_reports_versions_and_freshness(tmp_path: Path):
+    _populate_provenance(tmp_path)
+    data = tool_status(tmp_path, repo_root=tmp_path.parent)
+    assert data["db_update_enabled_by_default"] is False
+    by_name = {t["name"]: t for t in data["tools"]}
+    assert {"Syft", "Grype", "Trivy", "cve-bin-tool"} <= set(by_name)
+    # Engine versions fall back to compose defaults when no .env present.
+    assert by_name["Grype"]["version"].startswith("v0.112")
+    assert by_name["Trivy"]["version"] == "0.64.1"
+    # DB freshness picked up from provenance.
+    assert by_name["Grype"]["db_status"] == "active"
+    assert by_name["Grype"]["db_updated"] == "2026-06-04T07:57:06Z"
+    assert by_name["cve-bin-tool"]["db_status"] == "fresh"
+    assert by_name["cve-bin-tool"]["db_updated"] == "2026-06-02T23:50:01+00:00"
+
+
+def test_env_version_override(tmp_path: Path):
+    _populate_provenance(tmp_path)
+    (tmp_path.parent / ".env").write_text("GRYPE_VERSION=v9.9.9\n", encoding="utf-8")
+    data = tool_status(tmp_path, repo_root=tmp_path.parent)
+    grype = next(t for t in data["tools"] if t["name"] == "Grype")
+    assert grype["version"] == "v9.9.9"
+
+
+def test_api_tools_endpoint(tmp_path: Path):
+    _populate_provenance(tmp_path)
+    resp = _client(tmp_path).get("/api/tools")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["db_update_enabled_by_default"] is False
+    assert any(t["name"] == "cve-bin-tool" for t in body["tools"])
+
+
+def test_job_unknown_is_404(tmp_path: Path):
+    client = _client(tmp_path)
+    assert client.get("/api/jobs/nope").status_code == 404
+    assert client.get("/api/jobs/nope/stream").status_code == 404

@@ -6,6 +6,39 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — 2026-06-01 automated fixup pass (docs/audit/110–120)
+
+- **`resilient_updates/vex.py`** — VEX document acquisition module (ADR-0003).
+  Fetches VEX docs through the same resilient fallback pipeline as DB layers,
+  publishes them atomically into `<trivy cache_dir>/vex/`, and records
+  provenance.  `cli update vex` delegates to it; `cli render-flags trivy`
+  emits `--vex` flags when the cache is populated.  No-op when
+  `trivy.vex_repositories` is empty.
+- **`docs/adr/0003-vex-feed.md`** — design record for VEX acquisition.
+- **`docs/adr/0004-epss-kev-freshness.md`** — design record for planned
+  EPSS/KEV enrichment cache (not yet implemented).
+- **`tests/test_vex.py`** — 18 unit tests covering all `vex.py` functions
+  (`_vex_dir`, `_format_for`, `_ext_for`, `_atomic_write_bytes`, `_fresh_lkg`,
+  `fetch_vex` — happy path, LKG fallback, no-sources).
+- **`docs/audit/100-fixups-2026-05-31.md`** through
+  **`docs/audit/120-fixups-2026-06-01b.md`** — four additional automated audit
+  passes documenting findings, fixes applied, and carry-forward items.
+
+### Changed — 2026-06-01 automated fixup pass
+
+- **`cli.py` `update trivy` / `update cve_bin_tool` paths** now use
+  `RetryPolicy.from_tool_config(config, tool)` instead of reading
+  `retry_backoff_policy` dict keys inline.  One source of truth for retry
+  parameters across all update paths.
+- **`healthcheck.run_healthcheck`** now probes `trivy-vex` layer in addition
+  to `trivy-db`, `trivy-java-db`, `trivy-checks`.
+- **`scanner_diff.py`** — removed duplicate local `_first_json` helper; now
+  imports `first_json` from `_io` (completing the §1 DRY consolidation).
+- **`Makefile` `test` target** — removed `--maxfail=1`; `make test` now
+  reports all failing tests instead of stopping at the first.
+- **`.pre-commit-config.yaml`** — ruff hook bumped from `v0.5.7` to
+  `v0.15.15`, aligning pre-commit with local and CI ruff version.
+
 ### Added — 2026-05-25 audit + DRY refactor (docs/audit/)
 
 - **`docs/audit/` (5 files)** — independent audit of architecture, defects,

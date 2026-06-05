@@ -21,6 +21,10 @@ artifacts/internal/*
 artifacts/reports/*
 artifacts/provenance/*
 artifacts/sbom/*
+# DB bundle export staging (db-exporter) and import staging (db-importer).
+# These hold multi-GB vulnerability-DB tarballs and must never be committed.
+artifacts/db-image/
+incoming/
 # Runtime JSON outputs written by resilient_updates.run_summary / manifest
 # (db_snapshot.json, run_manifest.json, status.json, summary.json, …).
 # These are per-run artefacts and must not be committed.
@@ -57,3 +61,14 @@ temp/
 
 .coverage
 .coverage.*
+
+# Root-level per-run scanner output files (e.g. output.cve-bin-tool.*.json)
+output.*.json
+
+# Container image bundle staging (docker save) — multi-GB, never commit.
+artifacts/image-bundle/
+incoming/images.tar
+
+# Per-run scan log + DB status snapshots (runtime output, not source).
+artifacts/run-scan.log
+artifacts/db_status/

@@ -46,6 +46,10 @@ Notes for a clean machine:
   (if you add one) goes in `.env.local`, never in `.env` or git.
 - On Windows, `SCAN_TARGET_HOST` may be a Windows path (e.g. `C:\data\app.tar.gz`).
 
+To ship the project to GitLab/Docker **with the current databases bundled**, and
+to deploy it elsewhere ready for a first scan, see
+[`docs/SHIP_AND_DEPLOY.md`](docs/SHIP_AND_DEPLOY.md).
+
 ---
 
 ## ⚡ In One Command (Windows)

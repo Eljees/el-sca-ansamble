@@ -73,26 +73,47 @@ fi
 # ── Helpers ───────────────────────────────────────────────────────────────────
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# Host Python interpreter. A bare `python` can be a broken / permission-denied
+# shim on some WSL hosts (errno 13), which silently breaks render-flags and the
+# final report stages. Pick the first interpreter that actually executes.
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [[ -z "$PYTHON_BIN" ]]; then
+  for _py in python3 python; do
+    if command -v "$_py" >/dev/null 2>&1 && "$_py" -c 'import sys' >/dev/null 2>&1; then
+      PYTHON_BIN="$_py"; break
+    fi
+  done
+fi
+[[ -n "$PYTHON_BIN" ]] || PYTHON_BIN="python3"
+
 compose_checked() {
-  docker compose "$@"
-  local rc=$?
+  # `|| rc=$?` keeps the non-zero exit from tripping `set -e` so we reach the
+  # explicit check below (a bare `docker compose` line would abort the script).
+  local rc=0
+  docker compose "$@" || rc=$?
   if [[ $rc -ne 0 ]]; then
     die "docker compose failed (exit $rc): $*"
   fi
 }
 
 compose_cve_bin_tool_checked() {
-  docker compose "$@"
-  local rc=$?
-  # cve-bin-tool exits with 1 when CVEs are found (success state), 0 when none found.
+  # cve-bin-tool exits 1 when CVEs are found (a success state) and 0 when none.
+  # Capture via `|| rc=$?` so `set -e` does not abort before we whitelist exit 1.
+  local rc=0
+  docker compose "$@" || rc=$?
   if [[ $rc -ne 0 && $rc -ne 1 ]]; then
     die "cve-bin-tool failed (exit $rc): $*"
   fi
 }
 
 db_status() {
-  local tool="$1" path="$2"
-  docker compose run --rm db-admin db-status "$tool" --path "$path" --warning-age 24h || true
+  local tool="$1" path="$2" out
+  out="$(docker compose run --rm db-admin db-status "$tool" --path "$path" --warning-age 24h 2>/dev/null || true)"
+  printf '%s\n' "$out"
+  # Persist the JSON object so run_summary can surface cached DB freshness on
+  # scan-only runs (no updater → no provenance). Best-effort; never fatal.
+  mkdir -p "$ARTIFACTS_DIR/db_status"
+  printf '%s\n' "$out" | sed -n '/^{/,/^}/p' > "$ARTIFACTS_DIR/db_status/$tool.json" 2>/dev/null || true
 }
 
 import_local_env() {
@@ -139,6 +160,12 @@ REPORT_MD="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.md"
 REPORT_HTML="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.html"
 ARTIFACTS_DIR="$(pwd)/artifacts"
 
+# Mirror all pipeline output to a log file so a non-interactive caller (the MCP
+# bridge) can inspect progress/errors even when its own request times out.
+mkdir -p "$ARTIFACTS_DIR"
+exec > >(tee -a "$ARTIFACTS_DIR/run-scan.log") 2>&1
+echo "[run-scan] $(date -u +%Y-%m-%dT%H:%M:%SZ) start  py=$PYTHON_BIN tool=$TOOL target=$TARGET"
+
 echo ""
 printf '\e[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
 printf '\e[36m SCA Pipeline\e[0m\n'
@@ -170,7 +197,7 @@ done
 # ── Render Trivy flags (standard pipeline only) ───────────────────────────────
 TRIVY_FLAGS=""
 if [[ "$FORMAT" == "auto" ]]; then
-  TRIVY_FLAGS="$(python -m resilient_updates.cli render-flags trivy 2>/dev/null || true)"
+  TRIVY_FLAGS="$("$PYTHON_BIN" -m resilient_updates.cli render-flags trivy 2>/dev/null || true)"
 fi
 
 # ── Environment for containers ────────────────────────────────────────────────
@@ -241,6 +268,9 @@ fi
 if [[ $EXTRACT -eq 1 ]]; then
   EXTRACT_REL="artifacts/extracted/current"
   EXTRACT_HOST="$(pwd)/$EXTRACT_REL"
+  # NOTE: the extractor purges `current/` itself (as root, in-container) before
+  # writing — see resilient_updates.extractor.extract_artifacts. A host-side rm
+  # is avoided here because the extracted tree is root-owned (would EACCES).
   mkdir -p "$EXTRACT_HOST"
   export EXTRACT_INPUT_HOST="$SCAN_TARGET_HOST"
   export EXTRACT_OUTPUT="/workspace/$EXTRACT_REL"
@@ -344,10 +374,10 @@ else
       db_status trivy /var/lib/resilient-db/trivy
       db_status grype /var/lib/resilient-db/grype/active
       db_status cve-bin-tool /root/.cache/cve-bin-tool
-      compose_checked --profile "$PROFILE" run --rm syft-sbom
-      compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
-      compose_checked --profile "$PROFILE" run --rm grype-scanner
-      compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      echo "[stage] syft-sbom";        compose_checked --profile "$PROFILE" run --rm syft-sbom
+      echo "[stage] trivy-scanner";    compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
+      echo "[stage] grype-scanner";    compose_checked --profile "$PROFILE" run --rm grype-scanner
+      echo "[stage] cve-bin-tool";     compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
     syft)
       compose_checked --profile "$PROFILE" run --rm syft-sbom ;;
@@ -372,16 +402,18 @@ fi
 
 # ── Collect reports ─────────────────────────────────────────────────
 export CASE_ID="$CASE_ID"
-compose_checked --profile report run --rm report-collector
+echo "[stage] report-collector"; compose_checked --profile report run --rm report-collector
 
-python -m resilient_updates.cli collect-report \
+echo "[stage] collect-report (host $PYTHON_BIN)"
+"$PYTHON_BIN" -m resilient_updates.cli collect-report \
   --reports-dir artifacts \
   --target      "$SCAN_TARGET_HOST" \
   --display-target "$SCAN_TARGET_DISPLAY" \
   --case-id     "$CASE_ID" \
   --output      "$REPORT_MD"
 
-python scripts/report_html.py \
+echo "[stage] report-html (host $PYTHON_BIN)"
+"$PYTHON_BIN" scripts/report_html.py \
   --artifacts-dir artifacts \
   --target        "$SCAN_TARGET_DISPLAY" \
   --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"

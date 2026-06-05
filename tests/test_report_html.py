@@ -178,3 +178,40 @@ def test_overview_page_links_to_tool_pages_and_syft(tmp_path: Path):
     assert "SCA report overview" in text
     assert "Final target SHA-256" in text
     assert "Tool database versions and update times" in text
+
+
+def test_overview_page_contains_loaded_findings(tmp_path: Path):
+    module = _load_report_html_module()
+    artifacts = tmp_path / "artifacts"
+    _make_artifacts(artifacts)
+
+    findings = []
+    findings += module.parse_grype(module.load_json(artifacts / "reports" / "grype" / "report.json"))
+    findings += module.parse_trivy(module.load_json(artifacts / "reports" / "trivy" / "report.json"))
+    findings += module.parse_cvebt(module.load_json(artifacts / "reports" / "cve-bin-tool" / "report.json"))
+    components = module.parse_syft_components(module.load_json(artifacts / "sbom" / "syft.json"))
+
+    output = tmp_path / "report.html"
+    module.generate_html_site(findings, "target", str(artifacts), output, components)
+    text = output.read_text(encoding="utf-8")
+
+    assert "GHSA-test" in text
+    assert "CVE-2026-0001" in text
+    assert "CVE-2026-0002" in text
+
+    syft_text = (output.parent / "report_syft.html").read_text(encoding="utf-8")
+    assert "prometheus" in syft_text
+
+
+def test_has_scan_evidence_accepts_syft_files_without_components(tmp_path: Path):
+    module = _load_report_html_module()
+    artifacts = tmp_path / "artifacts"
+    _make_artifacts(artifacts)
+
+    syft_data = module.load_json(artifacts / "sbom" / "syft.json")
+    syft_data["artifacts"] = []
+    syft_data["files"] = [{"location": {"path": "/scan-target/bin/app"}}]
+    components = module.parse_syft_components(syft_data)
+
+    assert components == []
+    assert module.has_scan_evidence(syft_data, [], components) is True

@@ -106,9 +106,7 @@ def discover_local_proxies(
     return out
 
 
-def discover_transports(
-    config: dict[str, Any], *, opener: TcpOpener = tcp_open
-) -> dict[str, dict[str, str]]:
+def discover_transports(config: dict[str, Any], *, opener: TcpOpener = tcp_open) -> dict[str, dict[str, str]]:
     """All candidate routes: configured chains + env proxies + live local proxies.
 
     This is what makes update-doctor *adaptive* — it tests the transport that
@@ -128,9 +126,7 @@ def _proxy_endpoint(proxies: dict[str, str]) -> tuple[str, int] | None:
     parsed = urlparse(url)
     if not parsed.hostname:
         return None
-    port = parsed.port or {"http": 80, "https": 443, "socks5": 1080, "socks5h": 1080}.get(
-        parsed.scheme, 1080
-    )
+    port = parsed.port or {"http": 80, "https": 443, "socks5": 1080, "socks5h": 1080}.get(parsed.scheme, 1080)
     return parsed.hostname, int(port)
 
 
@@ -171,7 +167,7 @@ def default_prober(url: str, proxies: dict[str, str], timeout: float) -> dict[st
         else:
             status = "ok"
         return {"status": status, "code": code}
-    except Exception as exc:  # noqa: BLE001 — fold any transport error into a reason
+    except Exception as exc:
         return {"status": classify_exception(exc).value, "code": None}
 
 
@@ -185,9 +181,7 @@ def _nvd_probe_sources(config: dict[str, Any]) -> list[SourceCandidate]:
         if endpoint and endpoint[1] not in seen:
             seen.add(endpoint[1])
             name, url = endpoint
-            out.append(
-                SourceCandidate(priority=10, name=name, url=url, tool="cve_bin_tool", layer="nvd")
-            )
+            out.append(SourceCandidate(priority=10, name=name, url=url, tool="cve_bin_tool", layer="nvd"))
     return out
 
 
@@ -251,3 +245,39 @@ def format_matrix(matrix: dict[str, Any]) -> str:
     for tool, chain in matrix["recommended"].items():
         lines.append(f"  {tool}: {chain or 'NO REACHABLE ROUTE'}")
     return "\n".join(lines)
+
+
+def _translate_for_container(url: str) -> str:
+    """A container can't reach the host's 127.0.0.1 — rewrite to host.docker.internal."""
+    return url.replace("127.0.0.1", "host.docker.internal").replace("localhost", "host.docker.internal")
+
+
+def recommended_proxy(
+    config: dict[str, Any],
+    *,
+    prober: Prober | None = None,
+    opener: TcpOpener = tcp_open,
+    timeout: float = 8.0,
+    for_container: bool = False,
+) -> str | None:
+    """Best **proxy URL** to use for updates from here (ADR-0007 P2), or ``None``.
+
+    Picks the non-``direct`` transport recommended for the most tools and returns
+    its proxy URL.  ``None`` means "no proxy needed/found" (e.g. a direct route
+    already works, or nothing is reachable).  With ``for_container=True`` the URL
+    is rewritten ``127.0.0.1``/``localhost`` → ``host.docker.internal`` so a
+    container can reach the host's local proxy.
+    """
+    from collections import Counter
+
+    transports = discover_transports(config, opener=opener)
+    matrix = build_matrix(config, prober=prober, opener=opener, timeout=timeout)
+    counts = Counter(name for name in matrix["recommended"].values() if name and name != "direct")
+    if not counts:
+        return None
+    best = counts.most_common(1)[0][0]
+    proxies = transports.get(best) or {}
+    url = proxies.get("https") or proxies.get("http")
+    if not url:
+        return None
+    return _translate_for_container(url) if for_container else url

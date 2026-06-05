@@ -145,7 +145,7 @@ grype-scanner: GRYPE_DB_UPDATE_URL=http://grype-static:8080
 
 ## Docker Compose профили
 
-Состояние профилей на 2026-05-25 (источник истины — `docker-compose.yml`):
+Состояние профилей на 2026-06-04 (источник истины — `docker-compose.yml`, 21 сервис, 13 профилей):
 
 | Профиль | Для чего | Сервисы |
 |---|---|---|
@@ -162,6 +162,10 @@ grype-scanner: GRYPE_DB_UPDATE_URL=http://grype-static:8080
 | `osv` | Дополнительный OSV-Scanner over SBOM | osv-scanner |
 | `proxy` | Sidecar proxy chain (tinyproxy + xray) | proxy-xray, tinyproxy |
 | `vpn` | WireGuard-туннель для случаев VPN-only зеркал | wireguard |
+| `dashboard` | FastAPI-дашборд для просмотра прогонов и provenance (ADR-0006) | dashboard |
+
+Сервис `dashboard` собирается из `Dockerfile.resilient-updater` и поднимает
+FastAPI-приложение (`resilient_updates.dashboard`) поверх каталога `artifacts/`.
 
 Сервисы `grype-static` и `grype-scanner` связаны напрямую внутри
 Docker-сети `scanner-net` и не нуждаются в прокси.

@@ -189,6 +189,18 @@ def test_derive_flags_cve_bin_tool_timeout(tmp_path: Path):
     assert "cve-bin-tool" in s["tool_failures"]
 
 
+def test_derive_zero_findings_are_not_tool_failures(tmp_path: Path):
+    root = _seed_root(
+        tmp_path / "artifacts",
+        syft={"artifacts": []},
+        grype={"matches": []},
+        trivy={"Results": []},
+        cve=[],
+    )
+    s = derive(root)["summary"]
+    assert s["tool_failures"] == "none"
+
+
 # ---------------------------------------------------------------------------
 # write_to_disk — persistence
 # ---------------------------------------------------------------------------

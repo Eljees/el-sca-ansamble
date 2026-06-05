@@ -81,9 +81,7 @@ def test_build_report_warns_on_stale_enrichment(tmp_path: Path, monkeypatch):
     """ADR-0004 P2: a stale EPSS cache surfaces a freshness warning."""
     artifacts = tmp_path / "artifacts"
     (artifacts / "sbom").mkdir(parents=True)
-    (artifacts / "sbom" / "syft.json").write_text(
-        json.dumps({"artifacts": []}), encoding="utf-8"
-    )
+    (artifacts / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
     for tool in ("grype", "trivy", "cve-bin-tool"):
         (artifacts / "reports" / tool).mkdir(parents=True)
     (artifacts / "reports" / "grype" / "report.json").write_text(
@@ -92,9 +90,7 @@ def test_build_report_warns_on_stale_enrichment(tmp_path: Path, monkeypatch):
     (artifacts / "reports" / "trivy" / "report.json").write_text(
         json.dumps({"Results": []}), encoding="utf-8"
     )
-    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(
-        json.dumps([]), encoding="utf-8"
-    )
+    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
     (artifacts / "summary.json").write_text(json.dumps({"input_sha256": "x"}), encoding="utf-8")
     (artifacts / "status.json").write_text(
         json.dumps({"tool_failures": "none", "db_drift": "fresh"}), encoding="utf-8"
@@ -105,9 +101,7 @@ def test_build_report_warns_on_stale_enrichment(tmp_path: Path, monkeypatch):
     epss_dir = tmp_path / "dbroot" / "epss"
     epss_dir.mkdir(parents=True)
     epss = epss_dir / "epss_scores-current.csv"
-    epss.write_text(
-        "#model_version:test\ncve,epss,percentile\nCVE-2024-0001,0.5,0.9\n", encoding="utf-8"
-    )
+    epss.write_text("#model_version:test\ncve,epss,percentile\nCVE-2024-0001,0.5,0.9\n", encoding="utf-8")
     old = time.time() - 100 * 3600  # 100h > default 24h TTL
     os.utime(epss, (old, old))
     monkeypatch.setenv("EL_SCA_ENRICHMENT_ROOT", str(tmp_path / "dbroot"))

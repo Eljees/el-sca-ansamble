@@ -510,6 +510,65 @@ services:
       TZ:   ${TZ:-Etc/UTC}
     networks: [scanner-net]
 
+  # ───────────────────────────────────────────────────────────────────────
+  # DB bundle export / import (profile "db-bundle").
+  #
+  # Move the *current* vulnerability databases between hosts so a fresh
+  # deployment ships with bases already loaded (no online update needed for
+  # the first scan).  Compose resolves the real (project-prefixed) volume
+  # names automatically — no manual name guessing required.
+  #
+  #   export → ./artifacts/db-image/<volume>.tar.gz   (then baked into an image)
+  #   import ← ./incoming/<volume>.tar.gz             (unpacked from that image)
+  #
+  # See scripts/export_db_image.sh / import_db_image.sh and docs/SHIP_AND_DEPLOY.md.
+  # ───────────────────────────────────────────────────────────────────────
+  db-exporter:
+    image: alpine:3.20
+    profiles: ["db-bundle"]
+    volumes:
+      - trivy-cache:/vol/trivy-cache:ro
+      - grype-db:/vol/grype-db:ro
+      - grype-cache:/vol/grype-cache:ro
+      - cve-bin-tool-cache:/vol/cve-bin-tool-cache:ro
+      - internal-mirror-data:/vol/internal-mirror-data:ro
+      - ./artifacts/db-image:/out
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mkdir -p /out
+        for v in trivy-cache grype-db grype-cache cve-bin-tool-cache internal-mirror-data; do
+          echo "export $$v"
+          tar -C /vol/$$v -czf /out/$$v.tar.gz .
+        done
+        echo "db bundle written to ./artifacts/db-image:"
+        ls -lh /out
+
+  db-importer:
+    image: alpine:3.20
+    profiles: ["db-bundle"]
+    volumes:
+      - trivy-cache:/vol/trivy-cache
+      - grype-db:/vol/grype-db
+      - grype-cache:/vol/grype-cache
+      - cve-bin-tool-cache:/vol/cve-bin-tool-cache
+      - internal-mirror-data:/vol/internal-mirror-data
+      - ./incoming:/in:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for v in trivy-cache grype-db grype-cache cve-bin-tool-cache internal-mirror-data; do
+          if [ -f /in/$$v.tar.gz ]; then
+            echo "import $$v"
+            tar -C /vol/$$v -xzf /in/$$v.tar.gz
+          else
+            echo "skip $$v (no archive in ./incoming)"
+          fi
+        done
+        echo "db volumes restored from ./incoming"
+
 volumes:
   trivy-cache:
   grype-db:

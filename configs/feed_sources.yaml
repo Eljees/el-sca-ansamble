@@ -138,7 +138,8 @@ grype:
     - name: internal-grype-mirror
       url: "http://grype-static:8080/v6/latest.json"
       priority: 10
-      enabled: true
+      enabled: false
+      notes: "Enable only when grype-static is intentionally serving a preseeded local mirror."
     - name: anchore-public-db
       url: "https://grype.anchore.io/databases/v6/latest.json"
       priority: 20
@@ -173,7 +174,10 @@ grype:
     warning_age: "24h"
 
 cve_bin_tool:
-  nvd_modes: ["api", "api2", "json", "json-mirror", "json-nvd"]
+  # json-mirror is the stable primary route in this contour: it produced a
+  # complete NVD/GAD/REDHAT/PURL2CPE candidate on 2026-06-02, while api2/json-nvd
+  # were kept only as manual fallback routes for operator diagnostics.
+  nvd_modes: ["json-mirror", "api2", "json-nvd"]
   data_sources:
     - NVD
     - OSV
@@ -183,15 +187,10 @@ cve_bin_tool:
     - EPSS
     - PURL2CPE
     - RSD
-  mirrors:
-    - name: primary-mirror
-      url: "https://mirror1.example.invalid/cve-bin-tool"
-      priority: 10
-      enabled: true
-    - name: secondary-mirror
-      url: "https://mirror2.example.invalid/cve-bin-tool"
-      priority: 20
-      enabled: true
+  # No internal cve-bin-tool bundle mirror is active for this contour. Keep this
+  # list empty until a real reachable mirror replaces the old example.invalid
+  # placeholders.
+  mirrors: []
   export_import:
     export_bundle_path: "artifacts/mirror/cve-bin-tool-export.json"
     import_bundle_path: "artifacts/mirror/cve-bin-tool-export.json"
@@ -208,6 +207,11 @@ cve_bin_tool:
     retry_count: 2
   seed_policy:
     seed_epss: true
+    # OSV auxiliary bulk seed is intentionally not on the critical DB refresh
+    # path: on Windows Docker Desktop it can write hundreds of thousands of
+    # files and has repeatedly failed with transient I/O errors. Keep OSV as
+    # a separate enrichment task, not a blocker for NVD/GAD/REDHAT activation.
+    seed_osv_on_update: false
     osv_ecosystems:
       - Debian
       - Ubuntu

@@ -185,9 +185,7 @@ def load_epss_scores(roots: Iterable[Path] | None = None) -> dict[str, dict[str,
                 pct_idx = col_map.get("percentile")
                 if cve_idx is None or epss_idx is None:
                     return out
-                date_value = datetime.datetime.fromtimestamp(
-                    candidate.stat().st_mtime, tz=_UTC
-                ).isoformat()
+                date_value = datetime.datetime.fromtimestamp(candidate.stat().st_mtime, tz=_UTC).isoformat()
                 for row in reader:
                     if len(row) <= max(cve_idx, epss_idx):
                         continue

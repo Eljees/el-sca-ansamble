@@ -32,7 +32,7 @@ YAMLLINT   ?= yamllint
 # Files / globs the linters consume.
 PY_SOURCES   := resilient_updates tests
 SH_SOURCES   := $(shell find scripts -maxdepth 2 -type f -name '*.sh' -not -path 'scripts/windows/*')
-DOCKERFILES  := Dockerfile.resilient-updater Dockerfile.extractor Dockerfile.cve-bin-tool Dockerfile.apk-analyzer Dockerfile.win-analyzer
+DOCKERFILES  := Dockerfile.resilient-updater Dockerfile.extractor Dockerfile.cve-bin-tool Dockerfile.apk-analyzer Dockerfile.win-analyzer Dockerfile.db-data
 YAML_SOURCES := docker-compose.yml docker-compose.windows.override.yml docker-compose.prod.example.yml \
                 configs/feed_sources.yaml .github .pre-commit-config.yaml .yamllint
 
@@ -111,7 +111,7 @@ bench:  ## Wall-clock benchmark: TARGET=/path RUNS=3 [INCLUDE_COLD=1].
 # ─────────────────────────────────────────────────────────────────────────
 .PHONY: test
 test:  ## Run pytest with coverage.
-	$(PYTHON) -m pytest -q --maxfail=1 --disable-warnings --cov=resilient_updates --cov-report=term-missing
+	$(PYTHON) -m pytest -q --disable-warnings --cov=resilient_updates --cov-report=term-missing
 
 # ─────────────────────────────────────────────────────────────────────────
 # Linters (each target also runs in CI; see .github/workflows/ci.yml).
@@ -155,3 +155,23 @@ clean:  ## Remove scan output (artifacts/) keeping .gitkeep stubs.
 
 clean-deep: clean  ## Also remove cached caches.  USE WITH CARE — DBs gone.
 	$(COMPOSE) down -v --remove-orphans
+
+# ─────────────────────────────────────────────────────────────────────────
+# DB bundle shipping (data image — see docs/SHIP_AND_DEPLOY.md)
+# ─────────────────────────────────────────────────────────────────────────
+.PHONY: db-export-image db-push-image db-import-image
+db-export-image:  ## Export current DB volumes into a data image (DB_IMAGE=, DB_TAG=).
+	./scripts/export_db_image.sh
+
+db-push-image:  ## Export + push the DB data image to the registry (DB_IMAGE=registry/.../db-data).
+	./scripts/export_db_image.sh --push
+
+db-import-image:  ## Pull the DB data image and restore volumes (DB_IMAGE=registry/.../db-data:tag).
+	./scripts/import_db_image.sh
+
+.PHONY: images-export images-import
+images-export:  ## Build/pull ALL images and save to artifacts/image-bundle/images.tar.
+	./scripts/export_images.sh
+
+images-import:  ## Load the stack image bundle (offline).  TAR=path optional.
+	./scripts/import_images.sh $(TAR)

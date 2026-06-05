@@ -15,6 +15,17 @@ import json
 from pathlib import Path
 from typing import Any
 
+# fastapi stays an optional runtime dependency (pure helpers + their tests run
+# without it).  But ``from __future__ import annotations`` turns the route
+# signatures into strings that FastAPI resolves against THIS module's globals —
+# so ``UploadFile`` must be importable at module scope, not only inside
+# create_app().  Guard the import so the module still loads when fastapi is absent.
+try:  # pragma: no cover - exercised indirectly via create_app
+    from fastapi import File, UploadFile
+except ImportError:  # pragma: no cover
+    File = None  # type: ignore[assignment]
+    UploadFile = None  # type: ignore[assignment]
+
 
 def _safe_read_json(path: Path) -> Any | None:
     try:
@@ -39,9 +50,7 @@ def _reports(artifacts_dir: Path) -> list[str]:
     if not rdir.is_dir():
         return []
     return sorted(
-        str(p.relative_to(artifacts_dir)).replace("\\", "/")
-        for p in rdir.rglob("*")
-        if p.is_file()
+        str(p.relative_to(artifacts_dir)).replace("\\", "/") for p in rdir.rglob("*") if p.is_file()
     )
 
 
@@ -137,13 +146,362 @@ def render_run(artifacts_dir: Path, run_id: str) -> str | None:
     )
 
 
-def create_app(artifacts_dir: Path | str):
-    """Build the read-only FastAPI app bound to ``artifacts_dir``."""
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import HTMLResponse
+# ── Tool DB status (last update + versions) ─────────────────────────────────
+
+# Compose image-tag defaults (mirror docker-compose.yml ${VAR:-default}).
+COMPOSE_VERSION_DEFAULTS = {
+    "TRIVY_VERSION": "0.64.1",
+    "GRYPE_VERSION": "v0.112.0",
+    "SYFT_VERSION": "v1.20.0",
+}
+
+
+def _deep_find(obj: Any, key: str) -> Any | None:
+    """Depth-first search for the first value under ``key`` anywhere in ``obj``."""
+    if isinstance(obj, dict):
+        if key in obj:
+            return obj[key]
+        for v in obj.values():
+            found = _deep_find(v, key)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _deep_find(v, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _read_env_versions(repo_root: Path) -> dict[str, str]:
+    """Read ``*_VERSION`` keys from .env (falling back to .env.example, then
+    the compose defaults) so tool cards show the version that will actually run.
+    """
+    versions = dict(COMPOSE_VERSION_DEFAULTS)
+    env_path = repo_root / ".env"
+    if env_path.is_file():
+        for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip()
+            if k.endswith("_VERSION") and v:
+                versions[k] = v
+
+    example_path = repo_root / ".env.example"
+    if example_path.is_file():
+        for raw in example_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip()
+            if k.endswith("_VERSION") and v:
+                versions.setdefault(k, v)
+    return versions
+
+
+def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) -> dict[str, Any]:
+    """Per-tool DB freshness + version, for the GUI resource cards.
+
+    Returns ``{"db_update_enabled_by_default": False, "tools": [...]}`` where
+    each tool carries its engine version, DB activation status, and the last
+    DB update timestamp (best-effort, parsed from ``artifacts/provenance``).
+    """
+    root = Path(artifacts_dir)
+    rroot = Path(repo_root) if repo_root is not None else root.resolve().parent
+    versions = _read_env_versions(rroot)
+    prov = _provenance(root)
+
+    def _status(name: str) -> str | None:
+        payload = prov.get(name)
+        if isinstance(payload, dict):
+            return str(payload.get("activation_status") or payload.get("status") or "?")
+        return None
+
+    def _updated(*names: str) -> str | None:
+        for name in names:
+            payload = prov.get(name)
+            if not isinstance(payload, dict):
+                continue
+            ts = _deep_find(payload, "timestamp_utc") or _deep_find(payload, "mtime_utc")
+            if ts:
+                return str(ts)
+        return None
+
+    grype_payload = prov.get("grype") or {}
+    cbt_db = prov.get("cve-bin-tool-db") or {}
+    cbt_counts = _deep_find(cbt_db, "cve_range_total")
+    grype_checksum = _deep_find(grype_payload, "checksum")
+
+    tools = [
+        {
+            "name": "Syft",
+            "role": "SBOM generator",
+            "version": versions.get("SYFT_VERSION", "—"),
+            "db_status": "n/a",
+            "db_updated": None,
+            "detail": "no vulnerability DB (produces SBOM)",
+        },
+        {
+            "name": "Grype",
+            "role": "SBOM → CVE scanner",
+            "version": versions.get("GRYPE_VERSION", "—"),
+            "db_status": _status("grype"),
+            "db_updated": _deep_find(grype_payload, "built") or _updated("grype"),
+            "detail": (f"checksum {str(grype_checksum)[:23]}…" if grype_checksum else "anchore DB"),
+        },
+        {
+            "name": "Trivy",
+            "role": "filesystem/CVE scanner",
+            "version": versions.get("TRIVY_VERSION", "—"),
+            "db_status": _status("trivy"),
+            "db_updated": _updated("trivy"),
+            "detail": "aquasec trivy-db",
+        },
+        {
+            "name": "cve-bin-tool",
+            "role": "binary CVE scanner",
+            "version": "local build",
+            "db_status": _status("cve-bin-tool-db") or _status("cve-bin-tool-update-status"),
+            "db_updated": _updated("cve-bin-tool-db", "cve-bin-tool-update-status"),
+            "detail": (
+                f"{int(cbt_counts):,} CVE rows"
+                if isinstance(cbt_counts, (int, float))
+                else "json-mirror DB"
+            ),
+        },
+    ]
+    return {"db_update_enabled_by_default": False, "tools": tools}
+
+
+# ── Active GUI (drag-drop scan + live pipeline + DB cards) ───────────────────
+
+_GUI_HTML = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>el-sca-ansamble — анализ артефактов</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2027; --line:#2b3540; --fg:#e6edf3;
+          --muted:#8b98a5; --accent:#3b82f6; --ok:#22c55e; --active:#eab308; --err:#ef4444; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; }
+  .badge { font-size:12px; padding:3px 10px; border-radius:999px;
+           background:#3a2a14; color:#f0c674; border:1px solid #5c4420; }
+  main { max-width:1100px; margin:0 auto; padding:24px; }
+  .grid { display:grid; gap:20px; }
+  .panel { background:var(--panel); border:1px solid var(--line);
+           border-radius:12px; padding:18px; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em;
+       color:var(--muted); margin:0 0 14px; }
+  #drop { border:2px dashed var(--line); border-radius:12px; padding:36px;
+          text-align:center; color:var(--muted); cursor:pointer; transition:.15s; }
+  #drop.hot { border-color:var(--accent); background:#13243d; color:var(--fg); }
+  #drop b { color:var(--fg); }
+  .pipeline { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .stage { flex:1 1 120px; min-width:110px; padding:10px 12px; border-radius:10px;
+           border:1px solid var(--line); background:#10161d; position:relative; }
+  .stage .lbl { font-weight:600; }
+  .stage .st { font-size:12px; color:var(--muted); margin-top:2px; }
+  .stage.pending { opacity:.55; }
+  .stage.active { border-color:var(--active); box-shadow:0 0 0 1px var(--active) inset; }
+  .stage.active .st { color:var(--active); }
+  .stage.done { border-color:var(--ok); }
+  .stage.done .st { color:var(--ok); }
+  .stage.error { border-color:var(--err); }
+  .stage.error .st { color:var(--err); }
+  pre#log { background:#0a0e12; border:1px solid var(--line); border-radius:10px;
+            padding:12px; height:300px; overflow:auto; margin:0; white-space:pre-wrap;
+            font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; color:#c8d3de; }
+  .tools { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+  .tool { border:1px solid var(--line); border-radius:10px; padding:12px; background:#10161d; }
+  .tool .tn { font-weight:600; display:flex; justify-content:space-between; gap:8px; }
+  .tool .role { color:var(--muted); font-size:12px; }
+  .tool dl { margin:10px 0 0; display:grid; grid-template-columns:auto 1fr; gap:2px 10px; }
+  .tool dt { color:var(--muted); font-size:12px; }
+  .tool dd { margin:0; font-size:12px; word-break:break-word; }
+  .pill { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line); }
+  .pill.fresh,.pill.active,.pill.ok { color:var(--ok); border-color:#1c3a24; }
+  .pill.healthcheckonly,.pill.failed { color:var(--active); border-color:#3a3214; }
+  button { font:inherit; border:1px solid var(--line); background:#1f2937; color:var(--fg);
+           padding:9px 16px; border-radius:9px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  a { color:var(--accent); }
+  .muted { color:var(--muted); }
+</style></head>
+<body>
+<header>
+  <h1>el-sca-ansamble</h1>
+  <span class="badge" id="upd-badge">обновление баз отключено по умолчанию</span>
+  <span class="muted" style="margin-left:auto" id="conn"></span>
+</header>
+<main class="grid">
+  <section class="panel">
+    <h2>Анализ артефакта</h2>
+    <div id="drop">
+      <p><b>Перетащите сюда артефакт</b> (.tar.gz / .zip / .apk / .exe)<br>
+      или нажмите, чтобы выбрать файл — анализ начнётся автоматически.</p>
+      <input type="file" id="file" hidden>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Процесс анализа</h2>
+    <div class="pipeline" id="pipeline"></div>
+    <div class="row" style="margin:14px 0 10px">
+      <strong id="job-status" class="muted">ожидание</strong>
+    </div>
+    <pre id="log">Лог появится здесь после запуска…</pre>
+  </section>
+
+  <section class="panel">
+    <h2>Базы инструментов</h2>
+    <div class="row" style="margin-bottom:14px">
+      <button id="btn-update">⟳ Обновить базы (разово)</button>
+      <button id="btn-refresh">Обновить статус</button>
+      <span class="muted">Скан использует уже скачанные базы и НЕ обновляет их.</span>
+    </div>
+    <div class="tools" id="tools"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Runs · прошлые прогоны</h2>
+    <p class="muted">История артефактов и отчётов:
+      <a href="/runs">список прогонов</a> ·
+      <a href="/runs/current">текущий прогон</a> ·
+      <a href="/api/runs">runs JSON</a> ·
+      <a href="/api/freshness">freshness JSON</a></p>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const logEl = $("#log"), pipeEl = $("#pipeline"), statusEl = $("#job-status"), connEl = $("#conn");
+let es = null;
+
+function renderStages(stages){
+  pipeEl.innerHTML = "";
+  (stages||[]).forEach(s => {
+    const d = document.createElement("div");
+    d.className = "stage " + (s.status||"pending");
+    d.innerHTML = `<div class="lbl">${s.label}</div><div class="st">${s.status||"pending"}</div>`;
+    pipeEl.appendChild(d);
+  });
+}
+function appendLog(line){
+  if(line==null) return;
+  const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
+  logEl.textContent += (logEl.textContent ? "\\n" : "") + line;
+  if(atBottom) logEl.scrollTop = logEl.scrollHeight;
+}
+function follow(jobId){
+  if(es) es.close();
+  logEl.textContent = "";
+  statusEl.textContent = "выполняется…"; statusEl.className = "";
+  es = new EventSource(`/api/jobs/${jobId}/stream`);
+  connEl.textContent = "● подключено";
+  es.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if(m.type === "snapshot"){
+      renderStages(m.stages); (m.log||[]).forEach(appendLog);
+      statusEl.textContent = m.status;
+    } else {
+      if("line" in m) appendLog(m.line);
+      if(m.stages) renderStages(m.stages);
+      if(m.status) statusEl.textContent = m.status;
+    }
+    if(m.final || m.status === "done" || m.status === "error"){
+      const ok = (m.returncode === 0) || m.status === "done";
+      statusEl.textContent = ok ? "✓ готово" : "✗ ошибка";
+      es.close(); connEl.textContent = "";
+      loadTools();
+    }
+  };
+  es.onerror = () => { connEl.textContent = ""; };
+}
+async function startScan(file){
+  const fd = new FormData(); fd.append("file", file);
+  statusEl.textContent = "загрузка артефакта…";
+  const r = await fetch("/api/scan", { method:"POST", body:fd });
+  if(!r.ok){ statusEl.textContent = "ошибка запуска: " + r.status; return; }
+  follow((await r.json()).job_id);
+}
+async function startUpdate(){
+  const b = $("#btn-update"); b.disabled = true;
+  const r = await fetch("/api/update-db", { method:"POST" });
+  b.disabled = false;
+  if(!r.ok){ statusEl.textContent = "ошибка обновления: " + r.status; return; }
+  follow((await r.json()).job_id);
+}
+function fmtTime(t){
+  if(!t) return "—";
+  const d = new Date(t); return isNaN(d) ? t : d.toLocaleString();
+}
+async function loadTools(){
+  const r = await fetch("/api/tools"); const data = await r.json();
+  $("#upd-badge").textContent = data.db_update_enabled_by_default
+    ? "обновление баз включено" : "обновление баз отключено по умолчанию";
+  const box = $("#tools"); box.innerHTML = "";
+  data.tools.forEach(t => {
+    const st = (t.db_status||"—").replace(/[^a-z0-9]/gi,"");
+    const el = document.createElement("div"); el.className = "tool";
+    el.innerHTML = `
+      <div class="tn"><span>${t.name}</span>
+        <span class="pill ${st}">${t.db_status||"—"}</span></div>
+      <div class="role">${t.role}</div>
+      <dl>
+        <dt>версия</dt><dd>${t.version||"—"}</dd>
+        <dt>база обновлена</dt><dd>${fmtTime(t.db_updated)}</dd>
+        <dt>детали</dt><dd>${t.detail||"—"}</dd>
+      </dl>`;
+    box.appendChild(el);
+  });
+}
+const drop = $("#drop"), fileInput = $("#file");
+drop.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", e => { if(e.target.files[0]) startScan(e.target.files[0]); });
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.add("hot"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
+  e.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if(f) startScan(f); });
+$("#btn-update").addEventListener("click", startUpdate);
+$("#btn-refresh").addEventListener("click", loadTools);
+loadTools();
+</script>
+</body></html>
+"""
+
+
+def render_gui() -> str:
+    """Return the active dashboard GUI (drag-drop scan + pipeline + DB cards)."""
+    return _GUI_HTML
+
+
+def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
+    """Build the FastAPI app: read-only run browser + active scan/update GUI.
+
+    ``repo_root`` is where ``docker compose`` is invoked from (defaults to the
+    parent of ``artifacts_dir``).  Scans and DB updates run as host
+    subprocesses via :mod:`resilient_updates.orchestrator`.
+    """
+    from fastapi import FastAPI, File, HTTPException, UploadFile
+    from fastapi.responses import HTMLResponse, StreamingResponse
+
+    from .orchestrator import JobRegistry, sse_stream
 
     root = Path(artifacts_dir)
-    app = FastAPI(title="el-sca-ansamble dashboard", version="0.1.0")
+    rroot = Path(repo_root) if repo_root is not None else root.resolve().parent
+    uploads = root / "uploads"
+    registry = JobRegistry(rroot)
+
+    app = FastAPI(title="el-sca-ansamble dashboard", version="0.2.0")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -151,6 +509,11 @@ def create_app(artifacts_dir: Path | str):
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
+        return render_gui()
+
+    # -- legacy read-only run browser (still server-side rendered) -----------
+    @app.get("/runs", response_class=HTMLResponse)
+    def runs_index() -> str:
         return render_index(root)
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
@@ -176,5 +539,40 @@ def create_app(artifacts_dir: Path | str):
         from .enrichment import evaluate_enrichment_policy
 
         return evaluate_enrichment_policy(None)
+
+    # -- active GUI API -----------------------------------------------------
+    @app.get("/api/tools")
+    def tools() -> dict[str, Any]:
+        return tool_status(root, rroot)
+
+    @app.post("/api/scan", response_model=None)
+    def scan(file: UploadFile = File(...)) -> dict[str, str]:
+        uploads.mkdir(parents=True, exist_ok=True)
+        safe_name = Path(file.filename or "artifact").name
+        dest = uploads / safe_name
+        with dest.open("wb") as fh:
+            while chunk := file.file.read(1024 * 1024):
+                fh.write(chunk)
+        job = registry.start_scan(str(dest.resolve()))
+        return {"job_id": job.id, "target": str(dest)}
+
+    @app.post("/api/update-db")
+    def update_db() -> dict[str, str]:
+        job = registry.start_update()
+        return {"job_id": job.id}
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str) -> dict[str, Any]:
+        job = registry.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        return job.snapshot()
+
+    @app.get("/api/jobs/{job_id}/stream")
+    def job_stream(job_id: str):
+        job = registry.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
+        return StreamingResponse(sse_stream(job), media_type="text/event-stream")
 
     return app

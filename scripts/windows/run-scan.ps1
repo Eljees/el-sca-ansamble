@@ -107,6 +107,14 @@ function Get-DbStatusJson {
   }
 }
 
+function Initialize-ComposePlaceholders {
+  param([Parameter(Mandatory=$true)][string]$PlaceholderPath)
+  if (-not $env:SCAN_TARGET_HOST)    { $env:SCAN_TARGET_HOST = $PlaceholderPath }
+  if (-not $env:EXTRACT_INPUT_HOST)  { $env:EXTRACT_INPUT_HOST = $PlaceholderPath }
+  if (-not $env:SCAN_TARGET_DISPLAY) { $env:SCAN_TARGET_DISPLAY = $PlaceholderPath }
+  if (-not $env:REPORT_OUTPUT)       { $env:REPORT_OUTPUT = "/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md" }
+}
+
 function Show-DbFreshnessBanner {
   param(
     [string]$Title = "DATABASE FRESHNESS"
@@ -218,6 +226,10 @@ $Date       = Get-Date -Format "yyyy-MM-dd"
 $ReportMd   = Join-Path $TargetDir "${BaseName}_report_${Date}.md"
 $ReportHtml = Join-Path $TargetDir "${BaseName}_report_${Date}.html"
 $ArtifactsDir = Join-Path (Get-Location).Path "artifacts"
+
+# Compose renders the whole file even for db-admin helper calls. Seed harmless
+# placeholders early so the pre-scan DB freshness banner can render reliably.
+Initialize-ComposePlaceholders -PlaceholderPath $TargetResolved
 
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
@@ -560,4 +572,3 @@ Write-Host ""
 
 # Re-show DB freshness AFTER the scan so the final state stays on screen.
 Show-DbFreshnessBanner -Title 'DATABASE FRESHNESS (POST-SCAN)'
-

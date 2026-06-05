@@ -33,20 +33,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ._io import read_json as _read_json
+from ._io import first_json as _first_json, normalize_severity as _normalize_severity
 
 # ---------------------------------------------------------------------------
-# JSON loaders moved to resilient_updates._io (shared with reporting.py /
+# JSON loaders live in resilient_updates._io (shared with reporting.py /
 # run_summary.py / extractor.py).  See docs/audit/20-architecture.md §1.
+# _first_json previously had a local copy here; removed in favour of the
+# canonical _io.first_json import above.
 # ---------------------------------------------------------------------------
-
-
-def _first_json(root: Path, relpaths: list[str]) -> Any:
-    for rel in relpaths:
-        data = _read_json(root / rel)
-        if data is not None:
-            return data
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -55,10 +49,9 @@ def _first_json(root: Path, relpaths: list[str]) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _normalize_severity(value: Any) -> str:
-    if not value:
-        return "UNKNOWN"
-    return str(value).upper()
+# _normalize_severity is imported from ._io (canonical shared implementation).
+# Previously defined locally here; removed in favour of the shared version
+# (see docs/audit/150-fixups-2026-06-02.md §5.1).
 
 
 def _components_from_syft(syft: Any) -> list[dict[str, str]]:

@@ -33,6 +33,12 @@ SEV_STYLE = {
 def load_json(path: str | os.PathLike[str] | None):
     if not path or not os.path.exists(path):
         return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as exc:
+        print(f"[warn] could not load {path}: {exc}", file=sys.stderr)
+        return None
 
 
 def hash_target(path: str | os.PathLike[str] | None) -> dict[str, str]:
@@ -51,12 +57,6 @@ def hash_target(path: str | os.PathLike[str] | None) -> dict[str, str]:
         "sha1": sha1_digest.hexdigest(),
         "sha256": sha256_digest.hexdigest(),
     }
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except Exception as exc:
-        print(f"[warn] could not load {path}: {exc}", file=sys.stderr)
-        return None
 
 
 def parse_grype(data):
@@ -166,6 +166,14 @@ def parse_syft_components(data):
         )
     components.sort(key=lambda item: (item["name"], item["version"], item["type"]))
     return components
+
+
+def has_scan_evidence(syft_data, findings, components):
+    if findings or components:
+        return True
+    if not isinstance(syft_data, dict):
+        return False
+    return bool(syft_data.get("files") or syft_data.get("artifacts"))
 
 
 def severity_badge(severity):
@@ -958,7 +966,7 @@ def main():
     findings += parse_cvebt(load_json(os.path.join(artifacts_dir, "reports", "cve-bin-tool", "report.json")))
     components = parse_syft_components(syft_data)
 
-    if not findings:
+    if not has_scan_evidence(syft_data, findings, components):
         print("[warn] no findings loaded - check artifacts/ structure", file=sys.stderr)
 
     return generate_html_site(findings, args.target, artifacts_dir, args.output, components)

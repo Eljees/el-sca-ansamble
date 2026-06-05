@@ -15,7 +15,7 @@ touching the cache.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,7 @@ VEX_PROVENANCE_PATH = Path("artifacts/provenance/trivy-vex.json")
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _vex_dir(config: dict[str, Any]) -> Path:
@@ -74,7 +74,7 @@ def _fresh_lkg(vex_dir: Path, max_age_hours: float) -> list[Path]:
     Tolerant of an unreadable cache dir (``OSError``/``PermissionError`` under a
     non-root container user): treated as "no LKG available" rather than raising.
     """
-    cutoff = datetime.now(timezone.utc).timestamp() - max_age_hours * 3600
+    cutoff = datetime.now(UTC).timestamp() - max_age_hours * 3600
     try:
         if not vex_dir.is_dir():
             return []
@@ -88,9 +88,7 @@ def _fresh_lkg(vex_dir: Path, max_age_hours: float) -> list[Path]:
         return []
 
 
-def fetch_vex(
-    config: dict[str, Any], *, session: requests.Session | None = None
-) -> dict[str, Any]:
+def fetch_vex(config: dict[str, Any], *, session: requests.Session | None = None) -> dict[str, Any]:
     """Fetch + atomically publish VEX docs for Trivy and write provenance.
 
     Returns the provenance payload.  The caller maps it to an exit code

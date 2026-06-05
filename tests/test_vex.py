@@ -10,11 +10,15 @@ The fetch_vex tests patch attempt_sources so no real HTTP calls are made.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+
+if sys.version_info < (3, 11):
+    pytest.skip("vex module requires Python 3.11+ (datetime.UTC)", allow_module_level=True)
 
 from resilient_updates.source_policy import SourceCandidate
 from resilient_updates.vex import (
@@ -27,10 +31,10 @@ from resilient_updates.vex import (
     fetch_vex,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _minimal_config(tmp_path: Path, vex_repos: list | None = None) -> dict:
     """Minimal feed_sources-style config for vex tests."""
@@ -57,6 +61,8 @@ def _make_source(name: str = "primary", url: str = "http://example.invalid/vex.j
 # _vex_dir
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+@pytest.mark.smoke
 def test_vex_dir_uses_cache_dir(tmp_path: Path) -> None:
     cfg = {"trivy": {"cache_dir": str(tmp_path / "cache")}}
     result = _vex_dir(cfg)
@@ -71,6 +77,7 @@ def test_vex_dir_default_when_missing() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # _format_for
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_format_for_matches_source_name() -> None:
     cfg = {
@@ -99,12 +106,16 @@ def test_format_for_lowercases_value() -> None:
 # _ext_for
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("fmt,expected", [
-    ("openvex", "openvex.json"),
-    ("csaf", "csaf.json"),
-    ("cyclonedx", "cdx.json"),
-    ("unknown_format", "openvex.json"),  # falls back to default
-])
+
+@pytest.mark.parametrize(
+    "fmt,expected",
+    [
+        ("openvex", "openvex.json"),
+        ("csaf", "csaf.json"),
+        ("cyclonedx", "cdx.json"),
+        ("unknown_format", "openvex.json"),  # falls back to default
+    ],
+)
 def test_ext_for(fmt: str, expected: str) -> None:
     assert _ext_for(fmt) == expected
 
@@ -112,6 +123,7 @@ def test_ext_for(fmt: str, expected: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # _now_iso
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_now_iso_returns_utc_string() -> None:
     result = _now_iso()
@@ -123,6 +135,7 @@ def test_now_iso_returns_utc_string() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # _atomic_write_bytes
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_atomic_write_bytes_creates_file(tmp_path: Path) -> None:
     target = tmp_path / "doc.json"
@@ -148,6 +161,7 @@ def test_atomic_write_bytes_overwrites_existing(tmp_path: Path) -> None:
 # _fresh_lkg
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_fresh_lkg_missing_dir_returns_empty(tmp_path: Path) -> None:
     result = _fresh_lkg(tmp_path / "nonexistent", max_age_hours=24)
     assert result == []
@@ -171,6 +185,7 @@ def test_fresh_lkg_excludes_stale_files(tmp_path: Path) -> None:
     # Set mtime to 48 hours ago
     old_mtime = time.time() - 48 * 3600
     import os
+
     os.utime(stale, (old_mtime, old_mtime))
     result = _fresh_lkg(vex_dir, max_age_hours=24)
     assert stale not in result
@@ -189,8 +204,10 @@ def test_fresh_lkg_excludes_dot_new_files(tmp_path: Path) -> None:
 # fetch_vex
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _make_attempt_result(source: SourceCandidate, success: bool):
     from resilient_updates.fallback import AttemptResult, FailureReason
+
     return AttemptResult(
         source=source,
         success=success,
@@ -204,7 +221,9 @@ def test_fetch_vex_happy_path(tmp_path: Path) -> None:
     """fetch_vex publishes VEX bytes and returns activation_status='published'."""
     vex_content = b'{"@context": "https://openvex.dev/ns/v0.2.0"}'
     source = _make_source()
-    cfg = _minimal_config(tmp_path, vex_repos=[{"name": "primary", "url": source.url, "priority": 10, "enabled": True}])
+    cfg = _minimal_config(
+        tmp_path, vex_repos=[{"name": "primary", "url": source.url, "priority": 10, "enabled": True}]
+    )
 
     with (
         patch("resilient_updates.vex.build_sources", return_value=[source]),
@@ -225,7 +244,9 @@ def test_fetch_vex_happy_path(tmp_path: Path) -> None:
 def test_fetch_vex_uses_lkg_when_all_sources_fail(tmp_path: Path) -> None:
     """fetch_vex falls back to a recently-cached file when download fails."""
     source = _make_source()
-    cfg = _minimal_config(tmp_path, vex_repos=[{"name": "primary", "url": source.url, "priority": 10, "enabled": True}])
+    cfg = _minimal_config(
+        tmp_path, vex_repos=[{"name": "primary", "url": source.url, "priority": 10, "enabled": True}]
+    )
 
     # Pre-populate the VEX cache directory with a "fresh" file
     vex_dir = tmp_path / "trivy" / "vex"

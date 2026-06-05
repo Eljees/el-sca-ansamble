@@ -1,6 +1,24 @@
 param()
 
 $ErrorActionPreference = "Stop"
+function Import-LocalEnv {
+  $envFile = Join-Path (Get-Location).Path ".env.local"
+  if (-not (Test-Path $envFile)) { return }
+  foreach ($line in Get-Content $envFile) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if ($line.TrimStart().StartsWith("#")) { continue }
+    $parts = $line -split "=", 2
+    if ($parts.Count -ne 2) { continue }
+    [Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim(), "Process")
+  }
+}
+function Initialize-ComposePlaceholders {
+  $placeholder = (Get-Location).Path
+  if (-not $env:SCAN_TARGET_HOST)    { $env:SCAN_TARGET_HOST = $placeholder }
+  if (-not $env:EXTRACT_INPUT_HOST)  { $env:EXTRACT_INPUT_HOST = $placeholder }
+  if (-not $env:SCAN_TARGET_DISPLAY) { $env:SCAN_TARGET_DISPLAY = $placeholder }
+  if (-not $env:REPORT_OUTPUT)       { $env:REPORT_OUTPUT = "/workspace/artifacts/reports/final/cve_analysis_report_generated_ru.md" }
+}
 function Invoke-ComposeChecked {
   param(
     [Parameter(Mandatory=$true)]
@@ -14,6 +32,8 @@ function Invoke-ComposeChecked {
 
 docker --version | Out-Null
 docker compose version | Out-Null
+Import-LocalEnv
+Initialize-ComposePlaceholders
 New-Item -ItemType Directory -Force -Path "artifacts/provenance" | Out-Null
 Invoke-ComposeChecked -Args @("run", "--rm", "grype-updater", "update", "grype")
 Invoke-ComposeChecked -Args @("run", "--rm", "grype-db-importer")

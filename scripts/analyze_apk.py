@@ -27,6 +27,7 @@ try:
     from datetime import UTC  # py3.11+
 except ImportError:
     from datetime import timezone as _tz
+
     UTC = _tz.utc  # noqa: UP017
 from datetime import datetime
 from pathlib import Path
@@ -144,7 +145,6 @@ def parse_with_androguard(apk_path: Path) -> dict[str, Any]:
     # Try to get declared activities / services for context
     with contextlib.suppress(Exception):
         result["declared_components"] = [a.get_main_activity() or ""]
-
 
     # Enumerate top-level package names from DEX class list (heuristic for 3rd-party libs)
     try:

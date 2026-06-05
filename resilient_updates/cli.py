@@ -9,6 +9,7 @@ try:
     from datetime import UTC  # py3.11+
 except ImportError:
     from datetime import timezone as _tz
+
     UTC = _tz.utc  # noqa: UP017
 from datetime import datetime
 from pathlib import Path
@@ -598,17 +599,33 @@ def main() -> int:
     scan_parser.add_argument("--json", action="store_true")
     dashboard_parser = subparsers.add_parser(
         "dashboard",
-        help="launch the read-only run dashboard (ADR-0006); requires fastapi + uvicorn",
+        help="launch the dashboard GUI (scan/update + read-only browser); requires fastapi + uvicorn",
     )
     dashboard_parser.add_argument("--host", default="127.0.0.1")
     dashboard_parser.add_argument("--port", type=int, default=8080)
     dashboard_parser.add_argument("--artifacts-dir", default="artifacts")
+    dashboard_parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="directory to invoke 'docker compose' from for scans/DB updates "
+        "(default: parent of --artifacts-dir)",
+    )
     doctor_parser = subparsers.add_parser(
         "update-doctor",
         help="probe every DB source over every proxy chain; print a reachability matrix (ADR-0007)",
     )
     doctor_parser.add_argument("--timeout", type=float, default=8.0)
     doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument(
+        "--suggest-proxy",
+        action="store_true",
+        help="print ONLY the recommended proxy URL (for `$env:ALL_PROXY = (... --suggest-proxy)`)",
+    )
+    doctor_parser.add_argument(
+        "--for-container",
+        action="store_true",
+        help="with --suggest-proxy: translate 127.0.0.1/localhost -> host.docker.internal",
+    )
     write_summary = subparsers.add_parser(
         "write-run-summary",
         help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
@@ -799,11 +816,21 @@ def main() -> int:
         except ImportError:
             print("dashboard requires uvicorn: pip install 'uvicorn[standard]' fastapi")
             return EXIT_VALIDATION_FAILED
-        uvicorn.run(create_app(args.artifacts_dir), host=args.host, port=args.port)
+        uvicorn.run(
+            create_app(args.artifacts_dir, repo_root=args.repo_root),
+            host=args.host,
+            port=args.port,
+        )
         return EXIT_SUCCESS
     if args.command == "update-doctor":
-        from .update_doctor import build_matrix, format_matrix
+        from .update_doctor import build_matrix, format_matrix, recommended_proxy
 
+        if args.suggest_proxy:
+            proxy = recommended_proxy(config, timeout=args.timeout, for_container=args.for_container)
+            if proxy:
+                print(proxy)
+                return EXIT_SUCCESS
+            return EXIT_ALL_SOURCES_FAILED
         matrix = build_matrix(config, timeout=args.timeout)
         if args.json:
             print(json.dumps(matrix, indent=2, ensure_ascii=False))

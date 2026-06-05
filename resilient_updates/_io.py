@@ -48,7 +48,10 @@ def sha1_file(path: Path) -> str:
     SHA-1 is kept only for compatibility with existing provenance schemas
     that already include both sha1 and sha256 of input archives.
     """
-    digest = sha1()
+    # usedforsecurity=False: this digest is a provenance fingerprint for
+    # schema compatibility, not a security primitive (silences bandit B324,
+    # FIPS-friendly).
+    digest = sha1(usedforsecurity=False)
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(_CHUNK), b""):
             digest.update(chunk)
@@ -70,7 +73,7 @@ def hash_pair(path: Path) -> dict[str, str]:
     Cheaper than calling ``sha1_file(p)`` + ``sha256_file(p)`` because
     the file bytes are streamed once and fed to both hashers.
     """
-    sha1_digest = sha1()
+    sha1_digest = sha1(usedforsecurity=False)  # provenance fingerprint, not security (B324)
     sha256_digest = sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(_CHUNK), b""):
@@ -151,3 +154,22 @@ def collect_json(root: Path, names: Iterable[str]) -> list[Any]:
         if data is not None:
             payloads.append(data)
     return payloads
+
+
+# ---------------------------------------------------------------------------
+# Severity normalisation (shared across reporting.py and scanner_diff.py)
+# ---------------------------------------------------------------------------
+
+
+def normalize_severity(value: Any) -> str:
+    """Normalise a raw scanner severity string to upper-case.
+
+    Returns ``"UNKNOWN"`` for any falsy input (``None``, ``""``, ``0``, …).
+    This single canonical implementation replaces the previously-duplicated
+    ``_normalize_severity`` helpers in ``reporting.py`` and
+    ``scanner_diff.py`` (see ``docs/audit/20-architecture.md`` §1 and
+    ``docs/audit/150-fixups-2026-06-02.md`` §5.1).
+    """
+    if not value:
+        return "UNKNOWN"
+    return str(value).upper()

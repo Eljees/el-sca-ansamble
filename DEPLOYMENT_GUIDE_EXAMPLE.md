@@ -36,9 +36,9 @@
 | Component | Specs | Role |
 |-----------|-------|------|
 | **Local Machine** | Windows 10/11 | Management, proxy, artifact source |
-| **Network IP** | 192.168.1.126 | Local management station |
+| **Network IP** | <MGMT_STATION_IP> | Local management station |
 | **Target Server** | Ubuntu 24.04 LTS | SCA pipeline execution host |
-| **Server IP** | 192.168.1.33 | Primary deployment target |
+| **Server IP** | <SERVER_IP> | Primary deployment target |
 | **Storage Disk** | `/dev/sdb1` (20GB) | SCA working directory `/opt/sca-work` |
 
 ### Software Stack
@@ -49,7 +49,7 @@ Windows Host
 ├─ PowerShell (pipeline orchestration)
 └─ SSH client (reverse tunnel management)
 
-Ubuntu Server (192.168.1.33)
+Ubuntu Server (<SERVER_IP>)
 ├─ Docker 29.5.0 (container runtime)
 ├─ docker-compose 1.29.2 (orchestration)
 ├─ /opt/sca-work/ (project root)
@@ -68,12 +68,12 @@ Ubuntu Server (192.168.1.33)
 ### X-Ray SOCKS5 Proxy Setup
 
 **Proxy Details:**
-- **Server:** Windows host (192.168.1.126)
+- **Server:** Windows host (<MGMT_STATION_IP>)
 - **Port:** 10808
 - **Protocol:** SOCKS5 (VLESS backend via X-Ray)
 - **LAN Access:** Enabled (`AllowLANConn: true` in v2rayN config)
 - **Auth:** None required
-- **Config File:** `D:\!ya_drive_sync\YandexDisk\__Making_ProxY\v2rayN-windows-64\guiConfigs\guiNConfig.json`
+- **Config File:** `<PROXY_CLIENT_CONFIG_PATH>`
 
 **Key Configuration (from guiNConfig.json):**
 ```json
@@ -98,7 +98,7 @@ Ubuntu Server (192.168.1.33)
 
 **Command (run on Windows):**
 ```powershell
-ssh -R 10808:127.0.0.1:10808 elaria@192.168.1.33 -N
+ssh -R 10808:127.0.0.1:10808 <user>@<SERVER_IP> -N
 ```
 
 **Expected Result:**
@@ -117,7 +117,7 @@ tcp        0      0 127.0.0.1:10808         0.0.0.0:*        LISTEN
 [Service]
 Environment="HTTP_PROXY=socks5://127.0.0.1:10808"
 Environment="HTTPS_PROXY=socks5://127.0.0.1:10808"
-Environment="NO_PROXY=localhost,127.0.0.1,192.168.1.0/24"
+Environment="NO_PROXY=localhost,127.0.0.1,<LAN_SUBNET>"
 ```
 
 **Apply changes:**
@@ -244,7 +244,7 @@ df -h /opt/sca-work
 
 ```powershell
 # On Windows - create archive
-cd D:\!ya_drive_sync\YandexDisk\rostel\
+cd <WORKSPACE_DIR>\
 tar -czf el-sca-ansamble.tar.gz el-sca-ansamble\
 # or use 7-Zip: 7z a el-sca-ansamble.7z el-sca-ansamble\
 ```
@@ -252,7 +252,7 @@ tar -czf el-sca-ansamble.tar.gz el-sca-ansamble\
 ```bash
 # On Ubuntu
 cd /opt/sca-work
-scp elaria@192.168.1.126:/path/to/el-sca-ansamble.tar.gz .
+scp <user>@<MGMT_STATION_IP>:/path/to/el-sca-ansamble.tar.gz .
 tar -xzf el-sca-ansamble.tar.gz
 ls -lah
 ```
@@ -261,7 +261,7 @@ ls -lah
 
 ```powershell
 # On Windows PowerShell
-scp -r "D:\dev\el-sca-ansamble\*" elaria@192.168.1.33:/opt/sca-work/
+scp -r "D:\dev\el-sca-ansamble\*" <user>@<SERVER_IP>:/opt/sca-work/
 ```
 
 ### Step 2.3: Verify Project Structure
@@ -491,7 +491,7 @@ cat /opt/sca-work/el-sca-ansamble/artifacts/reports/final/*.md | head -50
 **Fix:**
 1. Verify SSH reverse tunnel is running (Windows):
    ```powershell
-   ssh -R 10808:127.0.0.1:10808 elaria@192.168.1.33 -N
+   ssh -R 10808:127.0.0.1:10808 <user>@<SERVER_IP> -N
    # Keep this terminal open!
    ```
 
@@ -548,7 +548,7 @@ sudo systemctl restart docker
 tar -czf project.tar.gz el-sca-ansamble\
 
 # Transfer single file (seconds instead of hours)
-scp project.tar.gz elaria@192.168.1.33:/opt/sca-work/
+scp project.tar.gz <user>@<SERVER_IP>:/opt/sca-work/
 
 # Ubuntu - unpack
 tar -xzf project.tar.gz

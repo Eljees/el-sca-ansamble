@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 import os
 import time
+from pathlib import Path
 
 from resilient_updates.enrichment import (
     enrich_findings,

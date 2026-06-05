@@ -22,5 +22,7 @@ pytest>=8.0.0
 # server-side with the stdlib (no template engine), so jinja2 is not required.
 fastapi>=0.110
 uvicorn[standard]>=0.29
+# Multipart form parsing for the GUI artifact-upload endpoint (POST /api/scan).
+python-multipart>=0.0.9
 # TestClient transport for the dashboard endpoint tests.
 httpx>=0.27
