@@ -9,7 +9,11 @@
 # Requires Docker + docker compose v2.  Needs NO network.  Run from the repo root.
 set -euo pipefail
 
-BUNDLE_DIR="${1:-.}"
+# Default to the in-repo LFS bundle/ (shipped via Git LFS); fall back to cwd.
+BUNDLE_DIR="${1:-}"
+if [ -z "$BUNDLE_DIR" ]; then
+  if [ -f bundle/el-sca-images-light.tar ]; then BUNDLE_DIR="bundle"; else BUNDLE_DIR="."; fi
+fi
 
 echo "==> [1/4] configuring .env (strict offline + skip cve-bin-tool)"
 [ -f .env ] || cp .env.example .env

@@ -9,8 +9,12 @@
 .EXAMPLE
   .\scripts\windows\deploy-light.ps1 -BundleDir D:\incoming
 #>
-param([string]$BundleDir = (Get-Location))
+param([string]$BundleDir = "")
 $ErrorActionPreference = "Stop"
+# Default to the in-repo LFS bundle/ (shipped via Git LFS); fall back to cwd.
+if (-not $BundleDir) {
+  if (Test-Path "bundle\el-sca-images-light.tar") { $BundleDir = "bundle" } else { $BundleDir = (Get-Location) }
+}
 
 Write-Host "==> [1/4] configuring .env (strict offline + skip cve-bin-tool)"
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
