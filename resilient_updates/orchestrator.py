@@ -296,11 +296,13 @@ class JobRegistry:
         with self._lock:
             self._jobs[job.id] = job
 
-    def start_scan(self, target_host: str) -> Job:
+    def start_scan(self, target_host: str, tools: set[str] | None = None) -> Job:
+        # tools = which analysers to run (subset of syft/grype/trivy/cve-bin-tool).
+        # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
         job = Job("scan", SCAN_STAGES, target=target_host)
         self._register(job)
         threading.Thread(
-            target=self._run_scan, args=(job, target_host),
+            target=self._run_scan, args=(job, target_host, tools),
             name=f"job-{job.id}", daemon=True,
         ).start()
         return job
@@ -361,6 +363,18 @@ class JobRegistry:
 
         threading.Thread(target=run, name=f"job-{job.id}", daemon=True).start()
 
+    def _extract_produced_output(self) -> bool:
+        """True if the extractor's manifest reports a successful unpack (used to
+        keep the extract stage green even when it exited non-zero on a member)."""
+        import json
+
+        mf = self.repo_root / "artifacts" / "extracted" / "current" / "extraction_manifest.json"
+        try:
+            data = json.loads(mf.read_text(encoding="utf-8"))
+            return data.get("status") == "pass" or int(data.get("extracted_count") or 0) > 0
+        except Exception:
+            return False
+
     def _render_trivy_flags(self) -> str:
         """Render Trivy CLI flags on the host — the aquasec/trivy image has no
         python to render them itself (see scripts/update_trivy.sh)."""
@@ -380,7 +394,7 @@ class JobRegistry:
             pass
         return ""
 
-    def _run_scan(self, job: Job, target_host: str) -> None:
+    def _run_scan(self, job: Job, target_host: str, tools: set[str] | None = None) -> None:
         """Extract → re-point the target to artifacts/extracted/current → run
         each scanner stage sequentially → aggregate the report.
 
@@ -392,11 +406,21 @@ class JobRegistry:
         compose = self.compose
         extracted_host = str((self.repo_root / "artifacts" / "extracted" / "current").resolve())
 
-        # Pre-create report/artefact dirs on the host so a root-running scanner
-        # can't leave a dir the (uid 1001) report-collector then can't write to.
-        for _sub in ("reports/grype", "reports/trivy", "reports/cve-bin-tool",
-                     "reports/final", "sbom", "extracted/current", "uploads"):
+        # Pre-create REPORT dirs on the host so a root-running scanner can't
+        # leave a dir the (uid 1001) report-collector then can't write to.
+        # NB: do NOT pre-create extracted/current — the extractor cleans/owns it
+        # itself, and a host-owned dir there makes it exit non-zero.
+        for _sub in ("reports/grype", "reports/trivy", "reports/cve-bin-tool", "reports/final", "sbom"):
             (self.repo_root / "artifacts" / _sub).mkdir(parents=True, exist_ok=True)
+        # Clear stale extraction output before each run.  A leftover
+        # extracted/current (e.g. created by an earlier host process, or owned by
+        # a different container uid) makes the in-container extractor fail with
+        # "Permission denied".  The host can always delete it; the extractor then
+        # re-creates it fresh.
+        import shutil
+        _cur = self.repo_root / "artifacts" / "extracted" / "current"
+        if _cur.exists():
+            shutil.rmtree(_cur, ignore_errors=True)
         # Trivy's image has no python -> render its flags on the host (run-scan.sh).
         trivy_flags = self._render_trivy_flags()
 
@@ -407,9 +431,19 @@ class JobRegistry:
         ex_env["EXTRACT_INPUT_HOST"] = target_host
         ex_env["EXTRACT_OUTPUT"] = "/workspace/artifacts/extracted/current"
         rc = self._run_stream(
-            job, [*compose, "--profile", "extract", "run", "--rm", "artifact-extractor"], ex_env
+            job,
+            # -u 0: run as root so the extractor can always write into the
+            # bind-mounted artifacts/ (and overwrite any stale root-owned file).
+            [*compose, "--profile", "extract", "run", "--rm", "-u", "0", "artifact-extractor"],
+            ex_env,
         )
-        job.end_stage("extract", rc == 0)
+        # The extractor can exit non-zero on a single unreadable member while
+        # still unpacking everything useful; treat it as OK if the manifest says
+        # so, otherwise the whole scan would go red over one skipped file.
+        extract_ok = rc == 0 or self._extract_produced_output()
+        if extract_ok and rc != 0:
+            job.feed_line("extract: предупреждения, но содержимое распаковано — продолжаем")
+        job.end_stage("extract", extract_ok)
 
         # Re-point every scanner at the extracted directory.
         sc_env = dict(os.environ)
@@ -421,9 +455,14 @@ class JobRegistry:
         # Trivy defaults to scanning "alpine:latest"; point it at the artifact.
         sc_env["TRIVY_TARGET"] = "/scan-target"
 
-        # Light deployments ship without the (huge) cve-bin-tool DB; set
-        # EL_SCA_SKIP_CVEBT=1 to drop that stage from the GUI scan.
-        skip_cvebt = os.environ.get("EL_SCA_SKIP_CVEBT", "").strip().lower() not in ("", "0", "false", "no")
+        # Which analysers to run.  Default = all; EL_SCA_SKIP_CVEBT drops
+        # cve-bin-tool.  Grype consumes the Syft SBOM, so syft is forced on with it.
+        enabled = set(tools) if tools else {"syft", "grype", "trivy", "cve-bin-tool"}
+        if os.environ.get("EL_SCA_SKIP_CVEBT", "").strip().lower() not in ("", "0", "false", "no"):
+            enabled.discard("cve-bin-tool")
+        if "grype" in enabled:
+            enabled.add("syft")
+        stage_tool = {"sbom": "syft", "grype": "grype", "trivy": "trivy", "cve-bin-tool": "cve-bin-tool"}
 
         # (stage key, compose service, exit codes treated as success)
         stages = [
@@ -436,8 +475,9 @@ class JobRegistry:
         ]
         for key, service, ok_codes in stages:
             job.begin_stage(key)
-            if key == "cve-bin-tool" and skip_cvebt:
-                job.feed_line("cve-bin-tool: пропущен (EL_SCA_SKIP_CVEBT=1)")
+            tool = stage_tool.get(key)
+            if tool is not None and tool not in enabled:
+                job.feed_line(f"{key}: пропущен (инструмент отключён)")
                 job.end_stage(key, True)
                 continue
             run_cmd = [*compose, "--profile", "scan", "run", "--rm"]
@@ -451,9 +491,31 @@ class JobRegistry:
             rc = self._run_stream(job, run_cmd, sc_env)
             job.end_stage(key, rc in ok_codes)
 
+        # Archive the report with a timestamp (keeps history of runs).
+        self._archive_reports(job)
         # Stop the lingering grype-static dependency container (best effort).
         self._run_stream(job, [*compose, "--profile", "scan", "down", "--remove-orphans"], sc_env)
         job.finalize()
+
+    def _archive_reports(self, job: Job) -> None:
+        """Copy artifacts/reports/final/* into a timestamped history folder so
+        successive scans don't overwrite each other."""
+        import datetime
+        import shutil
+
+        final = self.repo_root / "artifacts" / "reports" / "final"
+        if not final.is_dir():
+            return
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        dest = self.repo_root / "artifacts" / "reports" / "history" / ts
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for f in final.glob("*"):
+                if f.is_file():
+                    shutil.copy2(f, dest / f.name)
+            job.feed_line(f"report archived -> artifacts/reports/history/{ts}/")
+        except Exception as exc:  # pragma: no cover - defensive
+            job.feed_line(f"WARN: report archive failed: {exc!r}")
 
 
 def sse_stream(job: Job, poll_timeout: float = 1.0) -> Iterator[str]:

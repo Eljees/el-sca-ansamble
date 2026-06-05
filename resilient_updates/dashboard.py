@@ -335,6 +335,22 @@ _GUI_HTML = """<!doctype html>
   .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   a { color:var(--accent); }
   .muted { color:var(--muted); }
+  .tools-select { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:12px; }
+  .tools-select label { display:flex; gap:6px; align-items:center; cursor:pointer; }
+  /* analysis map */
+  #map { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .map-col { display:flex; flex-direction:column; gap:8px; }
+  .map-node { padding:8px 12px; border:1px solid var(--line); border-radius:10px;
+              background:#10161d; min-width:120px; text-align:center; font-size:13px; }
+  .map-node .ms { font-size:11px; color:var(--muted); }
+  .map-node.active { border-color:var(--active); box-shadow:0 0 0 1px var(--active) inset; }
+  .map-node.active .ms { color:var(--active); }
+  .map-node.done { border-color:var(--ok); } .map-node.done .ms { color:var(--ok); }
+  .map-node.error { border-color:var(--err); } .map-node.error .ms { color:var(--err); }
+  .map-node.skip { opacity:.45; }
+  .map-arrow { color:var(--muted); font-size:20px; }
+  iframe#report-frame { width:100%; height:600px; border:1px solid var(--line);
+                        border-radius:10px; background:#fff; }
 </style></head>
 <body>
 <header>
@@ -350,6 +366,18 @@ _GUI_HTML = """<!doctype html>
       или нажмите, чтобы выбрать файл — анализ начнётся автоматически.</p>
       <input type="file" id="file" hidden>
     </div>
+    <div class="tools-select" id="tools-select">
+      <span class="muted">Инструменты:</span>
+      <label><input type="checkbox" value="syft" checked> Syft (SBOM)</label>
+      <label><input type="checkbox" value="grype" checked> Grype</label>
+      <label><input type="checkbox" value="trivy" checked> Trivy</label>
+      <label><input type="checkbox" value="cve-bin-tool" checked> cve-bin-tool</label>
+    </div>
+    <div class="row" id="ready-row" style="display:none; margin-top:12px">
+      <span class="muted">Артефакт: <b id="ready-name"></b></span>
+      <button id="btn-go">▶ Тулз ок, погнали</button>
+      <span class="muted">— выбери инструменты выше и запускай</span>
+    </div>
   </section>
 
   <section class="panel">
@@ -359,6 +387,16 @@ _GUI_HTML = """<!doctype html>
       <strong id="job-status" class="muted">ожидание</strong>
     </div>
     <pre id="log">Лог появится здесь после запуска…</pre>
+  </section>
+
+  <section class="panel">
+    <h2>Карта анализа</h2>
+    <div id="map"></div>
+  </section>
+
+  <section class="panel" id="report-panel" style="display:none">
+    <h2>Отчёт</h2>
+    <iframe id="report-frame" title="report"></iframe>
   </section>
 
   <section class="panel">
@@ -382,8 +420,9 @@ _GUI_HTML = """<!doctype html>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const logEl = $("#log"), pipeEl = $("#pipeline"), statusEl = $("#job-status"), connEl = $("#conn");
+const logEl = $("#log"), pipeEl = $("#pipeline"), statusEl = $("#job-status"), connEl = $("#conn"), mapEl = $("#map");
 let es = null;
+let stagesByKey = {};
 
 function renderStages(stages){
   pipeEl.innerHTML = "";
@@ -393,7 +432,30 @@ function renderStages(stages){
     d.innerHTML = `<div class="lbl">${s.label}</div><div class="st">${s.status||"pending"}</div>`;
     pipeEl.appendChild(d);
   });
+  stagesByKey = {}; (stages||[]).forEach(s => stagesByKey[s.key] = s.status||"pending");
+  renderMap();
 }
+function mapNode(key, label){
+  const st = stagesByKey[key] || "pending";
+  return `<div class="map-node ${st}"><div>${label}</div><div class="ms">${st}</div></div>`;
+}
+function renderMap(){
+  // Артефакт → Extract → веер инструментов → Отчёт
+  mapEl.innerHTML =
+    `<div class="map-col"><div class="map-node">Артефакт</div></div>` +
+    `<div class="map-arrow">→</div>` +
+    `<div class="map-col">${mapNode("extract","Extract")}</div>` +
+    `<div class="map-arrow">→</div>` +
+    `<div class="map-col">${mapNode("sbom","Syft")}${mapNode("grype","Grype")}${mapNode("trivy","Trivy")}${mapNode("cve-bin-tool","cve-bin-tool")}</div>` +
+    `<div class="map-arrow">→</div>` +
+    `<div class="map-col">${mapNode("report","Отчёт")}</div>`;
+}
+function showReport(){
+  const f = $("#report-frame");
+  f.src = "/api/report/index.html?t=" + Date.now();
+  $("#report-panel").style.display = "";
+}
+renderMap();
 function appendLog(line){
   if(line==null) return;
   const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4;
@@ -421,13 +483,26 @@ function follow(jobId){
       statusEl.textContent = ok ? "✓ готово" : "✗ ошибка";
       es.close(); connEl.textContent = "";
       loadTools();
+      if(ok) showReport();
     }
   };
   es.onerror = () => { connEl.textContent = ""; };
 }
+let pendingFile = null;
+function selectFile(file){
+  pendingFile = file;
+  $("#ready-name").textContent = file.name;
+  $("#ready-row").style.display = "";
+  $("#report-panel").style.display = "none";
+  statusEl.textContent = "готов к запуску — выбери инструменты и нажми «погнали»";
+  statusEl.className = "muted";
+}
 async function startScan(file){
-  const fd = new FormData(); fd.append("file", file);
+  const tools = Array.from(document.querySelectorAll("#tools-select input:checked"))
+    .map(c => c.value).join(",");
+  const fd = new FormData(); fd.append("file", file); fd.append("tools", tools);
   statusEl.textContent = "загрузка артефакта…";
+  $("#report-panel").style.display = "none";
   const r = await fetch("/api/scan", { method:"POST", body:fd });
   if(!r.ok){ statusEl.textContent = "ошибка запуска: " + r.status; return; }
   follow((await r.json()).job_id);
@@ -465,12 +540,13 @@ async function loadTools(){
 }
 const drop = $("#drop"), fileInput = $("#file");
 drop.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", e => { if(e.target.files[0]) startScan(e.target.files[0]); });
+fileInput.addEventListener("change", e => { if(e.target.files[0]) selectFile(e.target.files[0]); });
 ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => {
   e.preventDefault(); drop.classList.add("hot"); }));
 ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
   e.preventDefault(); drop.classList.remove("hot"); }));
-drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if(f) startScan(f); });
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if(f) selectFile(f); });
+$("#btn-go").addEventListener("click", () => { if(pendingFile) startScan(pendingFile); });
 $("#btn-update").addEventListener("click", startUpdate);
 $("#btn-refresh").addEventListener("click", loadTools);
 loadTools();
@@ -491,8 +567,8 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     parent of ``artifacts_dir``).  Scans and DB updates run as host
     subprocesses via :mod:`resilient_updates.orchestrator`.
     """
-    from fastapi import FastAPI, File, HTTPException, UploadFile
-    from fastapi.responses import HTMLResponse, StreamingResponse
+    from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+    from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
     from .orchestrator import JobRegistry, sse_stream
 
@@ -546,15 +622,27 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         return tool_status(root, rroot)
 
     @app.post("/api/scan", response_model=None)
-    def scan(file: UploadFile = File(...)) -> dict[str, str]:
+    def scan(file: UploadFile = File(...), tools: str = Form("")) -> dict[str, str]:
         uploads.mkdir(parents=True, exist_ok=True)
         safe_name = Path(file.filename or "artifact").name
         dest = uploads / safe_name
         with dest.open("wb") as fh:
             while chunk := file.file.read(1024 * 1024):
                 fh.write(chunk)
-        job = registry.start_scan(str(dest.resolve()))
+        # tools = comma-separated subset of syft,grype,trivy,cve-bin-tool; empty = all.
+        selected = {t.strip() for t in tools.split(",") if t.strip()} or None
+        job = registry.start_scan(str(dest.resolve()), tools=selected)
         return {"job_id": job.id, "target": str(dest)}
+
+    @app.get("/api/report/{path:path}")
+    def report_file(path: str):
+        base = (root / "reports" / "final").resolve()
+        target = (base / path).resolve()
+        if base != target and base not in target.parents:
+            raise HTTPException(status_code=400, detail="bad path")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="report not found")
+        return FileResponse(target)
 
     @app.post("/api/update-db")
     def update_db() -> dict[str, str]:
