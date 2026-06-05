@@ -811,6 +811,19 @@ def main() -> int:
     if args.command == "dashboard":
         from .dashboard import create_app
 
+        # Honour settings from the repo's .env (e.g. EL_SCA_SKIP_CVEBT) without
+        # requiring the user to also export them — compose reads .env itself, but
+        # the orchestrator's Python checks read os.environ.
+        _root = Path(args.repo_root) if args.repo_root else Path(args.artifacts_dir).resolve().parent
+        _envfile = _root / ".env"
+        if _envfile.is_file():
+            for _raw in _envfile.read_text(encoding="utf-8", errors="replace").splitlines():
+                _line = _raw.strip()
+                if _line.startswith("#") or "=" not in _line:
+                    continue
+                _k, _, _v = _line.partition("=")
+                os.environ.setdefault(_k.strip(), _v.strip())
+
         try:
             import uvicorn
         except ImportError:
