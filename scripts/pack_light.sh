@@ -16,14 +16,25 @@ export SCAN_TARGET_HOST="/tmp/x"     # satisfies the ${SCAN_TARGET_HOST:?} guard
 export COMPOSE_PROJECT_NAME="el-sca-ansamble"   # stable image prefix for the bundle
 PROFILES=(--profile scan --profile report --profile db-bundle)
 
-echo "==> [1/5] building local images (no cve-bin-tool)"
-docker compose --profile scan --profile report build artifact-extractor report-collector stack-info db-admin
+echo "==> [1/5] building local images"
+BUILD_SVCS=(artifact-extractor report-collector stack-info db-admin)
+if [ "${WITH_CVEBT:-0}" != "0" ]; then
+  # Ship cve-bin-tool too: build its scanner image so the bundle is complete
+  # (cve.db alone is useless without the image that reads it).
+  BUILD_SVCS+=(cve-bin-tool-scanner)
+fi
+docker compose --profile scan --profile report build "${BUILD_SVCS[@]}"
 
 echo "==> [2/5] pulling public images"
 docker compose "${PROFILES[@]}" pull --ignore-buildable || true
 
-echo "==> [3/5] saving stack images (excluding cve-bin-tool) -> $OUT"
-mapfile -t imgs < <(docker compose "${PROFILES[@]}" config --images | sort -u | grep -v 'cve-bin-tool')
+if [ "${WITH_CVEBT:-0}" != "0" ]; then
+  echo "==> [3/5] saving stack images (incl. cve-bin-tool) -> $OUT"
+  mapfile -t imgs < <(docker compose "${PROFILES[@]}" config --images | sort -u)
+else
+  echo "==> [3/5] saving stack images (excluding cve-bin-tool) -> $OUT"
+  mapfile -t imgs < <(docker compose "${PROFILES[@]}" config --images | sort -u | grep -v 'cve-bin-tool')
+fi
 printf '    %s\n' "${imgs[@]}"
 docker save "${imgs[@]}" -o "$OUT/el-sca-images-light.tar"
 

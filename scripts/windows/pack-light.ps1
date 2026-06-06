@@ -17,14 +17,25 @@ $env:COMPOSE_PROJECT_NAME = "el-sca-ansamble"   # stable image prefix for the bu
 $profiles = @("--profile", "scan", "--profile", "report", "--profile", "db-bundle")
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-Write-Host "==> [1/5] building local images (no cve-bin-tool)"
-docker compose --profile scan --profile report build artifact-extractor report-collector stack-info db-admin
+Write-Host "==> [1/5] building local images"
+$buildSvcs = @("artifact-extractor", "report-collector", "stack-info", "db-admin")
+if ($WithCveBinTool) {
+  # Ship cve-bin-tool too: build its scanner image so the bundle is complete
+  # (cve.db alone is useless without the image that reads it).
+  $buildSvcs += "cve-bin-tool-scanner"
+}
+docker compose --profile scan --profile report build @buildSvcs
 
 Write-Host "==> [2/5] pulling public images (trivy / grype / syft / python / alpine)"
 docker compose @profiles pull --ignore-buildable
 
-Write-Host "==> [3/5] saving stack images (excluding cve-bin-tool) -> $Out"
-$imgs = docker compose @profiles config --images | Sort-Object -Unique | Where-Object { $_ -notmatch "cve-bin-tool" }
+if ($WithCveBinTool) {
+  Write-Host "==> [3/5] saving stack images (incl. cve-bin-tool) -> $Out"
+  $imgs = docker compose @profiles config --images | Sort-Object -Unique
+} else {
+  Write-Host "==> [3/5] saving stack images (excluding cve-bin-tool) -> $Out"
+  $imgs = docker compose @profiles config --images | Sort-Object -Unique | Where-Object { $_ -notmatch "cve-bin-tool" }
+}
 $imgs | ForEach-Object { Write-Host "    $_" }
 docker save $imgs -o (Join-Path $Out "el-sca-images-light.tar")
 
