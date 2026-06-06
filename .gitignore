@@ -81,3 +81,11 @@ artifacts/db_status/
 !bundle/
 !bundle/*.tar
 !bundle/*.tar.gz
+
+# Background-scan job records written by tools/docker-mcp run_scan_async.
+artifacts/mcp-jobs/
+artifacts/run-scan.log*
+
+# Per-run history snapshots and local enrichment feeds (EPSS/KEV).
+artifacts/runs/
+artifacts/enrichment/

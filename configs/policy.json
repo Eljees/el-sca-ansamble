@@ -1,0 +1,6 @@
+{
+  "_comment": "Severity policy gate for the final report (reporting.build_report). The scan never aborts on 'fail' — the decision lands in 'Policy decision' in the report header. Raise limits or delete this file to return to 'no-policy'.",
+  "max_counts": {
+    "CRITICAL": 0
+  }
+}

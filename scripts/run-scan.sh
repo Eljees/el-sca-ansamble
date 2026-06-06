@@ -162,8 +162,10 @@ ARTIFACTS_DIR="$(pwd)/artifacts"
 
 # Mirror all pipeline output to a log file so a non-interactive caller (the MCP
 # bridge) can inspect progress/errors even when its own request times out.
+# One log per run; previous run kept as .1 (simple two-slot rotation, no growth).
 mkdir -p "$ARTIFACTS_DIR"
-exec > >(tee -a "$ARTIFACTS_DIR/run-scan.log") 2>&1
+{ [ -f "$ARTIFACTS_DIR/run-scan.log" ] && mv -f "$ARTIFACTS_DIR/run-scan.log" "$ARTIFACTS_DIR/run-scan.log.1" 2>/dev/null; } || true
+exec > >(tee "$ARTIFACTS_DIR/run-scan.log") 2>&1
 echo "[run-scan] $(date -u +%Y-%m-%dT%H:%M:%SZ) start  py=$PYTHON_BIN tool=$TOOL target=$TARGET"
 
 echo ""
@@ -417,6 +419,29 @@ echo "[stage] report-html (host $PYTHON_BIN)"
   --artifacts-dir artifacts \
   --target        "$SCAN_TARGET_DISPLAY" \
   --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"
+
+# ── Archive run history ───────────────────────────────────────────────────────
+# Snapshot the per-run evidence into artifacts/runs/<case>-<ts>/ so consecutive
+# runs stop overwriting each other and `Diff с предыдущим прогоном` (reporting)
+# and the dashboard can look back. Layout mirrors artifacts/ so scanner_diff
+# can read an archived run directly. Best-effort: never fails the pipeline.
+{
+  RUN_DIR="$ARTIFACTS_DIR/runs/${CASE_ID}-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$RUN_DIR/sbom" "$RUN_DIR/reports/grype" "$RUN_DIR/reports/trivy" "$RUN_DIR/reports/cve-bin-tool"
+  cp -r "$ARTIFACTS_DIR/reports/final" "$RUN_DIR/reports/final" 2>/dev/null
+  for t in grype trivy cve-bin-tool; do
+    cp "$ARTIFACTS_DIR/reports/$t/report.json" "$RUN_DIR/reports/$t/" 2>/dev/null
+  done
+  cp "$ARTIFACTS_DIR/sbom/syft.json" "$RUN_DIR/sbom/" 2>/dev/null
+  for f in summary.json status.json run_manifest.json db_snapshot.json; do
+    cp "$ARTIFACTS_DIR/$f" "$RUN_DIR/" 2>/dev/null
+  done
+  cp "$ARTIFACTS_DIR/extracted/current/extraction_manifest.json" "$RUN_DIR/" 2>/dev/null
+  cp "$ARTIFACTS_DIR/run-scan.log" "$RUN_DIR/" 2>/dev/null
+  echo "[history] run archived -> $RUN_DIR"
+  # Retention: keep the 20 most recent runs.
+  ls -dt "$ARTIFACTS_DIR/runs"/*/ 2>/dev/null | tail -n +21 | xargs -r rm -rf
+} || true
 
 # ── Done ──────────────────────────────────────────────────────────────────────────────────
 echo ""

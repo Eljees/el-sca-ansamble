@@ -234,3 +234,75 @@ def test_write_to_disk_respects_no_overwrite(tmp_path: Path):
     assert (root / "status.json").exists()
     assert (root / "run_manifest.json").exists()
     assert (root / "db_snapshot.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# db-status probe fallback (scan-only runs without provenance)
+# ---------------------------------------------------------------------------
+
+
+def _seed_probe(root: Path, tool: str, *, exists=True, age=9.5, ts="2026-06-05T06:50:00+00:00"):
+    (root / "db_status").mkdir(parents=True, exist_ok=True)
+    (root / "db_status" / f"{tool}.json").write_text(
+        json.dumps(
+            {
+                "tool": tool,
+                "exists": exists,
+                "age_hours": age,
+                "warning": bool(age and age > 24),
+                "timestamp_utc": ts,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_db_probe_fills_unknown_states_when_no_provenance(tmp_path: Path):
+    root = _seed_root(tmp_path)
+    for tool in ("grype", "trivy", "cve-bin-tool"):
+        _seed_probe(root, tool, age=12.3)
+
+    snapshot = derive(root)["db_snapshot"]
+
+    for tool in ("grype", "trivy", "cve-bin-tool"):
+        assert snapshot["tools"][tool]["update_state"] == "cached-present"
+        assert snapshot["tools"][tool]["db_version"] == "cached (age 12.3h)"
+        assert snapshot["tools"][tool]["updated_at"]
+    assert snapshot["snapshot_id"]
+
+
+def test_db_probe_missing_db_reports_missing(tmp_path: Path):
+    root = _seed_root(tmp_path)
+    _seed_probe(root, "grype", exists=False, age=None)
+
+    snapshot = derive(root)["db_snapshot"]
+
+    assert snapshot["tools"]["grype"]["update_state"] == "missing"
+    assert snapshot["tools"]["grype"]["db_version"] == ""
+
+
+def test_provenance_always_wins_over_probe(tmp_path: Path):
+    root = _seed_root(
+        tmp_path,
+        prov_grype={
+            "activation_status": "active",
+            "checksum": "deadbeef",
+            "freshness_metadata": {"built": "2026-06-01T00:00:00Z"},
+            "timestamp_utc": "2026-06-01T00:00:01Z",
+        },
+    )
+    _seed_probe(root, "grype", age=99.0)
+
+    snapshot = derive(root)["db_snapshot"]
+
+    assert snapshot["tools"]["grype"]["update_state"] == "refreshed-this-run"
+    assert snapshot["tools"]["grype"]["db_version"] == "deadbeef"
+
+
+def test_no_probe_files_keeps_unknown(tmp_path: Path):
+    root = _seed_root(tmp_path)
+
+    snapshot = derive(root)["db_snapshot"]
+
+    assert snapshot["tools"]["grype"]["update_state"] == "unknown"
+    assert snapshot["snapshot_id"] == ""

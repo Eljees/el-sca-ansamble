@@ -62,6 +62,7 @@ class ExtractionStats:
     skipped_by_size: int = 0
     errored_members: int = 0
     skipped_examples: list[dict[str, Any]] = field(default_factory=list)
+    unsafe_members: list[dict[str, Any]] = field(default_factory=list)
 
     def note_skipped(self, member: str, reason: str, size: int | None) -> None:
         # Keep the manifest small but useful: log first 20 skipped paths only.
@@ -73,6 +74,14 @@ class ExtractionStats:
         self.errored_members += 1
         if len(self.skipped_examples) < 20:
             self.skipped_examples.append({"member": member, "reason": reason, "size": size})
+
+    def note_unsafe_member(self, member: str, reason: str, size: int | None) -> None:
+        # Security-relevant (zip-slip / absolute path / escape attempts): still
+        # skipped per-member, but ALSO surfaced as a manifest failure so the
+        # run is marked ``warn`` — a traversal attempt must never look "pass".
+        self.errored_members += 1
+        if len(self.unsafe_members) < 20:
+            self.unsafe_members.append({"member": member, "reason": reason, "size": size})
 
 
 class ExtractionLimitError(RuntimeError):
@@ -233,8 +242,15 @@ def _extract_zip(
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as source, target.open("wb") as destination:
                     shutil.copyfileobj(source, destination)
-            except (ValueError, OSError, RuntimeError, NotImplementedError, zipfile.BadZipFile) as exc:
-                stats.note_member_error(member.filename, f"zip member: {exc}", getattr(member, "file_size", None))
+            except ValueError as exc:
+                stats.note_unsafe_member(
+                    member.filename, f"zip member: {exc}", getattr(member, "file_size", None)
+                )
+                continue
+            except (OSError, RuntimeError, NotImplementedError, zipfile.BadZipFile) as exc:
+                stats.note_member_error(
+                    member.filename, f"zip member: {exc}", getattr(member, "file_size", None)
+                )
                 continue
 
 
@@ -274,7 +290,10 @@ def _extract_tar(
                     continue
                 with source, target.open("wb") as destination:
                     shutil.copyfileobj(source, destination)
-            except (ValueError, OSError, RuntimeError, tarfile.TarError) as exc:
+            except ValueError as exc:
+                stats.note_unsafe_member(member.name, f"tar member: {exc}", getattr(member, "size", None))
+                continue
+            except (OSError, RuntimeError, tarfile.TarError) as exc:
                 stats.note_member_error(member.name, f"tar member: {exc}", getattr(member, "size", None))
                 continue
 
@@ -289,16 +308,12 @@ def _extract_gzip(path: Path, target_dir: Path) -> None:
 
 def _run_checked(command: list[str], cwd: Path | None = None, timeout: int = 1800) -> None:
     try:
-        subprocess.run(
-            command, cwd=cwd, check=True, capture_output=True, text=True, timeout=timeout
-        )
+        subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:
         raise RuntimeError(f"required extractor tool is unavailable: {command[0]}") from exc
     except subprocess.TimeoutExpired as exc:
         # A corrupt/hostile 7z/rar/zst can otherwise hang the extractor forever.
-        raise RuntimeError(
-            f"extractor tool timed out after {timeout}s: {' '.join(command)}"
-        ) from exc
+        raise RuntimeError(f"extractor tool timed out after {timeout}s: {' '.join(command)}") from exc
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else str(exc)
         raise RuntimeError(f"extractor tool failed: {' '.join(command)}: {stderr}") from exc
@@ -494,6 +509,8 @@ def extract_artifacts(
         manifest["items"].append(item)
 
     extracted_count = sum(1 for item in manifest["items"] if item["status"] == "extracted")
+    for unsafe in stats.unsafe_members:
+        manifest["failures"].append({"member": unsafe["member"], "error": unsafe["reason"]})
     if source_root.is_file() and extracted_count == 0 and not manifest["failures"]:
         manifest["failures"].append(
             {

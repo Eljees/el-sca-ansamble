@@ -148,10 +148,18 @@ hooks:  ## Install pre-commit hooks locally.
 # ─────────────────────────────────────────────────────────────────────────
 # Cleanup
 # ─────────────────────────────────────────────────────────────────────────
+.PHONY: feeds
+feeds:  ## Fetch EPSS + CISA KEV feeds into artifacts/enrichment (enables EPSS/KEV report columns).
+	mkdir -p artifacts/enrichment/epss artifacts/enrichment/kev
+	curl -fsSL --retry 3 https://epss.cyentia.com/epss_scores-current.csv.gz | gunzip > artifacts/enrichment/epss/epss_scores-current.csv
+	curl -fsSL --retry 3 https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json -o artifacts/enrichment/kev/known_exploited_vulnerabilities.json
+	@echo "feeds ready: artifacts/enrichment/{epss,kev}"
+
 .PHONY: clean clean-deep
 clean:  ## Remove scan output (artifacts/) keeping .gitkeep stubs.
 	find artifacts -type f ! -name '.gitkeep' -delete 2>/dev/null || true
 	find artifacts -mindepth 1 -type d -empty -delete 2>/dev/null || true
+	rm -f output.*.json .coverage .coverage.* 2>/dev/null || true
 
 clean-deep: clean  ## Also remove cached caches.  USE WITH CARE — DBs gone.
 	$(COMPOSE) down -v --remove-orphans

@@ -177,3 +177,28 @@ def test_ensure_safe_member_still_blocks_traversal(tmp_path: Path):
     for bad in ("../evil", "a/../../evil", "/abs/path"):
         with pytest.raises(ValueError):
             _ensure_safe_member(tmp_path, bad)
+
+
+def test_extract_artifacts_purges_previous_run_output(tmp_path: Path):
+    """Regression: ``output_root`` must be purged before extraction.
+
+    A leftover tree from a previous (different-target) run used to leak into
+    the new scan — syft walks the whole ``current/`` dir, so stale files
+    contaminated component/finding counts (CYBERSEC-12306 inherited 427
+    Prometheus components from a prior CYBERSEC-11531 run).
+    """
+    output = tmp_path / "out"
+    stale_dir = output / "depth0" / "old-target.tar.gz"
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "stale.bin").write_bytes(b"old run")
+    (output / "stale-root-file.txt").write_text("old", encoding="utf-8")
+
+    archive = tmp_path / "new.zip"
+    _zip_file(archive, {"fresh/app.bin": b"new"})
+
+    manifest = extract_artifacts(archive, output, max_depth=1)
+
+    assert manifest["status"] == "pass"
+    assert not stale_dir.exists()
+    assert not (output / "stale-root-file.txt").exists()
+    assert list(output.rglob("app.bin"))

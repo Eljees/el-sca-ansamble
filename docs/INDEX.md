@@ -20,7 +20,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 5. `distribution.md` — image distribution / receiver setup.
 6. `runbook.md` — what to do when things break.
 7. `proxy.md` — quick reference for proxy configuration.
-8. `../DEPLOYMENT_GUIDE_EXAMPLE.md` — worked example of one org's full
+8. `deployment-example.md` — worked example of one org's full
    deployment (host-specific values — treat as a template, not canon).
 
 ## I need to review security posture
@@ -33,7 +33,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 ## I need to develop / contribute
 
 1. `../CONTRIBUTING.md` — dev environment, tests, linting, commit conventions.
-2. `../README_WORKSPACE.md` — local dev-workspace layout and conventions.
+2. `workspace.md` — local dev-workspace layout and conventions (historical).
 3. `architecture.md` — service / module map.
 4. `audit/00-overview.md` — current audit findings and phased remediation.
 5. `adr/0001-wrapper-first.md` — why we don't fork upstream.

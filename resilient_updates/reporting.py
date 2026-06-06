@@ -364,6 +364,26 @@ def build_report(
         pass
     high_critical = [item for item in all_findings if item["severity"] in {"CRITICAL", "HIGH"}]
     severity_counts = Counter(item["severity"] for item in all_findings)
+
+    # Severity policy gate (replaces the historical "no-policy" placeholder).
+    # Opt-in via ``configs/policy.json`` next to the artifacts root:
+    #   {"max_counts": {"CRITICAL": 0, "HIGH": 10}}
+    # The decision is informational (recorded in the report header) — the
+    # pipeline still completes so the evidence is never lost on a "fail".
+    policy_cfg = _read_json(root.parent / "configs" / "policy.json")
+    if isinstance(policy_cfg, dict) and isinstance(policy_cfg.get("max_counts"), dict):
+        violations: list[str] = []
+        for sev, limit in policy_cfg["max_counts"].items():
+            try:
+                allowed = int(limit)
+            except (TypeError, ValueError):
+                continue
+            actual = int(severity_counts.get(str(sev).upper(), 0))
+            if actual > allowed:
+                violations.append(f"{str(sev).upper()}={actual}>{allowed}")
+        decision = "pass" if not violations else "fail: " + ", ".join(sorted(violations))
+        if isinstance(summary, dict):
+            summary["policy_decision"] = decision
     syft_count = _get_nested(summary, ["coverage", "sbom_components"], _syft_count(syft))
     grype_count = (
         summary.get("estimated_grype_matches", len(_grype_findings(grype)))
@@ -429,6 +449,46 @@ def build_report(
     )
     evidence_files = _collect_paths(root)
     resolved_case_id = _resolve_case_id(case_id, target_path, display_target)
+
+    # "What changed since the last scan of this case" — uses the run history
+    # archived by run-scan.sh under ``artifacts/runs/<case>-<ts>/``. The current
+    # run is archived only after this report is built, so the newest matching
+    # directory IS the previous run. Best-effort: no history → no section.
+    diff_lines: list[str] = []
+    try:
+        runs_root = root / "runs"
+        prev_dirs = (
+            sorted((p for p in runs_root.glob(f"{resolved_case_id}-*") if p.is_dir()), reverse=True)
+            if runs_root.is_dir()
+            else []
+        )
+        if prev_dirs:
+            from .scanner_diff import diff_runs
+
+            delta = diff_runs(prev_dirs[0], root).to_dict()
+            finds = delta["findings"]
+            comps = delta["components"]
+            diff_lines = [
+                "",
+                "## Diff с предыдущим прогоном",  # noqa: RUF001
+                "",
+                f"- Предыдущий прогон: `{prev_dirs[0].name}`",
+                f"- Находки: `+{finds['added_count']}` новых, `-{finds['removed_count']}` ушло,"
+                f" `{finds['unchanged_count']}` без изменений",
+                f"- Компоненты: `+{comps['added_count']}` / `-{comps['removed_count']}` /"
+                f" `{comps['unchanged_count']}` без изменений",
+                f"- Дельта severity: `{delta['severity_delta']}`",
+            ]
+            added_rows = finds["added"][:15]
+            if added_rows:
+                diff_lines += ["", "Новые находки (первые 15):", ""]
+                diff_lines += [
+                    f"- `{row.get('id', '?')}` {row.get('severity', '?')} — "
+                    f"{row.get('product', '?')} {row.get('version', '')} ({row.get('tool', '?')})"
+                    for row in added_rows
+                ]
+    except Exception:
+        diff_lines = []
 
     # Collect input hashes (sha1 + sha256) from summary or run_manifest.
     input_hashes: dict[str, str] = {}
@@ -513,6 +573,7 @@ def build_report(
             f"- Total findings: `{int(grype_count or 0) + len(_trivy_findings(trivy)) + int(cve_count or 0)}`",
             f"- Severity counts: `{dict(severity_counts)}`",
             f"- Policy decision: `{summary.get('policy_decision', 'UNKNOWN')}`",
+            *diff_lines,
             "",
             "## Consistency warnings",
             "",

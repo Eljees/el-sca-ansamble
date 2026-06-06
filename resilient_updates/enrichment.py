@@ -35,6 +35,10 @@ from typing import Any
 _DEFAULT_ROOTS = (
     "/root/.cache/cve-bin-tool",
     "/var/lib/resilient-db/cve-bin-tool/active",
+    # Repo-local feed drop (host CWD and container /workspace are both the
+    # repo root): populate via `make feeds` to light up the EPSS/KEV columns
+    # without relying on the cve-bin-tool cache volume.
+    "artifacts/enrichment",
 )
 
 

@@ -114,3 +114,111 @@ def test_build_report_warns_on_stale_enrichment(tmp_path: Path, monkeypatch):
 
     assert "exploit scores may be outdated" in text
     assert "epss: enrichment data is" in text
+
+
+# ---------------------------------------------------------------------------
+# Policy gate + run-history diff
+# ---------------------------------------------------------------------------
+
+
+def _minimal_artifacts(tmp_path: Path, *, grype_matches=None) -> tuple[Path, Path]:
+    artifacts = tmp_path / "artifacts"
+    for sub in ("sbom", "reports/grype", "reports/trivy", "reports/cve-bin-tool"):
+        (artifacts / sub).mkdir(parents=True, exist_ok=True)
+    (artifacts / "sbom" / "syft.json").write_text(
+        json.dumps({"artifacts": [{"name": "alpha", "version": "1.0"}]}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "grype" / "report.json").write_text(
+        json.dumps({"matches": grype_matches or []}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "trivy" / "report.json").write_text(
+        json.dumps({"Results": []}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text("[]", encoding="utf-8")
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"policy-test")
+    return artifacts, target
+
+
+def _grype_match(cve: str, severity: str, pkg: str = "libfoo", version: str = "1.0"):
+    return {
+        "vulnerability": {"id": cve, "severity": severity},
+        "artifact": {"name": pkg, "version": version, "type": "deb"},
+    }
+
+
+def test_policy_gate_fails_when_critical_exceeds_limit(tmp_path: Path):
+    artifacts, target = _minimal_artifacts(
+        tmp_path, grype_matches=[_grype_match("CVE-2026-0001", "Critical")]
+    )
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "policy.json").write_text(
+        json.dumps({"max_counts": {"CRITICAL": 0}}), encoding="utf-8"
+    )
+
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
+
+    text = output.read_text(encoding="utf-8")
+    assert "- Policy decision: `fail: CRITICAL=1>0`" in text
+
+
+def test_policy_gate_passes_within_limits(tmp_path: Path):
+    artifacts, target = _minimal_artifacts(tmp_path, grype_matches=[_grype_match("CVE-2026-0002", "High")])
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "policy.json").write_text(
+        json.dumps({"max_counts": {"CRITICAL": 0}}), encoding="utf-8"
+    )
+
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
+
+    assert "- Policy decision: `pass`" in output.read_text(encoding="utf-8")
+
+
+def test_no_policy_file_keeps_no_policy_placeholder(tmp_path: Path):
+    artifacts, target = _minimal_artifacts(tmp_path)
+
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
+
+    assert "- Policy decision: `no-policy`" in output.read_text(encoding="utf-8")
+
+
+def test_diff_section_renders_against_archived_previous_run(tmp_path: Path):
+    artifacts, target = _minimal_artifacts(
+        tmp_path,
+        grype_matches=[
+            _grype_match("CVE-2026-0001", "Critical"),
+            _grype_match("CVE-2026-0003", "High", pkg="libbar"),
+        ],
+    )
+    prev = artifacts / "runs" / "CYBERSEC-77-20260101-000000"
+    for sub in ("sbom", "reports/grype", "reports/trivy", "reports/cve-bin-tool"):
+        (prev / sub).mkdir(parents=True)
+    (prev / "sbom" / "syft.json").write_text(
+        json.dumps({"artifacts": [{"name": "alpha", "version": "1.0"}]}), encoding="utf-8"
+    )
+    (prev / "reports" / "grype" / "report.json").write_text(
+        json.dumps({"matches": [_grype_match("CVE-2026-0001", "Critical")]}), encoding="utf-8"
+    )
+    (prev / "reports" / "trivy" / "report.json").write_text(json.dumps({"Results": []}), encoding="utf-8")
+    (prev / "reports" / "cve-bin-tool" / "report.json").write_text("[]", encoding="utf-8")
+
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
+
+    text = output.read_text(encoding="utf-8")
+    assert "## Diff с предыдущим прогоном" in text  # noqa: RUF001
+    assert "CYBERSEC-77-20260101-000000" in text
+    assert "`+1` новых" in text
+    assert "CVE-2026-0003" in text
+
+
+def test_diff_section_absent_without_history(tmp_path: Path):
+    artifacts, target = _minimal_artifacts(tmp_path)
+
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
+
+    assert "Diff с предыдущим прогоном" not in output.read_text(encoding="utf-8")  # noqa: RUF001

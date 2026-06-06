@@ -23,10 +23,19 @@ Security model:
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
 import sys
+
+try:
+    from datetime import UTC  # py3.11+
+except ImportError:  # pragma: no cover - py3.10 fallback
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # noqa: UP017
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -227,6 +236,105 @@ def run_scan(
     if proxy:
         os.environ["SCAN_TARGET_HOST"] = target
     return _run(args, timeout=3600, proxy=env_proxy, allow_exit1=True)
+
+
+JOBS_DIR_REL = Path("artifacts") / "mcp-jobs"
+
+
+@mcp.tool()
+def run_scan_async(
+    target: str,
+    tool: str = "all",
+    extract: bool = True,
+    update_db: bool = False,
+    sbom_scan: bool = False,
+    proxy: str | None = None,
+) -> dict:
+    """Launch the SCA pipeline in the background and return immediately.
+
+    Long scans exceed the MCP client's request timeout when run via the
+    synchronous ``run_scan`` (the client sees -32001 although the host keeps
+    going). This variant detaches the pipeline and returns a ``job_id``;
+    poll ``scan_status`` to follow progress via artifacts/run-scan.log.
+    """
+    if tool not in ALL_SCAN_TOOLS:
+        return {"ok": False, "error": f"tool must be one of {sorted(ALL_SCAN_TOOLS)}"}
+    if not target or target.strip() in {"", ".", "/"}:
+        return {"ok": False, "error": "refusing to scan an empty/root target; pass a concrete path"}
+    if not PROJECT_DIR.is_dir():
+        return {"ok": False, "error": f"EL_SCA_DIR not found: {PROJECT_DIR}"}
+    args = ["bash", "scripts/run-scan.sh", "--target", target, "--tool", tool]
+    if extract:
+        args.append("--extract")
+    if update_db:
+        args.append("--update-db")
+    if sbom_scan:
+        args.append("--sbom-scan")
+    jobs_dir = PROJECT_DIR / JOBS_DIR_REL
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    job_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    try:
+        proc = subprocess.Popen(  # argv list, allow-listed script — no shell
+            args,
+            cwd=str(PROJECT_DIR),
+            env=_proxy_env(proxy),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        return {"ok": False, "error": "bash/docker not found on PATH in this environment"}
+    job = {
+        "job_id": job_id,
+        "pid": proc.pid,
+        "cmd": shlex.join(args),
+        "target": target,
+        "started_utc": datetime.now(UTC).isoformat(),
+    }
+    (jobs_dir / f"{job_id}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
+    return {
+        "ok": True,
+        **job,
+        "log": "artifacts/run-scan.log",
+        "hint": "poll scan_status(job_id) until running=false, then read artifacts/reports/final/",
+    }
+
+
+@mcp.tool()
+def scan_status(job_id: str = "") -> dict:
+    """Report progress of a background scan started by ``run_scan_async``.
+
+    Args:
+        job_id: id returned by run_scan_async; empty = most recent job.
+    """
+    jobs_dir = PROJECT_DIR / JOBS_DIR_REL
+    candidates = sorted(jobs_dir.glob("*.json"), reverse=True)
+    if job_id:
+        candidates = [p for p in candidates if p.stem == job_id]
+    if not candidates:
+        return {"ok": False, "error": "no such job (run_scan_async writes artifacts/mcp-jobs/<id>.json)"}
+    job = json.loads(candidates[0].read_text(encoding="utf-8"))
+    running = True
+    try:
+        os.kill(int(job["pid"]), 0)
+    except (OSError, ValueError):
+        running = False
+    log_path = PROJECT_DIR / "artifacts" / "run-scan.log"
+    log_tail = ""
+    stages: list[str] = []
+    if log_path.is_file():
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+        log_tail = _tail(text, 15)
+        stages = [ln.strip() for ln in text.splitlines() if ln.startswith("[stage]") or "Reports ready" in ln]
+    return {
+        "ok": True,
+        "job_id": job["job_id"],
+        "pid": job["pid"],
+        "running": running,
+        "started_utc": job.get("started_utc"),
+        "stages_seen": stages[-8:],
+        "log_tail": log_tail,
+    }
 
 
 @mcp.tool()
