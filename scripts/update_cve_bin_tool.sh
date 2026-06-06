@@ -206,10 +206,36 @@ feed_import_attempt() {
   feed_rc_file="$candidate_home/feed_rc"
   echo "[feed] start $(date -u +%Y-%m-%dT%H:%M:%SZ) db-root=$candidate_root" | tee "$attempt_log"
 
-  # The importer's stdout must reach the CONTAINER stdout (not just the log) so
-  # the dashboard can fill the cve-bin-tool barrel from its "X MiB / Y MiB"
-  # progress lines.  tee duplicates it to the attempt log.  dash has no
-  # PIPESTATUS, so the importer's own exit code is stashed in a file.
+  # 1) Enrichment FIRST — while the candidate cve.db does NOT yet exist, so
+  #    cve-bin-tool actually FETCHES the non-NVD sources.  (If we imported NVD
+  #    first, the resulting cve.db would be <24h old and cve-bin-tool's
+  #    get_cvelist_if_stale would skip the whole update — the source fetch would
+  #    never run.)  cve-bin-tool's Python client cannot use a SOCKS proxy, so
+  #    route it through an HTTP proxy (CVE_BIN_TOOL_ENRICH_PROXY, e.g. the xray
+  #    sidecar at http://proxy-xray:8118).  NVD is disabled (it comes from the
+  #    feeds in step 2); CVE_BIN_TOOL_ENRICH_DISABLE drops sources unreachable in
+  #    this contour (e.g. "GAD REDHAT" behind a 403).  Best-effort: any failure
+  #    here is non-fatal — NVD-only is still a usable, activatable DB.
+  if [ "${CVE_BIN_TOOL_FEED_ENRICH:-1}" = "1" ]; then
+    mkdir -p "$UPDATE_SCAN_DIR"
+    enrich_disable="$(_disable_sources_to_args "${CVE_BIN_TOOL_ENRICH_DISABLE:-}")"
+    {
+      echo "[feed] enrichment (pre-NVD) proxy=${CVE_BIN_TOOL_ENRICH_PROXY:-none}"
+      set +e
+      # shellcheck disable=SC2086
+      HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" \
+        HTTP_PROXY="${CVE_BIN_TOOL_ENRICH_PROXY:-${HTTP_PROXY:-}}" \
+        HTTPS_PROXY="${CVE_BIN_TOOL_ENRICH_PROXY:-${HTTPS_PROXY:-}}" \
+        cve-bin-tool --update now --disable-data-source NVD $enrich_disable $BASE_DISABLE_ARGS "$UPDATE_SCAN_DIR"
+      echo "[feed] enrichment exit=$?"
+      set -e
+    } >>"$attempt_log" 2>&1
+  fi
+
+  # 2) NVD feed import.  Its stdout must reach the CONTAINER stdout (not just the
+  # log) so the dashboard can fill the barrel from "X MiB / Y MiB" progress;
+  # tee duplicates it to the attempt log.  dash has no PIPESTATUS, so the
+  # importer's own exit code is stashed in a file.
   # shellcheck disable=SC2086
   (
     set +e
@@ -225,22 +251,8 @@ feed_import_attempt() {
     return "$feed_rc"
   fi
 
-  # Enrichment + audit don't drive the barrel, so keep them out of stdout.
-  {
-    # Best-effort enrichment: add the non-NVD sources on top of the imported
-    # NVD data.  NVD stays disabled (already present from the feeds), so this
-    # never touches the 403-prone API.  Failure here is non-fatal — the NVD
-    # half alone is a usable, activatable DB.
-    if [ "${CVE_BIN_TOOL_FEED_ENRICH:-1}" = "1" ]; then
-      mkdir -p "$UPDATE_SCAN_DIR"
-      set +e
-      HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" \
-        cve-bin-tool --update now --disable-data-source NVD $BASE_DISABLE_ARGS "$UPDATE_SCAN_DIR"
-      echo "[feed] enrichment exit=$?"
-      set -e
-    fi
-    python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$candidate_root"
-  } >>"$attempt_log" 2>&1
+  # 3) Audit (doesn't drive the barrel).
+  python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$candidate_root" >>"$attempt_log" 2>&1
 }
 
 case "$MODE" in

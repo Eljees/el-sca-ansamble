@@ -12,6 +12,7 @@ installed; only launching the app does.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -256,6 +257,14 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
     if not isinstance(cbt_by_source, dict):
         cbt_by_source = {}
     cbt_source_names = ["NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"]
+    # Sources known not to load in this contour (e.g. GAD/REDHAT behind a 403)
+    # are marked unavailable → the GUI shows them with a red ✕ ("not working
+    # yet") instead of an empty barrel.  Driven by CVE_BIN_TOOL_ENRICH_DISABLE.
+    cbt_unavailable = {
+        s.strip().upper()
+        for s in (os.environ.get("CVE_BIN_TOOL_ENRICH_DISABLE") or "").replace(",", " ").split()
+        if s.strip()
+    }
     cbt_sources = []
     for s in cbt_source_names:
         cnt = cbt_by_source.get(s)
@@ -265,6 +274,7 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
                 "name": s,
                 "fill": 100 if has else 0,
                 "count": int(cnt) if has else 0,
+                "unavailable": (s in cbt_unavailable) and not has,
                 "update_target": f"cve-bin-tool:{s}",
             }
         )
@@ -424,6 +434,11 @@ _GUI_HTML = """<!doctype html>
             font-size:34px; color:#0a0e12; opacity:.30; z-index:2; pointer-events:none;
             text-shadow:0 0 2px #000; }
   .barrel.lit { border-color:#7CFC00; box-shadow:0 0 16px #39ff1466, inset 0 0 12px #000; }
+  /* Base that can't be loaded yet (e.g. GAD/REDHAT 403) → red cross. */
+  .barrel.broken { border-color:#ff4d4f; box-shadow:0 0 14px #ff4d4f55, inset 0 0 12px #000; }
+  .barrel.broken .rad { color:#ff4d4f; opacity:.85; font-weight:900;
+            text-shadow:0 0 8px #ff4d4faa; }
+  .barrel.broken .barrel-pct { color:#ff7a7c; text-shadow:none; }
   .barrel-pct { position:absolute; top:6px; left:0; right:0; text-align:center; z-index:4;
             font-weight:700; font-size:13px; color:#0a0e12; text-shadow:0 0 3px #b6ff3a; }
   .barrel-pct.low { color:#e6edf3; text-shadow:none; }
@@ -611,18 +626,19 @@ function fmtTime(t){
   if(!t) return "—";
   const d = new Date(t); return isNaN(d) ? t : d.toLocaleString();
 }
-function barrel(fill, mini, stage){
+function barrel(fill, mini, stage, unavailable){
   const na = (fill == null);
   const f = na ? 0 : Math.max(0, Math.min(100, fill));
+  const broken = !!unavailable;   // base that can't be loaded yet → red ✕
   let bubbles = "";
   if(!mini && f > 0){
     bubbles = [12,30,48,66].map((x,i) =>
       `<span class="bubble" style="left:${x}px;animation-duration:${(2.4+i*0.6).toFixed(1)}s;animation-delay:${(i*0.5).toFixed(1)}s"></span>`).join("");
   }
-  return `<div class="barrel ${f>0?'lit':''}" data-stage="${stage||''}">
+  return `<div class="barrel ${f>0?'lit':''} ${broken?'broken':''}" data-stage="${stage||''}">
       <div class="barrel-fill" style="height:${na?0:f}%"></div>${bubbles}
-      <div class="rad">☢</div>
-      <div class="barrel-pct ${f<55?'low':''}">${na?'n/a':f+'%'}</div>
+      <div class="rad">${broken?'✕':'☢'}</div>
+      <div class="barrel-pct ${f<55?'low':''}">${broken?'—':(na?'n/a':f+'%')}</div>
     </div>`;
 }
 // Live download progress: fill the matching barrel as the DB streams in.
@@ -633,6 +649,7 @@ function setProgress(stage, pct){
   const f = Math.max(0, Math.min(100, pct));
   const fill = b.querySelector(".barrel-fill"); if(fill) fill.style.height = f + "%";
   b.classList.toggle("lit", f > 0);
+  if(f > 0){ b.classList.remove("broken"); const r = b.querySelector(".rad"); if(r) r.textContent = "☢"; }
   const p = b.querySelector(".barrel-pct");
   if(p){ p.textContent = Math.round(f) + "%"; p.classList.toggle("low", f < 55); }
 }
@@ -647,8 +664,8 @@ async function loadTools(){
     let sources = "";
     if(t.sources && t.sources.length){
       sources = `<div class="cbt-sources">` + t.sources.map(s => `
-        <div class="mini" title="${(s.count||0).toLocaleString()} CVE">
-          ${barrel(s.fill, true)}
+        <div class="mini" title="${s.unavailable ? 'пока недоступен в этом контуре' : (s.count||0).toLocaleString()+' CVE'}">
+          ${barrel(s.fill, true, "", s.unavailable)}
           <div class="bsub">${s.name}</div>
           <button data-upd="${s.update_target}" title="обновить только ${s.name}">⟳</button>
         </div>`).join("") + `</div>`;

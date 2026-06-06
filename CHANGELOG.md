@@ -6,6 +6,52 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-06
+
+First versioned cut. Consolidates the resilient SCA stack (Trivy/Grype/Syft/
+cve-bin-tool), the drag-drop dashboard, the cve-bin-tool NVD feed channel, and
+all prior automated audit fixups into one tagged baseline.
+
+### Added — 2026-06-06 (cve-bin-tool feed channel + GUI barrels)
+
+- **`resilient_updates/nvd_feed_import.py`** — `feed` update channel for
+  cve-bin-tool: builds the NVD half of `cve.db` directly from the static NVD
+  **2.0** JSON data feeds (reusing cve-bin-tool's own `format_data_api2`),
+  bypassing the rate-limited REST API (403 in restricted contours) and the
+  retired 1.1 feeds. Downloads via curl (SOCKS-aware) or local files.
+- **`scripts/fetch_nvd_feeds.ps1`** — host-side NVD 2.0 feed downloader for
+  air-gapped/SOCKS contours; the importer reads them with `file://`.
+- **GUI DB panel ("☢ бочки")** — per-tool + per-source update buttons, live
+  download progress, and a red ✕ for bases that can't be loaded in the current
+  contour (`CVE_BIN_TOOL_ENRICH_DISABLE`).
+- **Non-NVD source enrichment** (OSV/CURL/EPSS/PURL2CPE) routed through the
+  xray HTTP sidecar (HTTP→SOCKS bridge): `CVE_BIN_TOOL_ENRICH_PROXY`,
+  `CVE_BIN_TOOL_ENRICH_DISABLE`; runs before the NVD feed import so the fetch
+  isn't skipped on a fresh DB.
+- **`docs/cve-bin-tool-feed.md`** — documents the feed channel, proxy bridge,
+  and shipping `cve.db` + image to GitLab.
+- Project version (`EL_SCA_VERSION` in `versions.env`) + `docs/RELEASING.md`
+  pre-push checklist.
+
+### Changed — 2026-06-06
+
+- `pack-light` `-WithCveBinTool` now also builds and ships the cve-bin-tool
+  **image** (not just `cve.db`), so the bundle is air-gap complete.
+- DB-update compose commands use `--force-recreate` to avoid reusing a stale
+  updater container with a dead network-endpoint ("network <id> not found").
+- Barrel fill reflects activation **health**: `degraded` (NVD-only) = 80%.
+- `configs/xray/config.json` upstream → `host.docker.internal:10808`.
+
+### Fixed — 2026-06-06
+
+- **Extractor hardening** — per-member isolation in zip/tar (one corrupt/
+  encrypted/unsafe member is skipped, not fatal to the archive), timeout on
+  external tools (7z/rar/zst can't hang forever), guarded sha/type-detection.
+  No single archive can kill the extraction run.
+- `trivy-updater` now writes `provenance/trivy.json`, so the Trivy barrel
+  reflects the refreshed DB.
+- `dashboard.py` missing `import os` (broke `/api/tools`).
+
 ### Added — 2026-06-01 automated fixup pass (docs/audit/110–120)
 
 - **`resilient_updates/vex.py`** — VEX document acquisition module (ADR-0003).

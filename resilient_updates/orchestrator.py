@@ -385,7 +385,11 @@ def build_scan_command(profile: str = "scan", compose: list[str] | None = None) 
 
 def build_update_command(compose: list[str] | None = None) -> list[str]:
     base = compose or ["docker", "compose"]
-    return [*base, "--profile", "update", "up", "--abort-on-container-exit"]
+    # --force-recreate: never reuse an existing updater container.  A reused
+    # container can carry a dead network-endpoint reference after a Docker
+    # restart ("network <id> not found"), wedging every update; recreating it
+    # fresh attaches it to the current network.
+    return [*base, "--profile", "update", "up", "--abort-on-container-exit", "--force-recreate"]
 
 
 class JobRegistry:
@@ -439,7 +443,7 @@ class JobRegistry:
             env["TRIVY_RENDERED_FLAGS"] = self._render_trivy_flags()
 
         compose = self.compose
-        up = [*compose, "--profile", "update", "up", "--abort-on-container-exit"]
+        up = [*compose, "--profile", "update", "up", "--abort-on-container-exit", "--force-recreate"]
         tgt = (target or "all").strip()
         job.target = tgt
 

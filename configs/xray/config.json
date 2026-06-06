@@ -52,7 +52,7 @@
         "servers": [
           {
             "address": "host.docker.internal",
-            "port": 1080
+            "port": 10808
           }
         ]
       }
