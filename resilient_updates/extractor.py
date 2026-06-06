@@ -60,10 +60,17 @@ class ExtractionStats:
 
     skipped_by_extension: int = 0
     skipped_by_size: int = 0
+    errored_members: int = 0
     skipped_examples: list[dict[str, Any]] = field(default_factory=list)
 
     def note_skipped(self, member: str, reason: str, size: int | None) -> None:
         # Keep the manifest small but useful: log first 20 skipped paths only.
+        if len(self.skipped_examples) < 20:
+            self.skipped_examples.append({"member": member, "reason": reason, "size": size})
+
+    def note_member_error(self, member: str, reason: str, size: int | None) -> None:
+        # A single unreadable/corrupt member is skipped, not fatal to the archive.
+        self.errored_members += 1
         if len(self.skipped_examples) < 20:
             self.skipped_examples.append({"member": member, "reason": reason, "size": size})
 
@@ -145,7 +152,9 @@ def _archive_kind(path: Path) -> str | None:
                 return "7z"
             if header.startswith(b"Rar!\x1a\x07"):
                 return "rar"
-        except OSError:
+        except Exception:
+            # is_zipfile/is_tarfile can raise on malformed inputs (not just
+            # OSError); a file we can't sniff is simply "not an archive".
             return None
     return None
 
@@ -211,15 +220,22 @@ def _extract_zip(
     stats = stats or ExtractionStats()
     with zipfile.ZipFile(path) as archive:
         for member in archive.infolist():
-            target = _ensure_safe_member(target_dir, member.filename, _root)
-            if member.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
+            # Per-member isolation: an unsafe path, encrypted/corrupt member,
+            # or unsupported compression method skips just that member and is
+            # recorded — it never aborts the whole archive.
+            try:
+                target = _ensure_safe_member(target_dir, member.filename, _root)
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if _should_skip_member(member.filename, member.file_size, limits, stats):
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source, target.open("wb") as destination:
+                    shutil.copyfileobj(source, destination)
+            except (ValueError, OSError, RuntimeError, NotImplementedError, zipfile.BadZipFile) as exc:
+                stats.note_member_error(member.filename, f"zip member: {exc}", getattr(member, "file_size", None))
                 continue
-            if _should_skip_member(member.filename, member.file_size, limits, stats):
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(member) as source, target.open("wb") as destination:
-                shutil.copyfileobj(source, destination)
 
 
 def _extract_tar(
@@ -234,27 +250,33 @@ def _extract_tar(
     stats = stats or ExtractionStats()
     with tarfile.open(path) as archive:
         for member in archive.getmembers():
-            # Many tar producers include a synthetic root directory entry "."
-            # before the real members. Treat it as a harmless no-op instead of
-            # rejecting the whole archive as "empty name".
-            raw_name = member.name.replace("\\", "/").strip("/")
-            if raw_name in {"", "."} and member.isdir():
-                target_dir.mkdir(parents=True, exist_ok=True)
+            # Per-member isolation: a corrupt/unsafe entry skips just that
+            # member (recorded) instead of aborting the whole archive.
+            try:
+                # Many tar producers include a synthetic root directory entry "."
+                # before the real members. Treat it as a harmless no-op instead of
+                # rejecting the whole archive as "empty name".
+                raw_name = member.name.replace("\\", "/").strip("/")
+                if raw_name in {"", "."} and member.isdir():
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    continue
+                target = _ensure_safe_member(target_dir, member.name, _root)
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    continue
+                if _should_skip_member(member.name, member.size, limits, stats):
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                source = archive.extractfile(member)
+                if source is None:
+                    continue
+                with source, target.open("wb") as destination:
+                    shutil.copyfileobj(source, destination)
+            except (ValueError, OSError, RuntimeError, tarfile.TarError) as exc:
+                stats.note_member_error(member.name, f"tar member: {exc}", getattr(member, "size", None))
                 continue
-            target = _ensure_safe_member(target_dir, member.name, _root)
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            if not member.isfile():
-                continue
-            if _should_skip_member(member.name, member.size, limits, stats):
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = archive.extractfile(member)
-            if source is None:
-                continue
-            with source, target.open("wb") as destination:
-                shutil.copyfileobj(source, destination)
 
 
 def _extract_gzip(path: Path, target_dir: Path) -> None:
@@ -265,11 +287,18 @@ def _extract_gzip(path: Path, target_dir: Path) -> None:
         shutil.copyfileobj(source, destination)
 
 
-def _run_checked(command: list[str], cwd: Path | None = None) -> None:
+def _run_checked(command: list[str], cwd: Path | None = None, timeout: int = 1800) -> None:
     try:
-        subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True)
+        subprocess.run(
+            command, cwd=cwd, check=True, capture_output=True, text=True, timeout=timeout
+        )
     except FileNotFoundError as exc:
         raise RuntimeError(f"required extractor tool is unavailable: {command[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        # A corrupt/hostile 7z/rar/zst can otherwise hang the extractor forever.
+        raise RuntimeError(
+            f"extractor tool timed out after {timeout}s: {' '.join(command)}"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip() if exc.stderr else str(exc)
         raise RuntimeError(f"extractor tool failed: {' '.join(command)}: {stderr}") from exc
@@ -431,12 +460,19 @@ def extract_artifacts(
             / _safe_name(rel)
             / f"{_safe_name(_strip_archive_suffix(archive_path.name))}_extracted"
         )
+        # Guard the hash: a vanished/locked file must not abort the whole run
+        # (this is computed before the try/except that wraps extraction).
+        try:
+            archive_sha = _sha256_file(archive_path)
+        except OSError as exc:
+            archive_sha = None
+            manifest["failures"].append({"archive": str(archive_path), "error": f"sha256 failed: {exc}"})
         item: dict[str, Any] = {
             "archive": str(archive_path),
             "relative_path": rel,
             "kind": kind,
             "depth": depth,
-            "sha256": _sha256_file(archive_path),
+            "sha256": archive_sha,
             "output_dir": str(target_dir),
             "status": "pending",
         }
@@ -472,6 +508,7 @@ def extract_artifacts(
     manifest["pre_filter"] = {
         "skipped_by_extension": stats.skipped_by_extension,
         "skipped_by_size": stats.skipped_by_size,
+        "errored_members": stats.errored_members,
         "examples": stats.skipped_examples,
     }
     manifest_path = destination_root / "extraction_manifest.json"
