@@ -40,6 +40,7 @@ there.
 """
 
 import argparse
+import contextlib
 import gzip
 import json
 import os
@@ -49,7 +50,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 DEFAULT_FEED_BASE = "https://nvd.nist.gov/feeds/json/cve/2.0"
 
@@ -77,7 +78,7 @@ def _local_source(url: str) -> str | None:
     no curl in the image (``--feed-base file:///workspace/artifacts/nvd-feeds``
     or a plain directory path)."""
     if url.startswith("file://"):
-        return url[len("file://"):]
+        return url[len("file://") :]
     if url.startswith("/") or (len(url) > 1 and url[1] == ":"):  # POSIX or Windows path
         return url
     return None
@@ -99,14 +100,22 @@ def download(url: str, timeout: int, dest: str) -> None:
         return
 
     if shutil.which("curl"):
-        proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy") or ""
+        proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy") or ""  # noqa: SIM112
         cmd = [
-            "curl", "-fsS",
-            "--connect-timeout", "30",
-            "--max-time", str(timeout),
-            "--retry", "2", "--retry-delay", "3",
-            "-A", BROWSER_UA,
-            "-o", dest,
+            "curl",
+            "-fsS",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            str(timeout),
+            "--retry",
+            "2",
+            "--retry-delay",
+            "3",
+            "-A",
+            BROWSER_UA,
+            "-o",
+            dest,
         ]
         if proxy:
             cmd += ["--proxy", proxy]
@@ -167,9 +176,7 @@ def _format_data_api2_safe(src: object, all_cve_entries: list[dict]) -> tuple[li
             "CVSS_version": "unknown",
             "CVSS_vector": "unknown",
             "last_modified": (
-                cve_item["lastModified"]
-                if cve_item.get("lastModified", None)
-                else cve_item["published"]
+                cve_item["lastModified"] if cve_item.get("lastModified", None) else cve_item["published"]
             ),
         }
         if cve["description"].startswith("** REJECT **"):
@@ -182,22 +189,14 @@ def _format_data_api2_safe(src: object, all_cve_entries: list[dict]) -> tuple[li
                     cve["severity"] = cve_item["impact"]["baseMetricV3"]["cvssV3"].get(
                         "baseSeverity", "UNKNOWN"
                     )
-                    cve["score"] = cve_item["impact"]["baseMetricV3"]["cvssV3"].get(
-                        "baseScore", 0
-                    )
-                    cve["CVSS_vector"] = cve_item["impact"]["baseMetricV3"]["cvssV3"].get(
-                        "vectorString", ""
-                    )
+                    cve["score"] = cve_item["impact"]["baseMetricV3"]["cvssV3"].get("baseScore", 0)
+                    cve["CVSS_vector"] = cve_item["impact"]["baseMetricV3"]["cvssV3"].get("vectorString", "")
             elif "baseMetricV2" in cve_item["impact"]:
                 cve["CVSS_version"] = 2
                 cve["severity"] = cve_item["impact"]["baseMetricV4"].get("severity", "UNKNOWN")
                 if "cvssV2" in cve_item["impact"]["baseMetricV2"]:
-                    cve["score"] = cve_item["impact"]["baseMetricV2"]["cvssV2"].get(
-                        "baseScore", 0
-                    )
-                    cve["CVSS_vector"] = cve_item["impact"]["baseMetricV2"]["cvssV2"].get(
-                        "vectorString", ""
-                    )
+                    cve["score"] = cve_item["impact"]["baseMetricV2"]["cvssV2"].get("baseScore", 0)
+                    cve["CVSS_vector"] = cve_item["impact"]["baseMetricV2"]["cvssV2"].get("vectorString", "")
         elif "metrics" in cve_item:
             cve_cvss = cve_item["metrics"]
             cvss_available = True
@@ -260,9 +259,7 @@ def main() -> int:
         help="candidate .cache/cve-bin-tool dir to write cve.db into",
     )
     ap.add_argument("--start-year", type=int, default=2002)
-    ap.add_argument(
-        "--end-year", type=int, default=datetime.now(timezone.utc).year
-    )
+    ap.add_argument("--end-year", type=int, default=datetime.now(UTC).year)
     ap.add_argument(
         "--no-modified",
         action="store_true",
@@ -301,7 +298,7 @@ def main() -> int:
     if base_is_local:
         log(f"[feed] downloader: local files from {args.feed_base} (no network)")
     elif shutil.which("curl"):
-        proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy") or "(direct)"
+        proxy = os.environ.get("ALL_PROXY") or os.environ.get("all_proxy") or "(direct)"  # noqa: SIM112
         log(f"[feed] downloader: curl  proxy(ALL_PROXY): {proxy}")
     else:
         log(
@@ -346,10 +343,8 @@ def main() -> int:
                 failures.append(name)
                 continue
             finally:
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(dest)
-                except OSError:
-                    pass
             vulns = data.get("vulnerabilities") or []
             entries.extend(vulns)
             log(f"[feed]   {name}: {len(vulns):>6} CVEs  (total {len(entries)})")

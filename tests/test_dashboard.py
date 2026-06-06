@@ -136,17 +136,22 @@ def _populate_provenance(artifacts: Path) -> None:
     pdir = artifacts / "provenance"
     pdir.mkdir(parents=True)
     (pdir / "grype.json").write_text(
-        json.dumps({"activation_status": "active", "built": "2026-06-04T07:57:06Z",
-                    "checksum": "sha256:deadbeef"}),
+        json.dumps(
+            {"activation_status": "active", "built": "2026-06-04T07:57:06Z", "checksum": "sha256:deadbeef"}
+        ),
         encoding="utf-8",
     )
-    (pdir / "trivy.json").write_text(
-        json.dumps({"activation_status": "healthcheck-only"}), encoding="utf-8"
-    )
+    (pdir / "trivy.json").write_text(json.dumps({"activation_status": "healthcheck-only"}), encoding="utf-8")
     (pdir / "cve-bin-tool-db.json").write_text(
-        json.dumps({"activation_status": "fresh",
-                    "selected_audit": {"counts": {"cve_range_total": 1480394},
-                                       "files": {"cve.db": {"mtime_utc": "2026-06-02T23:50:01+00:00"}}}}),
+        json.dumps(
+            {
+                "activation_status": "fresh",
+                "selected_audit": {
+                    "counts": {"cve_range_total": 1480394},
+                    "files": {"cve.db": {"mtime_utc": "2026-06-02T23:50:01+00:00"}},
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
