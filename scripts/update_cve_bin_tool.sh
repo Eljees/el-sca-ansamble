@@ -201,7 +201,7 @@ feed_import_attempt() {
   attempt_log="$ATTEMPTS_DIR/${attempt_id}.log"
   rm -rf "$candidate_home"
   mkdir -p "$candidate_root"
-  feed_import="${CVE_BIN_TOOL_FEED_IMPORT:-scripts/nvd_feed_import.py}"
+  feed_import="${CVE_BIN_TOOL_FEED_IMPORT:-resilient_updates/nvd_feed_import.py}"
 
   feed_rc_file="$candidate_home/feed_rc"
   echo "[feed] start $(date -u +%Y-%m-%dT%H:%M:%SZ) db-root=$candidate_root" | tee "$attempt_log"
