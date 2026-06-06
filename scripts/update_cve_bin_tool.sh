@@ -188,6 +188,61 @@ PY
   } >"$attempt_log" 2>&1
 }
 
+feed_import_attempt() {
+  # Build the NVD half of cve.db straight from the static NVD 2.0 JSON feeds
+  # (https://nvd.nist.gov/feeds/json/cve/2.0/) instead of the rate-limited REST
+  # API that returns 403 in some egress contours.  Reuses cve-bin-tool's own
+  # parser via scripts/nvd_feed_import.py (no fork).  Optionally enriches with
+  # the non-NVD sources on top.  Mirrors attempt_update's logging/audit so the
+  # existing activation flow consumes the produced candidate root unchanged.
+  attempt_id="feed-default"
+  candidate_home="$STAGING_ROOT/candidates/$attempt_id"
+  candidate_root="$candidate_home/.cache/cve-bin-tool"
+  attempt_log="$ATTEMPTS_DIR/${attempt_id}.log"
+  rm -rf "$candidate_home"
+  mkdir -p "$candidate_root"
+  feed_import="${CVE_BIN_TOOL_FEED_IMPORT:-scripts/nvd_feed_import.py}"
+
+  feed_rc_file="$candidate_home/feed_rc"
+  echo "[feed] start $(date -u +%Y-%m-%dT%H:%M:%SZ) db-root=$candidate_root" | tee "$attempt_log"
+
+  # The importer's stdout must reach the CONTAINER stdout (not just the log) so
+  # the dashboard can fill the cve-bin-tool barrel from its "X MiB / Y MiB"
+  # progress lines.  tee duplicates it to the attempt log.  dash has no
+  # PIPESTATUS, so the importer's own exit code is stashed in a file.
+  # shellcheck disable=SC2086
+  (
+    set +e
+    python "$feed_import" --db-root "$candidate_root" \
+      ${CVE_BIN_TOOL_FEED_START_YEAR:+--start-year $CVE_BIN_TOOL_FEED_START_YEAR} \
+      ${CVE_BIN_TOOL_FEED_END_YEAR:+--end-year $CVE_BIN_TOOL_FEED_END_YEAR} \
+      ${CVE_BIN_TOOL_FEED_BASE:+--feed-base $CVE_BIN_TOOL_FEED_BASE}
+    echo $? > "$feed_rc_file"
+  ) 2>&1 | tee -a "$attempt_log"
+  feed_rc="$(cat "$feed_rc_file" 2>/dev/null || echo 1)"
+  if [ "$feed_rc" -ne 0 ]; then
+    echo "[feed] NVD feed import failed rc=$feed_rc" | tee -a "$attempt_log"
+    return "$feed_rc"
+  fi
+
+  # Enrichment + audit don't drive the barrel, so keep them out of stdout.
+  {
+    # Best-effort enrichment: add the non-NVD sources on top of the imported
+    # NVD data.  NVD stays disabled (already present from the feeds), so this
+    # never touches the 403-prone API.  Failure here is non-fatal — the NVD
+    # half alone is a usable, activatable DB.
+    if [ "${CVE_BIN_TOOL_FEED_ENRICH:-1}" = "1" ]; then
+      mkdir -p "$UPDATE_SCAN_DIR"
+      set +e
+      HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" \
+        cve-bin-tool --update now --disable-data-source NVD $BASE_DISABLE_ARGS "$UPDATE_SCAN_DIR"
+      echo "[feed] enrichment exit=$?"
+      set -e
+    fi
+    python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$candidate_root"
+  } >>"$attempt_log" 2>&1
+}
+
 case "$MODE" in
   update)
     write_status "failed" "update started"
@@ -196,6 +251,17 @@ case "$MODE" in
     last_attempt_log=""
     set --
     for nvd_mode in $CVE_UPDATE_MODES; do
+      if [ "$nvd_mode" = "feed" ]; then
+        candidate_root="$STAGING_ROOT/candidates/feed-default/.cache/cve-bin-tool"
+        candidate_count=$((candidate_count + 1))
+        set -- "$@" --candidate-root "$candidate_root"
+        if feed_import_attempt; then
+          updated=1
+          break
+        fi
+        last_attempt_log="$ATTEMPTS_DIR/feed-default.log"
+        continue
+      fi
       if [ "$nvd_mode" = "api" ] || [ "$nvd_mode" = "api2" ]; then
         for api_key in "$NVD_API_KEY_PRIMARY" "$NVD_API_KEY_SECONDARY"; do
           [ -n "$api_key" ] || continue

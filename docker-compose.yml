@@ -244,6 +244,11 @@ services:
       CVE_BIN_TOOL_USE_INTERNAL_MIRROR: ${CVE_BIN_TOOL_USE_INTERNAL_MIRROR:-}
       CVE_BIN_TOOL_MIRROR_URL: ${CVE_BIN_TOOL_MIRROR_URL:-}
       CVE_BIN_TOOL_BUNDLE_PATH: ${CVE_BIN_TOOL_BUNDLE_PATH:-}
+      # NVD 2.0 feed import (mode "feed"); FEED_BASE=file://... reads host-downloaded feeds.
+      CVE_BIN_TOOL_FEED_BASE: ${CVE_BIN_TOOL_FEED_BASE:-}
+      CVE_BIN_TOOL_FEED_START_YEAR: ${CVE_BIN_TOOL_FEED_START_YEAR:-}
+      CVE_BIN_TOOL_FEED_END_YEAR: ${CVE_BIN_TOOL_FEED_END_YEAR:-}
+      CVE_BIN_TOOL_FEED_ENRICH: ${CVE_BIN_TOOL_FEED_ENRICH:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

@@ -235,6 +235,35 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
     cbt_counts = _deep_find(cbt_db, "cve_range_total")
     grype_checksum = _deep_find(grype_payload, "checksum")
 
+    # "fill" 0-100 drives the radioactive-barrel level in the GUI.
+    _full = {"active", "fresh", "cached-present", "ok", "healthcheck-only"}
+
+    def _fill(status: str | None) -> int:
+        if status in _full:
+            return 100
+        if status in (None, "", "n/a", "failed", "missing", "?"):
+            return 0
+        return 35
+
+    # cve-bin-tool per-source fill (from the provenance CVE counts by source).
+    cbt_by_source = _deep_find(cbt_db, "cve_range_by_source")
+    if not isinstance(cbt_by_source, dict):
+        cbt_by_source = {}
+    cbt_source_names = ["NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"]
+    cbt_sources = []
+    for s in cbt_source_names:
+        cnt = cbt_by_source.get(s)
+        has = isinstance(cnt, (int, float)) and cnt > 0
+        cbt_sources.append(
+            {"name": s, "fill": 100 if has else 0, "count": int(cnt) if has else 0,
+             "update_target": f"cve-bin-tool:{s}"}
+        )
+    cbt_fill = round(100 * sum(1 for s in cbt_sources if s["fill"]) / len(cbt_sources))
+
+    grype_status = _status("grype")
+    trivy_status = _status("trivy")
+    cbt_status = _status("cve-bin-tool-db") or _status("cve-bin-tool-update-status")
+
     tools = [
         {
             "name": "Syft",
@@ -243,34 +272,43 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "db_status": "n/a",
             "db_updated": None,
             "detail": "no vulnerability DB (produces SBOM)",
+            "fill": None,
+            "update_target": None,
         },
         {
             "name": "Grype",
             "role": "SBOM → CVE scanner",
             "version": versions.get("GRYPE_VERSION", "—"),
-            "db_status": _status("grype"),
+            "db_status": grype_status,
             "db_updated": _deep_find(grype_payload, "built") or _updated("grype"),
             "detail": (f"checksum {str(grype_checksum)[:23]}…" if grype_checksum else "anchore DB"),
+            "fill": _fill(grype_status),
+            "update_target": "grype",
         },
         {
             "name": "Trivy",
             "role": "filesystem/CVE scanner",
             "version": versions.get("TRIVY_VERSION", "—"),
-            "db_status": _status("trivy"),
+            "db_status": trivy_status,
             "db_updated": _updated("trivy"),
             "detail": "aquasec trivy-db",
+            "fill": _fill(trivy_status),
+            "update_target": "trivy",
         },
         {
             "name": "cve-bin-tool",
             "role": "binary CVE scanner",
             "version": "local build",
-            "db_status": _status("cve-bin-tool-db") or _status("cve-bin-tool-update-status"),
+            "db_status": cbt_status,
             "db_updated": _updated("cve-bin-tool-db", "cve-bin-tool-update-status"),
             "detail": (
                 f"{int(cbt_counts):,} CVE rows"
                 if isinstance(cbt_counts, (int, float))
                 else "json-mirror DB"
             ),
+            "fill": cbt_fill if cbt_sources and any(s["fill"] for s in cbt_sources) else _fill(cbt_status),
+            "update_target": "cve-bin-tool",
+            "sources": cbt_sources,
         },
     ]
     return {"db_update_enabled_by_default": False, "tools": tools}
@@ -351,6 +389,44 @@ _GUI_HTML = """<!doctype html>
   .map-arrow { color:var(--muted); font-size:20px; }
   iframe#report-frame { width:100%; height:600px; border:1px solid var(--line);
                         border-radius:10px; background:#fff; }
+  /* ☢ radioactive mutagen barrels */
+  .barrels { display:flex; gap:22px; flex-wrap:wrap; }
+  .barrel-box { width:160px; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .barrel { position:relative; width:96px; height:130px; border-radius:14px/10px;
+            border:2px solid #3a4753; background:#0a0e12; overflow:hidden;
+            box-shadow:inset 0 0 12px #000; }
+  .barrel::before, .barrel::after { content:""; position:absolute; left:0; right:0; height:8px;
+            background:linear-gradient(#ffffff22,#00000044); z-index:3; pointer-events:none; }
+  .barrel::before { top:30px; } .barrel::after { bottom:30px; }
+  .barrel-fill { position:absolute; left:0; right:0; bottom:0; height:0%;
+            background:linear-gradient(#b6ff3a,#39ff14 55%,#10b000);
+            box-shadow:0 0 18px #7CFC00, 0 -4px 14px #b6ff3a inset;
+            transition:height 1s cubic-bezier(.4,0,.2,1); z-index:1; }
+  .barrel-fill::after { content:""; position:absolute; top:-6px; left:0; right:0; height:10px;
+            background:radial-gradient(circle, #eaffce 0%, #b6ff3a 60%, transparent 70%) repeat-x;
+            background-size:18px 12px; opacity:.8; animation:slosh 2.2s linear infinite; }
+  @keyframes slosh { from { background-position:0 0; } to { background-position:18px 0; } }
+  .bubble { position:absolute; bottom:4px; width:6px; height:6px; border-radius:50%;
+            background:#eaffce; opacity:.0; z-index:2; animation:rise linear infinite; }
+  @keyframes rise { 0%{ transform:translateY(0); opacity:0; } 15%{ opacity:.9; }
+                    100%{ transform:translateY(-120px); opacity:0; } }
+  .barrel .rad { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+            font-size:34px; color:#0a0e12; opacity:.30; z-index:2; pointer-events:none;
+            text-shadow:0 0 2px #000; }
+  .barrel.lit { border-color:#7CFC00; box-shadow:0 0 16px #39ff1466, inset 0 0 12px #000; }
+  .barrel-pct { position:absolute; top:6px; left:0; right:0; text-align:center; z-index:4;
+            font-weight:700; font-size:13px; color:#0a0e12; text-shadow:0 0 3px #b6ff3a; }
+  .barrel-pct.low { color:#e6edf3; text-shadow:none; }
+  .barrel-box .bt { font-weight:600; }
+  .barrel-box .bsub { font-size:11px; color:var(--muted); text-align:center; }
+  .barrel-box button { padding:5px 10px; font-size:12px; width:100%; }
+  .cbt-sources { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:6px; }
+  .mini { width:60px; display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .mini .barrel { width:42px; height:58px; border-radius:8px/6px; }
+  .mini .rad { font-size:16px; }
+  .mini .barrel-pct { font-size:9px; top:2px; }
+  .mini .bsub { font-size:10px; }
+  .mini button { padding:2px 4px; font-size:10px; width:100%; }
 </style></head>
 <body>
 <header>
@@ -389,7 +465,7 @@ _GUI_HTML = """<!doctype html>
     <pre id="log">Лог появится здесь после запуска…</pre>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="map-panel">
     <h2>Карта анализа</h2>
     <div id="map"></div>
   </section>
@@ -400,13 +476,13 @@ _GUI_HTML = """<!doctype html>
   </section>
 
   <section class="panel">
-    <h2>Базы инструментов</h2>
+    <h2>☢ Базы инструментов — бочки с мутагеном</h2>
     <div class="row" style="margin-bottom:14px">
-      <button id="btn-update">⟳ Обновить базы (разово)</button>
+      <button id="btn-update">☢ Обновить ВСЁ</button>
       <button id="btn-refresh">Обновить статус</button>
-      <span class="muted">Скан использует уже скачанные базы и НЕ обновляет их.</span>
+      <span class="muted">Уровень мутагена = заполненность базы. Скан НЕ обновляет базы — только по кнопке.</span>
     </div>
-    <div class="tools" id="tools"></div>
+    <div class="barrels" id="tools"></div>
   </section>
 
   <section class="panel">
@@ -462,10 +538,15 @@ function appendLog(line){
   logEl.textContent += (logEl.textContent ? "\\n" : "") + line;
   if(atBottom) logEl.scrollTop = logEl.scrollHeight;
 }
-function follow(jobId){
+function follow(jobId, kind){
+  kind = kind || "scan";
+  const isScan = (kind === "scan");
   if(es) es.close();
   logEl.textContent = "";
   statusEl.textContent = "выполняется…"; statusEl.className = "";
+  // Карта анализа и панель отчёта относятся к скану; при обновлении баз скрываем.
+  $("#map-panel").style.display = isScan ? "" : "none";
+  if(!isScan) $("#report-panel").style.display = "none";
   es = new EventSource(`/api/jobs/${jobId}/stream`);
   connEl.textContent = "● подключено";
   es.onmessage = ev => {
@@ -475,6 +556,7 @@ function follow(jobId){
       statusEl.textContent = m.status;
     } else {
       if("line" in m) appendLog(m.line);
+      if(m.progress) setProgress(m.progress.stage, m.progress.pct);
       if(m.stages) renderStages(m.stages);
       if(m.status) statusEl.textContent = m.status;
     }
@@ -483,7 +565,7 @@ function follow(jobId){
       statusEl.textContent = ok ? "✓ готово" : "✗ ошибка";
       es.close(); connEl.textContent = "";
       loadTools();
-      if(ok) showReport();
+      if(ok && isScan) showReport();
     }
   };
   es.onerror = () => { connEl.textContent = ""; };
@@ -505,18 +587,44 @@ async function startScan(file){
   $("#report-panel").style.display = "none";
   const r = await fetch("/api/scan", { method:"POST", body:fd });
   if(!r.ok){ statusEl.textContent = "ошибка запуска: " + r.status; return; }
-  follow((await r.json()).job_id);
+  follow((await r.json()).job_id, "scan");
 }
-async function startUpdate(){
-  const b = $("#btn-update"); b.disabled = true;
-  const r = await fetch("/api/update-db", { method:"POST" });
-  b.disabled = false;
+async function updateTarget(target){
+  statusEl.textContent = "обновление баз: " + target + "…"; statusEl.className = "";
+  const r = await fetch("/api/update-db?target=" + encodeURIComponent(target), { method:"POST" });
   if(!r.ok){ statusEl.textContent = "ошибка обновления: " + r.status; return; }
-  follow((await r.json()).job_id);
+  const j = await r.json();
+  follow(j.job_id, "update");
+  if(j.log) appendLog("# лог обновления: " + j.log);
 }
 function fmtTime(t){
   if(!t) return "—";
   const d = new Date(t); return isNaN(d) ? t : d.toLocaleString();
+}
+function barrel(fill, mini, stage){
+  const na = (fill == null);
+  const f = na ? 0 : Math.max(0, Math.min(100, fill));
+  let bubbles = "";
+  if(!mini && f > 0){
+    bubbles = [12,30,48,66].map((x,i) =>
+      `<span class="bubble" style="left:${x}px;animation-duration:${(2.4+i*0.6).toFixed(1)}s;animation-delay:${(i*0.5).toFixed(1)}s"></span>`).join("");
+  }
+  return `<div class="barrel ${f>0?'lit':''}" data-stage="${stage||''}">
+      <div class="barrel-fill" style="height:${na?0:f}%"></div>${bubbles}
+      <div class="rad">☢</div>
+      <div class="barrel-pct ${f<55?'low':''}">${na?'n/a':f+'%'}</div>
+    </div>`;
+}
+// Live download progress: fill the matching barrel as the DB streams in.
+function setProgress(stage, pct){
+  if(!stage) return;
+  const b = document.querySelector('.barrel[data-stage="'+stage+'"]');
+  if(!b) return;
+  const f = Math.max(0, Math.min(100, pct));
+  const fill = b.querySelector(".barrel-fill"); if(fill) fill.style.height = f + "%";
+  b.classList.toggle("lit", f > 0);
+  const p = b.querySelector(".barrel-pct");
+  if(p){ p.textContent = Math.round(f) + "%"; p.classList.toggle("low", f < 55); }
 }
 async function loadTools(){
   const r = await fetch("/api/tools"); const data = await r.json();
@@ -524,19 +632,27 @@ async function loadTools(){
     ? "обновление баз включено" : "обновление баз отключено по умолчанию";
   const box = $("#tools"); box.innerHTML = "";
   data.tools.forEach(t => {
-    const st = (t.db_status||"—").replace(/[^a-z0-9]/gi,"");
-    const el = document.createElement("div"); el.className = "tool";
+    const el = document.createElement("div"); el.className = "barrel-box";
+    const btn = t.update_target ? `<button data-upd="${t.update_target}">⟳ Обновить</button>` : "";
+    let sources = "";
+    if(t.sources && t.sources.length){
+      sources = `<div class="cbt-sources">` + t.sources.map(s => `
+        <div class="mini" title="${(s.count||0).toLocaleString()} CVE">
+          ${barrel(s.fill, true)}
+          <div class="bsub">${s.name}</div>
+          <button data-upd="${s.update_target}" title="обновить только ${s.name}">⟳</button>
+        </div>`).join("") + `</div>`;
+    }
     el.innerHTML = `
-      <div class="tn"><span>${t.name}</span>
-        <span class="pill ${st}">${t.db_status||"—"}</span></div>
-      <div class="role">${t.role}</div>
-      <dl>
-        <dt>версия</dt><dd>${t.version||"—"}</dd>
-        <dt>база обновлена</dt><dd>${fmtTime(t.db_updated)}</dd>
-        <dt>детали</dt><dd>${t.detail||"—"}</dd>
-      </dl>`;
+      ${barrel(t.fill, false, t.update_target)}
+      <div class="bt">${t.name}</div>
+      <div class="bsub">${t.version||"—"} · ${t.db_status||"n/a"}</div>
+      <div class="bsub">${fmtTime(t.db_updated)}</div>
+      ${btn}${sources}`;
     box.appendChild(el);
   });
+  box.querySelectorAll("button[data-upd]").forEach(b =>
+    b.addEventListener("click", () => updateTarget(b.dataset.upd)));
 }
 const drop = $("#drop"), fileInput = $("#file");
 drop.addEventListener("click", () => fileInput.click());
@@ -547,7 +663,7 @@ fileInput.addEventListener("change", e => { if(e.target.files[0]) selectFile(e.t
   e.preventDefault(); drop.classList.remove("hot"); }));
 drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if(f) selectFile(f); });
 $("#btn-go").addEventListener("click", () => { if(pendingFile) startScan(pendingFile); });
-$("#btn-update").addEventListener("click", startUpdate);
+$("#btn-update").addEventListener("click", () => updateTarget("all"));
 $("#btn-refresh").addEventListener("click", loadTools);
 loadTools();
 </script>
@@ -645,9 +761,11 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         return FileResponse(target)
 
     @app.post("/api/update-db")
-    def update_db() -> dict[str, str]:
-        job = registry.start_update()
-        return {"job_id": job.id}
+    def update_db(target: str = "all") -> dict[str, str]:
+        # target: all | trivy | grype | cve-bin-tool | cve-bin-tool:<SOURCE>
+        job = registry.start_update(target=target)
+        return {"job_id": job.id, "target": target,
+                "log": str(job.log_path) if job.log_path else ""}
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> dict[str, Any]:

@@ -166,3 +166,20 @@ def test_sse_stream_replays_then_closes_for_finished_job():
     first = json.loads(frames[0].removeprefix("data: ").strip())
     assert first["type"] == "snapshot"
     assert first["status"] == "done"
+
+
+def test_nvd_only_update_disables_feed_enrichment(tmp_path):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    seen: dict[str, object] = {}
+
+    def fake_spawn(job, cmd, env):
+        seen["cmd"] = cmd
+        seen["env"] = env
+
+    reg._spawn = fake_spawn  # type: ignore[assignment]
+    reg.start_update("cve-bin-tool:NVD")
+
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert env["CVE_BIN_TOOL_DISABLE_SOURCES"] == "OSV GAD REDHAT CURL EPSS PURL2CPE RSD"
+    assert env["CVE_BIN_TOOL_FEED_ENRICH"] == "0"
