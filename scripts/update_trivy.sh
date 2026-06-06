@@ -33,6 +33,26 @@ case "$MODE" in
   update)
     trivy image --cache-dir "$CACHE_DIR" --download-db-only "$@"
     trivy image --cache-dir "$CACHE_DIR" --download-java-db-only "$@"
+    # Record provenance so the dashboard barrel reflects the refreshed DB.
+    # The trivy image has no python; write a minimal JSON with /bin/sh.  The
+    # DB's own build time (db/metadata.json -> UpdatedAt) is pulled in when
+    # available, otherwise we fall back to the wall-clock download time.
+    NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    DB_META="$CACHE_DIR/db/metadata.json"
+    DB_UPDATED="$NOW"
+    if [ -f "$DB_META" ]; then
+      _u="$(sed -n 's/.*"UpdatedAt"[ ]*:[ ]*"\([^"]*\)".*/\1/p' "$DB_META" | head -n1)"
+      [ -n "$_u" ] && DB_UPDATED="$_u"
+    fi
+    cat > "artifacts/provenance/trivy.json" <<EOF
+{
+  "activation_status": "active",
+  "artifact_type": "trivy-db",
+  "timestamp_utc": "$NOW",
+  "db_updated_at": "$DB_UPDATED",
+  "cache_dir": "$CACHE_DIR"
+}
+EOF
     ;;
   scan)
     trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --format json --output "$REPORT_DIR/report.json" "$TARGET"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import os
@@ -394,10 +395,8 @@ def extract_artifacts(
             if child.is_dir() and not child.is_symlink():
                 shutil.rmtree(child, ignore_errors=True)
             else:
-                try:
+                with contextlib.suppress(OSError):
                     child.unlink()
-                except OSError:
-                    pass
     destination_root.mkdir(parents=True, exist_ok=True)
 
     manifest: dict[str, Any] = {

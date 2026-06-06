@@ -19,6 +19,7 @@ Design notes
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -27,9 +28,10 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Iterator
+from typing import Any
 
 # ── Stage pipelines ─────────────────────────────────────────────────────────
 # Each entry: (stage_key, human_label, [compose service names feeding it]).
@@ -56,6 +58,33 @@ UPDATE_STAGES: list[tuple[str, str, list[str]]] = [
 # by detect_service().
 _PREFIX_RE = re.compile(r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*?)\s*\|")
 _REPLICA_RE = re.compile(r"-\d+$")
+
+# Download-progress parsing (drives the barrel fill while a DB downloads).
+# Trivy prints "12.34 MiB / 95.30 MiB [bar] 12.95%"; we prefer the byte ratio
+# (works even if the trailing % is missing) and fall back to a bare percent.
+_SIZE_RE = re.compile(r"([\d.]+)\s*([KMG])i?B\s*/\s*([\d.]+)\s*([KMG])i?B")
+_PCT_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_UNIT = {"K": 1.0, "M": 1024.0, "G": 1048576.0}
+
+
+def parse_progress(line: str) -> float | None:
+    """Return a 0-100 download percentage parsed from a log line, or None."""
+    m = _SIZE_RE.search(line)
+    if m:
+        try:
+            dl = float(m.group(1)) * _UNIT[m.group(2)]
+            tot = float(m.group(3)) * _UNIT[m.group(4)]
+            if tot > 0:
+                return max(0.0, min(100.0, dl / tot * 100.0))
+        except (ValueError, KeyError):  # pragma: no cover - defensive
+            pass
+    m = _PCT_RE.search(line)
+    if m:
+        try:
+            return max(0.0, min(100.0, float(m.group(1))))
+        except ValueError:  # pragma: no cover - defensive
+            pass
+    return None
 
 
 def detect_service(line: str) -> str | None:
@@ -118,6 +147,51 @@ class Job:
         self.log: deque[str] = deque(maxlen=self.LOG_MAXLEN)
         self._subscribers: list[Queue] = []
         self._lock = threading.Lock()
+        # Last emitted download % per stage (throttles progress events).
+        self._last_pct: dict[str, float] = {}
+        # Optional on-disk transcript (set via attach_log).  Lines are flushed
+        # immediately so a hung/stalled update still leaves a readable partial
+        # log to hand off for analysis.
+        self.log_path: Path | None = None
+        self._log_fh: Any = None
+
+    # -- on-disk transcript -------------------------------------------------
+    def attach_log(self, path: Path, header: list[str] | None = None) -> None:
+        """Tee every log line to ``path`` (created/truncated).  Best-effort:
+        a filesystem error never breaks the job, it just disables the file."""
+        with self._lock:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self._log_fh = path.open("w", encoding="utf-8")
+                self.log_path = path
+                for h in header or []:
+                    self._log_fh.write(h + "\n")
+                self._log_fh.flush()
+            except Exception:  # pragma: no cover - defensive
+                self._log_fh = None
+                self.log_path = None
+
+    def _write_log_locked(self, line: str) -> None:
+        if self._log_fh is None:
+            return
+        try:
+            self._log_fh.write(line + "\n")
+            self._log_fh.flush()
+        except Exception:  # pragma: no cover - defensive
+            self._log_fh = None
+
+    def _close_log_locked(self, footer: str | None = None) -> None:
+        if self._log_fh is None:
+            return
+        try:
+            if footer:
+                self._log_fh.write(footer + "\n")
+            self._log_fh.flush()
+            self._log_fh.close()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        finally:
+            self._log_fh = None
 
     # -- stage logic --------------------------------------------------------
     def _resolve_stage(self, svc: str) -> str | None:
@@ -152,17 +226,35 @@ class Job:
         return changed
 
     def feed_line(self, line: str) -> None:
-        line = line.rstrip("\n")
+        line = line.rstrip("\r\n")
+        # A progress-bar redraw (e.g. trivy's "X MiB / Y MiB ... NN%") would
+        # flood the transcript, so keep those out of the log and only use them
+        # to drive the live barrel fill.
+        is_bar = _SIZE_RE.search(line) is not None
+        pct = parse_progress(line) if not self._explicit else None
         with self._lock:
-            self.log.append(line)
+            if not is_bar:
+                self.log.append(line)
+                self._write_log_locked(line)
             stage_changed = False
-            if not self._explicit:
+            if not self._explicit and not is_bar:
                 svc = detect_service(line)
                 if svc is not None:
                     key = self._resolve_stage(svc)
                     if key is not None:
                         stage_changed = self._advance(key)
-            self._publish_locked(line=line, include_state=stage_changed)
+            progress = None
+            if pct is not None and self._max_index >= 0:
+                key = self.stages[self._max_index]["key"]
+                last = self._last_pct.get(key)
+                if last is None or abs(pct - last) >= 1.0 or pct >= 99.9:
+                    self._last_pct[key] = pct
+                    progress = (key, pct)
+            self._publish_locked(
+                line=(None if is_bar else line),
+                include_state=stage_changed,
+                progress=progress,
+            )
 
     # -- explicit stage control (sequential runner) -------------------------
     def begin_stage(self, key: str) -> None:
@@ -195,6 +287,8 @@ class Job:
             any_err = any(s["status"] == "error" for s in self.stages)
             self.status = "error" if any_err else "done"
             self.returncode = 1 if any_err else 0
+            dur = self.finished_at - self.started_at
+            self._close_log_locked(f"# --- finished status={self.status} rc={self.returncode} duration={dur:.1f}s")
             self._publish_locked(line=None, include_state=True, final=True)
 
     def finish(self, returncode: int) -> None:
@@ -210,6 +304,8 @@ class Job:
                 for s in self.stages:
                     if s["status"] == "active":
                         s["status"] = "error"
+            dur = self.finished_at - self.started_at
+            self._close_log_locked(f"# --- finished status={self.status} rc={self.returncode} duration={dur:.1f}s")
             self._publish_locked(line=None, include_state=True, final=True)
 
     # -- snapshot / pub-sub -------------------------------------------------
@@ -230,7 +326,7 @@ class Job:
             "finished_at": self.finished_at,
         }
 
-    def subscribe(self) -> "Queue[dict[str, Any] | None]":
+    def subscribe(self) -> Queue[dict[str, Any] | None]:
         q: Queue = Queue()
         with self._lock:
             # Replay current state so a late subscriber is immediately caught up.
@@ -241,10 +337,15 @@ class Job:
                 self._subscribers.append(q)
         return q
 
-    def _publish_locked(self, *, line: str | None, include_state: bool, final: bool = False) -> None:
+    def _publish_locked(
+        self, *, line: str | None, include_state: bool, final: bool = False,
+        progress: tuple[str, float] | None = None,
+    ) -> None:
         event: dict[str, Any] = {"type": "update"}
         if line is not None:
             event["line"] = line
+        if progress is not None:
+            event["progress"] = {"stage": progress[0], "pct": round(progress[1], 1)}
         if include_state:
             event["status"] = self.status
             event["stages"] = [dict(s) for s in self.stages]
@@ -307,25 +408,94 @@ class JobRegistry:
         ).start()
         return job
 
-    def start_update(self) -> Job:
+    # cve-bin-tool DB is built from these sources (for per-source update buttons).
+    CVEBT_SOURCES = ["NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"]
+
+    def start_update(self, target: str = "all") -> Job:
+        """Run a DB update.  ``target`` selects scope:
+        all | trivy | grype | cve-bin-tool | cve-bin-tool:<SOURCE>."""
         job = Job("update", UPDATE_STAGES)
         self._register(job)
         env = dict(os.environ)
         # Compose interpolates the whole file (incl. the ${SCAN_TARGET_HOST:?}
         # guard on the scanner services) before selecting the `update` profile,
         # so set a harmless value — the update services don't read it.
-        env.setdefault("SCAN_TARGET_HOST", "/tmp/el-sca-db-update-noscan")
-        env.setdefault("EXTRACT_INPUT_HOST", "/tmp/el-sca-db-update-noscan")
-        cmd = build_update_command(self.compose)
+        env.setdefault("SCAN_TARGET_HOST", "/tmp/el-sca-db-update-noscan")  # nosec B108
+        env.setdefault("EXTRACT_INPUT_HOST", "/tmp/el-sca-db-update-noscan")  # nosec B108
+        # trivy-updater interpolates ${TRIVY_RENDERED_FLAGS} from the environment
+        # (the aquasec/trivy image has no python to render them); without it the
+        # updater aborts with "TRIVY_RENDERED_FLAGS is required".
+        if not env.get("TRIVY_RENDERED_FLAGS"):
+            env["TRIVY_RENDERED_FLAGS"] = self._render_trivy_flags()
+
+        compose = self.compose
+        up = [*compose, "--profile", "update", "up", "--abort-on-container-exit"]
+        tgt = (target or "all").strip()
+        job.target = tgt
+
+        # Persistent transcript so updates can be handed off for analysis,
+        # especially to tell whether a failure is proxy/VPN-related: the header
+        # records the proxy + cve-bin-tool env that was in effect.
+        ts = time.strftime("%Y%m%d-%H%M%S", time.localtime(job.started_at))
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", tgt) or "all"
+        log_path = self.repo_root / "artifacts" / "db_status" / "updates" / f"{ts}_{safe}.log"
+        job.attach_log(log_path, header=self._update_log_header(tgt, env))
+        job.feed_line(f"# лог пишется в {log_path}")
+
+        if tgt == "all":
+            cmd = build_update_command(compose)
+        elif tgt == "trivy":
+            cmd = [*up, "trivy-updater"]
+        elif tgt == "grype":
+            cmd = [*up, "grype-updater", "grype-db-importer"]
+        elif tgt == "cve-bin-tool":
+            cmd = [*up, "cve-bin-tool-updater"]
+        elif tgt.startswith("cve-bin-tool:"):
+            src = tgt.split(":", 1)[1].strip().upper()
+            env["CVE_BIN_TOOL_DISABLE_SOURCES"] = " ".join(s for s in self.CVEBT_SOURCES if s != src)
+            if src == "NVD":
+                # The NVD-only dashboard button should stop after building the
+                # feed-backed NVD candidate instead of falling into best-effort
+                # enrichment for GAD/EPSS/RedHat/PURL2CPE.
+                env["CVE_BIN_TOOL_FEED_ENRICH"] = "0"
+            job.feed_line(f"cve-bin-tool: обновление только источника {src}")
+            cmd = [*up, "cve-bin-tool-updater"]
+        else:
+            cmd = build_update_command(compose)
         self._spawn(job, cmd, env)
         return job
+
+    @staticmethod
+    def _update_log_header(target: str, env: dict[str, str]) -> list[str]:
+        """Diagnostic header for an update transcript: when, what, and the
+        proxy/cve-bin-tool environment — enough to see at a glance whether a
+        failure lines up with the VPN/proxy being off."""
+        def show(name: str) -> str:
+            return f"{name}={env.get(name, '') or '(unset)'}"
+
+        return [
+            "# el-sca-ansamble DB update log",
+            f"# time   : {time.strftime('%Y-%m-%d %H:%M:%S %z')}",
+            f"# target : {target}",
+            "# --- proxy / VPN context ---",
+            "# " + show("ALL_PROXY"),
+            "# " + show("HTTP_PROXY"),
+            "# " + show("HTTPS_PROXY"),
+            "# " + show("NO_PROXY"),
+            "# --- cve-bin-tool context ---",
+            "# " + show("CVE_BIN_TOOL_UPDATE_MODES"),
+            "# " + show("CVE_BIN_TOOL_DB_POLICY"),
+            "# " + show("EL_SCA_SKIP_CVEBT"),
+            "# " + ("NVD_API_KEY=set" if env.get("NVD_API_KEY") else "NVD_API_KEY=(unset)"),
+            "# ----------------------------",
+        ]
 
     def _run_stream(self, job: Job, cmd: list[str], env: dict[str, str]) -> int:
         """Run one command to completion, streaming stdout into the job log;
         return its exit code.  Never raises — a launch/read failure is reported
         in the log and surfaced as a non-zero code."""
         try:
-            proc = subprocess.Popen(  # noqa: S603 - fixed arg list, no shell
+            proc = subprocess.Popen(
                 cmd,
                 cwd=str(self.repo_root),
                 env=env,
@@ -344,16 +514,30 @@ class JobRegistry:
         job.feed_line(f"$ {' '.join(cmd)}")
         try:
             assert proc.stdout is not None
-            for line in proc.stdout:
-                job.feed_line(line)
+            # Split on BOTH \r and \n: download progress bars redraw the same
+            # visual line with carriage returns, so a plain readline() would
+            # deliver the whole bar as one chunk at the end (no live %).  We
+            # read in chunks and emit each \r/\n-delimited segment, which lets
+            # the dashboard fill the barrel as the DB downloads.
+            buf = ""
+            while True:
+                chunk = proc.stdout.read(2048)
+                if not chunk:
+                    break
+                buf += chunk
+                parts = re.split(r"[\r\n]", buf)
+                buf = parts.pop()  # keep the last, possibly-incomplete segment
+                for seg in parts:
+                    if seg:
+                        job.feed_line(seg)
+            if buf:
+                job.feed_line(buf)
             proc.wait()
             return proc.returncode
         except Exception as exc:  # pragma: no cover - defensive
             job.feed_line(f"ERROR: stream read failed: {exc!r}")
-            try:
+            with contextlib.suppress(Exception):
                 proc.kill()
-            except Exception:
-                pass
             return 1
 
     def _spawn(self, job: Job, cmd: list[str], env: dict[str, str]) -> None:
@@ -381,7 +565,7 @@ class JobRegistry:
         import sys
 
         try:
-            out = subprocess.run(  # noqa: S603 - fixed args, no shell
+            out = subprocess.run(
                 [sys.executable, "-m", "resilient_updates.cli", "render-flags", "trivy"],
                 cwd=str(self.repo_root),
                 capture_output=True,

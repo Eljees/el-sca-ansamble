@@ -24,7 +24,10 @@ if ($envText -notmatch "(?m)^\s*COMPOSE_FILE=") {
   Add-Content .env "COMPOSE_FILE=docker-compose.yml;docker-compose.offline.yml"
 }
 if ($envText -notmatch "(?m)^\s*EL_SCA_SKIP_CVEBT=") {
-  Add-Content .env "EL_SCA_SKIP_CVEBT=1"
+  # Skip cve-bin-tool only if its DB is NOT in the bundle (no cve-bin-tool-cache).
+  $cvebt = (Test-Path (Join-Path $BundleDir "cve-bin-tool-cache.tar.gz")) -or
+           ((Get-ChildItem (Join-Path $BundleDir "cve-bin-tool-cache.tar.gz.part*") -ErrorAction SilentlyContinue) | Measure-Object).Count -gt 0
+  Add-Content .env ("EL_SCA_SKIP_CVEBT=" + $(if ($cvebt) { "0" } else { "1" }))
 }
 # Pin the project name so compose finds the bundled el-sca-ansamble-* images and
 # the restored el-sca-ansamble_* volumes regardless of the clone folder name.
@@ -36,7 +39,7 @@ if ($envText -notmatch "(?m)^\s*COMPOSE_PROJECT_NAME=") {
 
 # Reassemble any split bundle files (<name>.partNNN -> <name>); large files are
 # chunked under ~500 MB so GitLab LFS accepts them (HTTP 413 on big objects).
-foreach ($base in @("el-sca-images-light.tar", "grype-db.tar.gz", "trivy-cache.tar.gz")) {
+foreach ($base in @("el-sca-images-light.tar", "grype-db.tar.gz", "trivy-cache.tar.gz", "cve-bin-tool-cache.tar.gz")) {
   $full = Join-Path $BundleDir $base
   $parts = Get-ChildItem "$full.part*" -ErrorAction SilentlyContinue | Sort-Object Name
   if ((-not (Test-Path $full)) -and $parts) {
