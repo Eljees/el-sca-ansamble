@@ -19,8 +19,8 @@ Requires the `docker` binary on PATH and a running Docker daemon.
 import asyncio
 import json
 import shutil
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from enum import StrEnum
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -28,19 +28,19 @@ from pydantic import BaseModel, ConfigDict, Field
 mcp = FastMCP("docker_mcp")
 
 
-class ListKind(str, Enum):
+class ListKind(StrEnum):
     IMAGES = "images"
     NETWORKS = "networks"
     VOLUMES = "volumes"
 
 
-class LifecycleAction(str, Enum):
+class LifecycleAction(StrEnum):
     START = "start"
     STOP = "stop"
     RESTART = "restart"
 
 
-class PruneScope(str, Enum):
+class PruneScope(StrEnum):
     CONTAINERS = "container"
     IMAGES = "image"
     VOLUMES = "volume"
@@ -52,18 +52,19 @@ class PruneScope(str, Enum):
 # Constants & shared helpers
 # ----------------------------------------------------------------------------- #
 
-DEFAULT_TIMEOUT = 60          # seconds for normal commands
-BUILD_TIMEOUT = 1800          # builds can be slow
+DEFAULT_TIMEOUT = 60  # seconds for normal commands
+BUILD_TIMEOUT = 1800  # builds can be slow
 DOCKER_BIN = "docker"
 
 
-class ResponseFormat(str, Enum):
+class ResponseFormat(StrEnum):
     """Output format for tool responses."""
+
     MARKDOWN = "markdown"
     JSON = "json"
 
 
-def _docker_available() -> Optional[str]:
+def _docker_available() -> str | None:
     """Return an error string if the docker CLI is missing, else None."""
     if shutil.which(DOCKER_BIN) is None:
         return (
@@ -73,7 +74,7 @@ def _docker_available() -> Optional[str]:
     return None
 
 
-async def _run(args: List[str], timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+async def _run(args: list[str], timeout: int = DEFAULT_TIMEOUT) -> dict[str, Any]:
     """Run a docker subcommand with arguments passed as a list (no shell).
 
     Returns a dict: {ok, returncode, stdout, stderr}. Never raises for a
@@ -85,17 +86,20 @@ async def _run(args: List[str], timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            DOCKER_BIN, *args,
+            DOCKER_BIN,
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return {
-                "ok": False, "returncode": 124, "stdout": "",
+                "ok": False,
+                "returncode": 124,
+                "stdout": "",
                 "stderr": f"Error: `docker {args[0] if args else ''}` timed out after {timeout}s.",
             }
         return {
@@ -105,13 +109,17 @@ async def _run(args: List[str], timeout: int = DEFAULT_TIMEOUT) -> Dict[str, Any
             "stderr": err.decode("utf-8", "replace").strip(),
         }
     except Exception as e:  # pragma: no cover - defensive
-        return {"ok": False, "returncode": 1, "stdout": "",
-                "stderr": f"Error: failed to launch docker: {type(e).__name__}: {e}"}
+        return {
+            "ok": False,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": f"Error: failed to launch docker: {type(e).__name__}: {e}",
+        }
 
 
-def _result(res: Dict[str, Any], success_note: str = "") -> str:
+def _result(res: dict[str, Any], success_note: str = "") -> str:
     """Format a _run result as a compact JSON string for the agent."""
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "ok": res["ok"],
         "returncode": res["returncode"],
     }
@@ -128,6 +136,7 @@ def _result(res: Dict[str, Any], success_note: str = "") -> str:
 # Observation tools (read-only)
 # ---------------------------------------------------------------------------- #
 
+
 class PsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     all: bool = Field(default=False, description="Include stopped containers (docker ps -a).")
@@ -135,8 +144,13 @@ class PsInput(BaseModel):
 
 @mcp.tool(
     name="docker_ps",
-    annotations={"title": "List containers", "readOnlyHint": True,
-                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    annotations={
+        "title": "List containers",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
 )
 async def docker_ps(params: PsInput) -> str:
     """List Docker containers with id, image, status, names and ports.
@@ -153,14 +167,20 @@ async def docker_ps(params: PsInput) -> str:
 
 class IdInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    target: str = Field(..., description="Container/image name or id (e.g. 'web', 'a1b2c3').",
-                       min_length=1, max_length=256)
+    target: str = Field(
+        ..., description="Container/image name or id (e.g. 'web', 'a1b2c3').", min_length=1, max_length=256
+    )
 
 
 @mcp.tool(
     name="docker_inspect",
-    annotations={"title": "Inspect object", "readOnlyHint": True,
-                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    annotations={
+        "title": "Inspect object",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
 )
 async def docker_inspect(params: IdInput) -> str:
     """Return low-level JSON metadata for a container, image, network or volume.
@@ -181,8 +201,13 @@ class LogsInput(BaseModel):
 
 @mcp.tool(
     name="docker_logs",
-    annotations={"title": "Container logs", "readOnlyHint": True,
-                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    annotations={
+        "title": "Container logs",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
 )
 async def docker_logs(params: LogsInput) -> str:
     """Fetch the last N log lines from a container (non-following snapshot).
@@ -202,8 +227,13 @@ async def docker_logs(params: LogsInput) -> str:
 
 @mcp.tool(
     name="docker_stats",
-    annotations={"title": "Resource stats", "readOnlyHint": True,
-                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    annotations={
+        "title": "Resource stats",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
 )
 async def docker_stats() -> str:
     """Snapshot CPU/memory/network/IO usage for running containers (no stream).
@@ -220,8 +250,13 @@ class ListInput(BaseModel):
 
 @mcp.tool(
     name="docker_list",
-    annotations={"title": "List images/networks/volumes", "readOnlyHint": True,
-                 "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+    annotations={
+        "title": "List images/networks/volumes",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
 )
 async def docker_list(params: ListInput) -> str:
     """List images, networks, or volumes depending on `kind`.
@@ -230,9 +265,11 @@ async def docker_list(params: ListInput) -> str:
         params.kind (ListKind): one of images | networks | volumes.
     Returns: JSON {ok, returncode, stdout(JSON-lines), stderr?}.
     """
-    sub = {ListKind.IMAGES: ["images"],
-           ListKind.NETWORKS: ["network", "ls"],
-           ListKind.VOLUMES: ["volume", "ls"]}[params.kind]
+    sub = {
+        ListKind.IMAGES: ["images"],
+        ListKind.NETWORKS: ["network", "ls"],
+        ListKind.VOLUMES: ["volume", "ls"],
+    }[params.kind]
     return _result(await _run([*sub, "--format", "{{ json . }}"]))
 
 
@@ -240,17 +277,24 @@ async def docker_list(params: ListInput) -> str:
 # Lifecycle tools
 # ----------------------------------------------------------------------------# #
 
+
 class LifecycleInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     action: LifecycleAction = Field(..., description="start | stop | restart.")
-    containers: List[str] = Field(..., description="One or more container names/ids.",
-                                  min_length=1, max_length=50)
+    containers: list[str] = Field(
+        ..., description="One or more container names/ids.", min_length=1, max_length=50
+    )
 
 
 @mcp.tool(
     name="docker_lifecycle",
-    annotations={"title": "Start/stop/restart containers", "readOnlyHint": False,
-                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+    annotations={
+        "title": "Start/stop/restart containers",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
 )
 async def docker_lifecycle(params: LifecycleInput) -> str:
     """Start, stop, or restart one or more containers.
@@ -268,22 +312,33 @@ async def docker_lifecycle(params: LifecycleInput) -> str:
 # Exec & build
 # --------------------------------------------------------------------------- #
 
+
 class ExecInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     container: str = Field(..., description="Target container name/id.", min_length=1, max_length=256)
-    command: List[str] = Field(..., description="Command + args as a list, e.g. ['ls','-la','/app']. "
-                              "Run as-is (no shell); for shell features pass ['sh','-c','...'].",
-                              min_length=1, max_length=100)
-    workdir: Optional[str] = Field(default=None, description="Working directory inside the container.")
-    user: Optional[str] = Field(default=None, description="User to run as (name or uid).")
-    timeout: int = Field(default=DEFAULT_TIMEOUT, description="Seconds before the exec is killed.",
-                        ge=1, le=3600)
+    command: list[str] = Field(
+        ...,
+        description="Command + args as a list, e.g. ['ls','-la','/app']. "
+        "Run as-is (no shell); for shell features pass ['sh','-c','...'].",
+        min_length=1,
+        max_length=100,
+    )
+    workdir: str | None = Field(default=None, description="Working directory inside the container.")
+    user: str | None = Field(default=None, description="User to run as (name or uid).")
+    timeout: int = Field(
+        default=DEFAULT_TIMEOUT, description="Seconds before the exec is killed.", ge=1, le=3600
+    )
 
 
 @mcp.tool(
     name="docker_exec",
-    annotations={"title": "Exec command in container", "readOnlyHint": False,
-                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    annotations={
+        "title": "Exec command in container",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
 )
 async def docker_exec(params: ExecInput) -> str:
     """Run a command inside a running container (non-interactive).
@@ -311,17 +366,25 @@ async def docker_exec(params: ExecInput) -> str:
 
 class BuildInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    context: str = Field(..., description="Build context path (directory) on the host.",
-                        min_length=1, max_length=1024)
+    context: str = Field(
+        ..., description="Build context path (directory) on the host.", min_length=1, max_length=1024
+    )
     tag: str = Field(..., description="Image tag, e.g. 'myapp:latest'.", min_length=1, max_length=256)
-    dockerfile: Optional[str] = Field(default=None, description="Path to Dockerfile if not <context>/Dockerfile.")
+    dockerfile: str | None = Field(
+        default=None, description="Path to Dockerfile if not <context>/Dockerfile."
+    )
     no_cache: bool = Field(default=False, description="Build without using cache.")
 
 
 @mcp.tool(
     name="docker_build",
-    annotations={"title": "Build image", "readOnlyHint": False,
-                 "destructiveHint": False, "idempotentHint": False, "openWorldHint": True},
+    annotations={
+        "title": "Build image",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
 )
 async def docker_build(params: BuildInput) -> str:
     """Build a Docker image from a context directory.
@@ -346,20 +409,30 @@ async def docker_build(params: BuildInput) -> str:
 # Compose (flexible escape hatch)
 # --------------------------------------------------------------------------- #
 
+
 class ComposeInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    working_dir: str = Field(..., description="Directory containing the compose file.",
-                            min_length=1, max_length=1024)
-    args: List[str] = Field(..., description="Compose args after `docker compose`, e.g. "
-                          "['up','-d'] or ['ps'] or ['down'].", min_length=1, max_length=50)
-    timeout: int = Field(default=300, description="Seconds before the command is killed.",
-                        ge=1, le=3600)
+    working_dir: str = Field(
+        ..., description="Directory containing the compose file.", min_length=1, max_length=1024
+    )
+    args: list[str] = Field(
+        ...,
+        description="Compose args after `docker compose`, e.g. ['up','-d'] or ['ps'] or ['down'].",
+        min_length=1,
+        max_length=50,
+    )
+    timeout: int = Field(default=300, description="Seconds before the command is killed.", ge=1, le=3600)
 
 
 @mcp.tool(
     name="docker_compose",
-    annotations={"title": "Run docker compose", "readOnlyHint": False,
-                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": True},
+    annotations={
+        "title": "Run docker compose",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
 )
 async def docker_compose(params: ComposeInput) -> str:
     """Run an arbitrary `docker compose` subcommand in a project directory.
@@ -380,18 +453,23 @@ async def docker_compose(params: ComposeInput) -> str:
 # Destructive tools
 # ---------------------------------------------------------------------------- #
 
+
 class RemoveInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    targets: List[str] = Field(..., description="Container names/ids to remove.",
-                              min_length=1, max_length=50)
+    targets: list[str] = Field(..., description="Container names/ids to remove.", min_length=1, max_length=50)
     force: bool = Field(default=False, description="Force removal of running containers (-f).")
     volumes: bool = Field(default=False, description="Also remove anonymous volumes (-v).")
 
 
 @mcp.tool(
     name="docker_rm",
-    annotations={"title": "Remove containers", "readOnlyHint": False,
-                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    annotations={
+        "title": "Remove containers",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
 )
 async def docker_rm(params: RemoveInput) -> str:
     """Remove one or more containers. DESTRUCTIVE.
@@ -413,15 +491,19 @@ async def docker_rm(params: RemoveInput) -> str:
 
 class RemoveImageInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    images: List[str] = Field(..., description="Image names/ids to remove.",
-                             min_length=1, max_length=50)
+    images: list[str] = Field(..., description="Image names/ids to remove.", min_length=1, max_length=50)
     force: bool = Field(default=False, description="Force removal (-f).")
 
 
 @mcp.tool(
     name="docker_rmi",
-    annotations={"title": "Remove images", "readOnlyHint": False,
-                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    annotations={
+        "title": "Remove images",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
 )
 async def docker_rmi(params: RemoveImageInput) -> str:
     """Remove one or more images. DESTRUCTIVE.
@@ -440,15 +522,21 @@ async def docker_rmi(params: RemoveImageInput) -> str:
 
 class KillInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    containers: List[str] = Field(..., description="Container names/ids to kill.",
-                                  min_length=1, max_length=50)
-    signal: Optional[str] = Field(default=None, description="Signal to send, e.g. 'SIGKILL', 'SIGTERM'.")
+    containers: list[str] = Field(
+        ..., description="Container names/ids to kill.", min_length=1, max_length=50
+    )
+    signal: str | None = Field(default=None, description="Signal to send, e.g. 'SIGKILL', 'SIGTERM'.")
 
 
 @mcp.tool(
     name="docker_kill",
-    annotations={"title": "Kill containers", "readOnlyHint": False,
-                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    annotations={
+        "title": "Kill containers",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
 )
 async def docker_kill(params: KillInput) -> str:
     """Send a kill signal to running containers (default SIGKILL). DESTRUCTIVE.
@@ -468,14 +556,23 @@ async def docker_kill(params: KillInput) -> str:
 class PruneInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     scope: PruneScope = Field(..., description="What to prune: container|image|volume|network|system.")
-    confirm: bool = Field(default=False, description="Must be True to actually run — a deliberate safety gate.")
-    all_images: bool = Field(default=False, description="For image/system scope: prune unused images too (-a).")
+    confirm: bool = Field(
+        default=False, description="Must be True to actually run — a deliberate safety gate."
+    )
+    all_images: bool = Field(
+        default=False, description="For image/system scope: prune unused images too (-a)."
+    )
 
 
 @mcp.tool(
     name="docker_prune",
-    annotations={"title": "Prune unused objects", "readOnlyHint": False,
-                 "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+    annotations={
+        "title": "Prune unused objects",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
 )
 async def docker_prune(params: PruneInput) -> str:
     """Prune unused Docker objects. HIGHLY DESTRUCTIVE — requires confirm=True.
@@ -487,12 +584,16 @@ async def docker_prune(params: PruneInput) -> str:
     Returns: JSON {ok, returncode, stdout, stderr?} or a refusal note.
     """
     if not params.confirm:
-        return json.dumps({
-            "ok": False,
-            "refused": True,
-            "note": f"Refused: '{params.scope.value} prune' deletes data permanently. "
-                    "Re-call with confirm=true to proceed.",
-        }, indent=2, ensure_ascii=False)
+        return json.dumps(
+            {
+                "ok": False,
+                "refused": True,
+                "note": f"Refused: '{params.scope.value} prune' deletes data permanently. "
+                "Re-call with confirm=true to proceed.",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
     if params.scope == PruneScope.SYSTEM:
         args = ["system", "prune", "-f"]
@@ -543,10 +644,8 @@ async def docker_df(
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        out_b, err_b = await asyncio.wait_for(
-            proc.communicate(), timeout=DEFAULT_TIMEOUT
-        )
-    except asyncio.TimeoutError:
+        out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=DEFAULT_TIMEOUT)
+    except TimeoutError:
         proc.kill()
         return f"Error: `docker {' '.join(args)}` timed out after {DEFAULT_TIMEOUT}s."
 

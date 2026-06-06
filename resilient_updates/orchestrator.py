@@ -31,7 +31,7 @@ from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any
+from typing import Any, ClassVar
 
 # ── Stage pipelines ─────────────────────────────────────────────────────────
 # Each entry: (stage_key, human_label, [compose service names feeding it]).
@@ -288,7 +288,9 @@ class Job:
             self.status = "error" if any_err else "done"
             self.returncode = 1 if any_err else 0
             dur = self.finished_at - self.started_at
-            self._close_log_locked(f"# --- finished status={self.status} rc={self.returncode} duration={dur:.1f}s")
+            self._close_log_locked(
+                f"# --- finished status={self.status} rc={self.returncode} duration={dur:.1f}s"
+            )
             self._publish_locked(line=None, include_state=True, final=True)
 
     def finish(self, returncode: int) -> None:
@@ -305,7 +307,9 @@ class Job:
                     if s["status"] == "active":
                         s["status"] = "error"
             dur = self.finished_at - self.started_at
-            self._close_log_locked(f"# --- finished status={self.status} rc={self.returncode} duration={dur:.1f}s")
+            self._close_log_locked(
+                f"# --- finished status={self.status} rc={self.returncode} duration={dur:.1f}s"
+            )
             self._publish_locked(line=None, include_state=True, final=True)
 
     # -- snapshot / pub-sub -------------------------------------------------
@@ -338,7 +342,11 @@ class Job:
         return q
 
     def _publish_locked(
-        self, *, line: str | None, include_state: bool, final: bool = False,
+        self,
+        *,
+        line: str | None,
+        include_state: bool,
+        final: bool = False,
         progress: tuple[str, float] | None = None,
     ) -> None:
         event: dict[str, Any] = {"type": "update"}
@@ -403,13 +411,15 @@ class JobRegistry:
         job = Job("scan", SCAN_STAGES, target=target_host)
         self._register(job)
         threading.Thread(
-            target=self._run_scan, args=(job, target_host, tools),
-            name=f"job-{job.id}", daemon=True,
+            target=self._run_scan,
+            args=(job, target_host, tools),
+            name=f"job-{job.id}",
+            daemon=True,
         ).start()
         return job
 
     # cve-bin-tool DB is built from these sources (for per-source update buttons).
-    CVEBT_SOURCES = ["NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"]
+    CVEBT_SOURCES: ClassVar[list[str]] = ["NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"]
 
     def start_update(self, target: str = "all") -> Job:
         """Run a DB update.  ``target`` selects scope:
@@ -470,6 +480,7 @@ class JobRegistry:
         """Diagnostic header for an update transcript: when, what, and the
         proxy/cve-bin-tool environment — enough to see at a glance whether a
         failure lines up with the VPN/proxy being off."""
+
         def show(name: str) -> str:
             return f"{name}={env.get(name, '') or '(unset)'}"
 
@@ -542,6 +553,7 @@ class JobRegistry:
 
     def _spawn(self, job: Job, cmd: list[str], env: dict[str, str]) -> None:
         """Run a single command in a thread and finish the job with its code."""
+
         def run() -> None:
             job.finish(self._run_stream(job, cmd, env))
 
@@ -602,6 +614,7 @@ class JobRegistry:
         # "Permission denied".  The host can always delete it; the extractor then
         # re-creates it fresh.
         import shutil
+
         _cur = self.repo_root / "artifacts" / "extracted" / "current"
         if _cur.exists():
             shutil.rmtree(_cur, ignore_errors=True)
@@ -611,7 +624,7 @@ class JobRegistry:
         # Stage 1 — extract.
         job.begin_stage("extract")
         ex_env = dict(os.environ)
-        ex_env["SCAN_TARGET_HOST"] = target_host          # satisfies the :? guard
+        ex_env["SCAN_TARGET_HOST"] = target_host  # satisfies the :? guard
         ex_env["EXTRACT_INPUT_HOST"] = target_host
         ex_env["EXTRACT_OUTPUT"] = "/workspace/artifacts/extracted/current"
         rc = self._run_stream(

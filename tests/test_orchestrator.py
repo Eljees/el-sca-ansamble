@@ -8,6 +8,7 @@ or subprocess is launched.
 from __future__ import annotations
 
 import json
+import os
 
 from resilient_updates.orchestrator import (
     SCAN_STAGES,
@@ -128,7 +129,9 @@ def test_run_scan_extracts_then_scans_extracted_dir(tmp_path):
     calls = []
 
     def fake_stream(job, cmd, env):
-        svc = cmd[cmd.index("run") + 2] if "run" in cmd else ("down" if "down" in cmd else cmd[-1])
+        # Service name is always the last token in `docker compose ... run ... [flags] service`.
+        # Extra flags like `-u 0` (added for root-safe writes) appear before the service.
+        svc = cmd[-1] if "run" in cmd else ("down" if "down" in cmd else cmd[-1])
         calls.append((svc, env.get("SCAN_TARGET_HOST"), env.get("SYFT_FROM")))
         return 1 if svc == "cve-bin-tool-scanner" else 0  # cve-bin-tool: CVEs found
 
@@ -138,20 +141,30 @@ def test_run_scan_extracts_then_scans_extracted_dir(tmp_path):
     reg._run_scan(job, "/uploads/app.tar.gz")
 
     assert [c[0] for c in calls] == [
-        "artifact-extractor", "syft-sbom", "grype-scanner",
-        "trivy-scanner", "cve-bin-tool-scanner", "report-collector", "down",
+        "artifact-extractor",
+        "syft-sbom",
+        "grype-scanner",
+        "trivy-scanner",
+        "cve-bin-tool-scanner",
+        "report-collector",
+        "down",
     ]
-    assert calls[0][1].endswith("app.tar.gz")                       # extract: raw upload
-    assert calls[1][1].endswith("/artifacts/extracted/current")     # scanners: extracted dir
+    assert calls[0][1].endswith("app.tar.gz")  # extract: raw upload
+    assert calls[1][1].endswith(os.path.join("artifacts", "extracted", "current"))  # scanners: extracted dir
     assert calls[1][2] == "dir"
     snap = job.snapshot()
-    assert snap["status"] == "done"                                 # rc=1 from cve-bin-tool is OK
+    assert snap["status"] == "done"  # rc=1 from cve-bin-tool is OK
     assert all(s["status"] == "done" for s in snap["stages"])
 
 
 def test_command_builders():
     assert build_scan_command("scan", ["docker", "compose"]) == [
-        "docker", "compose", "--profile", "scan", "up", "--abort-on-container-exit",
+        "docker",
+        "compose",
+        "--profile",
+        "scan",
+        "up",
+        "--abort-on-container-exit",
     ]
     assert build_update_command(["docker", "compose"])[2:4] == ["--profile", "update"]
 
