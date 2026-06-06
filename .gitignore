@@ -24,6 +24,9 @@ artifacts/sbom/*
 # DB bundle export staging (db-exporter) and import staging (db-importer).
 # These hold multi-GB vulnerability-DB tarballs and must never be committed.
 artifacts/db-image/
+# NVD 2.0 JSON feeds downloaded by scripts/fetch_nvd_feeds.ps1 (host-side
+# source for the cve-bin-tool "feed" import). ~190 MB; regenerable, never commit.
+artifacts/nvd-feeds/
 incoming/
 # Runtime JSON outputs written by resilient_updates.run_summary / manifest
 # (db_snapshot.json, run_manifest.json, status.json, summary.json, …).

@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = ROOT / "scripts" / "nvd_feed_import.py"
+SCRIPT_PATH = ROOT / "resilient_updates" / "nvd_feed_import.py"
 
 
 def _load_module():

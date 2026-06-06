@@ -241,6 +241,12 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
     def _fill(status: str | None) -> int:
         if status in _full:
             return 100
+        if status == "degraded":
+            # Activated but with optional sources missing (e.g. cve-bin-tool on
+            # NVD-only via the feed import) — usable DB, show mostly full.
+            return 80
+        if status in ("lkg", "last-known-good"):
+            return 55
         if status in (None, "", "n/a", "failed", "missing", "?"):
             return 0
         return 35
@@ -258,7 +264,6 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             {"name": s, "fill": 100 if has else 0, "count": int(cnt) if has else 0,
              "update_target": f"cve-bin-tool:{s}"}
         )
-    cbt_fill = round(100 * sum(1 for s in cbt_sources if s["fill"]) / len(cbt_sources))
 
     grype_status = _status("grype")
     trivy_status = _status("trivy")
@@ -304,9 +309,12 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "detail": (
                 f"{int(cbt_counts):,} CVE rows"
                 if isinstance(cbt_counts, (int, float))
-                else "json-mirror DB"
+                else "NVD feed DB"
             ),
-            "fill": cbt_fill if cbt_sources and any(s["fill"] for s in cbt_sources) else _fill(cbt_status),
+            # Main barrel reflects activation HEALTH (active/degraded/failed) —
+            # NVD-only is a fully usable degraded DB, not "13% full".  The
+            # per-source presence is shown by the mini-barrels below.
+            "fill": _fill(cbt_status),
             "update_target": "cve-bin-tool",
             "sources": cbt_sources,
         },
