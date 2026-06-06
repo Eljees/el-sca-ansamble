@@ -261,8 +261,12 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
         cnt = cbt_by_source.get(s)
         has = isinstance(cnt, (int, float)) and cnt > 0
         cbt_sources.append(
-            {"name": s, "fill": 100 if has else 0, "count": int(cnt) if has else 0,
-             "update_target": f"cve-bin-tool:{s}"}
+            {
+                "name": s,
+                "fill": 100 if has else 0,
+                "count": int(cnt) if has else 0,
+                "update_target": f"cve-bin-tool:{s}",
+            }
         )
 
     grype_status = _status("grype")
@@ -307,9 +311,7 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "db_status": cbt_status,
             "db_updated": _updated("cve-bin-tool-db", "cve-bin-tool-update-status"),
             "detail": (
-                f"{int(cbt_counts):,} CVE rows"
-                if isinstance(cbt_counts, (int, float))
-                else "NVD feed DB"
+                f"{int(cbt_counts):,} CVE rows" if isinstance(cbt_counts, (int, float)) else "NVD feed DB"
             ),
             # Main barrel reflects activation HEALTH (active/degraded/failed) —
             # NVD-only is a fully usable degraded DB, not "13% full".  The
@@ -772,8 +774,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     def update_db(target: str = "all") -> dict[str, str]:
         # target: all | trivy | grype | cve-bin-tool | cve-bin-tool:<SOURCE>
         job = registry.start_update(target=target)
-        return {"job_id": job.id, "target": target,
-                "log": str(job.log_path) if job.log_path else ""}
+        return {"job_id": job.id, "target": target, "log": str(job.log_path) if job.log_path else ""}
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str) -> dict[str, Any]:

@@ -192,7 +192,7 @@ feed_import_attempt() {
   # Build the NVD half of cve.db straight from the static NVD 2.0 JSON feeds
   # (https://nvd.nist.gov/feeds/json/cve/2.0/) instead of the rate-limited REST
   # API that returns 403 in some egress contours.  Reuses cve-bin-tool's own
-  # parser via scripts/nvd_feed_import.py (no fork).  Optionally enriches with
+  # parser via resilient_updates/nvd_feed_import.py (no fork).  Optionally enriches with
   # the non-NVD sources on top.  Mirrors attempt_update's logging/audit so the
   # existing activation flow consumes the produced candidate root unchanged.
   attempt_id="feed-default"
