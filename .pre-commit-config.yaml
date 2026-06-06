@@ -47,6 +47,14 @@ repos:
         args: ["--fix"]
       - id: ruff-format
 
+  # ── Python: bandit SAST (mirror of the CI gate: medium+ blocks) ─────────
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: ["-q", "--severity-level", "medium"]
+        files: ^(resilient_updates|tools)/.*\.py$
+
   # ── Shell scripts ──────────────────────────────────────────────────────
   - repo: https://github.com/koalaman/shellcheck-precommit
     rev: v0.10.0

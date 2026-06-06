@@ -21,3 +21,16 @@
 | cve-bin-tool excluded oversize binary | cve-bin-tool | files larger than `CVE_BIN_TOOL_MAX_FILE_MB` (default 256 MB) are skipped via `-e EXCLUDE` to bound runtime | report continues; excluded paths logged to `artifacts/reports/cve-bin-tool/excluded.flag` | excluded file actually contained a vulnerable component | `[cve-bin-tool] excluding N file(s) larger than 256 MB` + `excluded.flag` content |
 | extractor not run before scan | artifact-extractor | scanners operate on raw archive/dir without unpacking | run `scan_archive.sh` / `run-scan.ps1 -Extract` to trigger extractor first | 0 findings for archive targets (tar.gz, rpm, deb) | Consistency warnings: syft 0 components |
 | attempted_sources duplicates | Grype, Trivy provenance | each retry creates a duplicate entry (cosmetic only) | deduplicated automatically since fix in v2 | none — cosmetic issue only | `attempted_sources[]` |
+
+## Development-environment quirks (not pipeline failures)
+
+These bite during development/automation around the pipeline, not during scans
+themselves. Documented after the 2026-06-05 debugging session.
+
+| Quirk | Symptom | Workaround |
+|---|---|---|
+| Bare `python` on host is a broken/permission-denied shim (some WSL setups) | render-flags/collect-report silently skipped or whole pipeline aborts; `[Errno 13] Permission denied: 'python'` | run-scan.sh auto-detects `PYTHON_BIN` (python3 first); MCP server uses `sys.executable`; export `PYTHON_BIN` to override |
+| `set -e` + bare `docker compose` inside helper functions | script dies on first non-zero exit before the helper can whitelist it (cve-bin-tool exits 1 on findings!) | helpers use `rc=0; docker compose "$@" \|\| rc=$?` — keep this pattern for new helpers |
+| MCP `run_scan` client timeout (−32001) on long scans | client request drops at ~60 s while the host pipeline keeps running (server-side budget 3600 s) | watch `artifacts/run-scan.log`; treat −32001 as "started, still running", not as failure |
+| Cowork/agent FUSE mount serves stale copies of freshly edited files | `py_compile`/`pytest` in the sandbox report bogus SyntaxError or test old code | ground truth = direct host file reads / an actual host run; never trust sandbox compile results for files edited seconds ago |
+| Extracted tree under `artifacts/extracted/` is root-owned | host-side `rm -rf` fails with EACCES | the extractor purges `current/` itself in-container; use `make clean` (container paths) or PowerShell on Windows for manual cleanup |

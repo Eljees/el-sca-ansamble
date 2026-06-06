@@ -222,11 +222,17 @@ feed_import_attempt() {
     {
       echo "[feed] enrichment (pre-NVD) proxy=${CVE_BIN_TOOL_ENRICH_PROXY:-none}"
       set +e
+      # ALL_PROXY (SOCKS) is unset here: cve-bin-tool's Python client can't use
+      # SOCKS, and a leftover socks ALL_PROXY makes its startup version-check
+      # stall.  --disable-version-check skips that PyPI call entirely.  All HTTP
+      # goes through the xray HTTP bridge (CVE_BIN_TOOL_ENRICH_PROXY).
       # shellcheck disable=SC2086
+      ALL_PROXY="" all_proxy="" NO_PROXY="${NO_PROXY:-}" \
       HOME="$candidate_home" XDG_CACHE_HOME="$candidate_home/.cache" \
         HTTP_PROXY="${CVE_BIN_TOOL_ENRICH_PROXY:-${HTTP_PROXY:-}}" \
         HTTPS_PROXY="${CVE_BIN_TOOL_ENRICH_PROXY:-${HTTPS_PROXY:-}}" \
-        cve-bin-tool --update now --disable-data-source NVD $enrich_disable $BASE_DISABLE_ARGS "$UPDATE_SCAN_DIR"
+        cve-bin-tool --update now --disable-version-check \
+          --disable-data-source NVD $enrich_disable $BASE_DISABLE_ARGS "$UPDATE_SCAN_DIR"
       echo "[feed] enrichment exit=$?"
       set -e
     } >>"$attempt_log" 2>&1
@@ -438,6 +444,13 @@ PY
     SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-600}"
     SBOM_PATH="${CVE_BIN_TOOL_SBOM_PATH:-}"
     SBOM_FORMAT="${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}"
+
+    # Purge the previous run's report: cve-bin-tool refuses to overwrite an
+    # existing report.json and dumps output.cve-bin-tool.<ts>.json into the
+    # workspace root instead (stale report + root clutter). We run as root in
+    # the container, so this also removes root-owned files the host cannot.
+    rm -f "$REPORT_DIR/report.json" "$REPORT_DIR/timeout.flag" 2>/dev/null || true
+    rm -f /workspace/output.cve-bin-tool.*.json 2>/dev/null || true
 
     # ── SBOM fast-path ────────────────────────────────────────────────────────
     # If Syft already generated a SBOM (cyclonedx / spdx / syft-json), feed it
