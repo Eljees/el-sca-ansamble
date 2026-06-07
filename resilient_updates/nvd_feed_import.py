@@ -50,7 +50,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import UTC, datetime
+try:
+    from datetime import UTC  # py3.11+
+except ImportError:
+    from datetime import timezone as _tz
+
+    UTC = _tz.utc  # noqa: UP017
+from datetime import datetime
 
 DEFAULT_FEED_BASE = "https://nvd.nist.gov/feeds/json/cve/2.0"
 
