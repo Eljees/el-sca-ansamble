@@ -38,7 +38,10 @@ def parse_duration_hours(value: str) -> int:
     return count if unit == "h" else max(1, count // 60)
 
 
-def _validate_named_sources(items: list[dict[str, Any]], field: str, errors: list[str]) -> None:
+def _validate_named_sources(items: list[dict[str, Any]] | None, field: str, errors: list[str]) -> None:
+    if items is None:
+        errors.append(f"{field}: expected a list, got null")
+        return
     seen_priorities: set[int] = set()
     enabled_count = 0
     for item in items:
