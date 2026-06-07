@@ -193,7 +193,7 @@ def _format_data_api2_safe(src: object, all_cve_entries: list[dict]) -> tuple[li
                     cve["CVSS_vector"] = cve_item["impact"]["baseMetricV3"]["cvssV3"].get("vectorString", "")
             elif "baseMetricV2" in cve_item["impact"]:
                 cve["CVSS_version"] = 2
-                cve["severity"] = cve_item["impact"]["baseMetricV4"].get("severity", "UNKNOWN")
+                cve["severity"] = cve_item["impact"]["baseMetricV2"].get("severity", "UNKNOWN")
                 if "cvssV2" in cve_item["impact"]["baseMetricV2"]:
                     cve["score"] = cve_item["impact"]["baseMetricV2"]["cvssV2"].get("baseScore", 0)
                     cve["CVSS_vector"] = cve_item["impact"]["baseMetricV2"]["cvssV2"].get("vectorString", "")
