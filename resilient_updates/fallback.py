@@ -101,6 +101,15 @@ def classify_exception(exc: Exception) -> FailureReason:
 
 
 # Errors where retrying is pointless (permanent, not transient).
+#
+# Design note (D10): AUTH_FAILURE is listed here, which means that even if
+# a caller passes ``retry_status_codes=[403]`` the inner loop stops
+# immediately on an auth failure.  This is intentional: auth failures are
+# almost always permanent in this context (wrong credentials / key
+# revoked) and blind retries would just waste time and burn rate-limits.
+# The test ``test_auth_failure_403_is_not_retried`` documents this
+# contract explicitly.  To *actually* retry 401/403 you must also remove
+# AUTH_FAILURE from this set (or don't classify 401/403 as AUTH_FAILURE).
 _NON_RETRYABLE_REASONS = frozenset(
     {
         FailureReason.INVALID_SCHEMA,
