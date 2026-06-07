@@ -11,7 +11,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from resilient_updates.scanner_diff import diff_runs, to_markdown
+from resilient_updates.scanner_diff import (
+    _components_from_syft,
+    _findings_from_cve_bin_tool,
+    _findings_from_grype,
+    _findings_from_trivy,
+    diff_runs,
+    to_markdown,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -178,3 +185,195 @@ def test_to_markdown_includes_section_headers(tmp_path: Path):
     assert "## Findings" in md
     assert "CVE-X" in md
     assert "+1" in md  # severity delta line for HIGH
+
+
+# ---------------------------------------------------------------------------
+# _components_from_syft edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_components_from_syft_non_dict_input():
+    """Non-dict input returns empty list."""
+    assert _components_from_syft("not a dict") == []
+    assert _components_from_syft(None) == []
+
+
+def test_components_from_syft_skips_non_dict_items():
+    """Non-dict items in artifacts list are skipped."""
+    syft = {"artifacts": ["not-a-dict", {"name": "valid", "version": "1.0"}]}
+    rows = _components_from_syft(syft)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "valid"
+
+
+# ---------------------------------------------------------------------------
+# _findings_from_grype edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_findings_from_grype_non_dict_input():
+    """Non-dict input returns empty list."""
+    assert _findings_from_grype(None) == []
+    assert _findings_from_grype([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _findings_from_trivy
+# ---------------------------------------------------------------------------
+
+
+def test_findings_from_trivy_with_vulnerabilities():
+    """Trivy report with Results→Vulnerabilities is parsed correctly."""
+    trivy = {
+        "Results": [
+            {
+                "Target": "alpine:3.18",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2024-1111",
+                        "PkgName": "openssl",
+                        "InstalledVersion": "1.1.1",
+                        "Severity": "HIGH",
+                    }
+                ],
+            }
+        ]
+    }
+    rows = _findings_from_trivy(trivy)
+    assert len(rows) == 1
+    assert rows[0]["id"] == "CVE-2024-1111"
+    assert rows[0]["tool"] == "trivy"
+    assert rows[0]["severity"] == "HIGH"
+
+
+def test_findings_from_trivy_non_dict_input():
+    """Non-dict input returns empty list."""
+    assert _findings_from_trivy("bad") == []
+
+
+# ---------------------------------------------------------------------------
+# _findings_from_cve_bin_tool
+# ---------------------------------------------------------------------------
+
+
+def test_findings_from_cve_bin_tool_with_entries():
+    """cve-bin-tool report (list of dicts) is parsed correctly."""
+    cve_report = [
+        {"cve_number": "CVE-2024-2222", "severity": "MEDIUM", "product": "curl", "version": "7.80.0"},
+        {"CVE": "CVE-2024-3333", "severity": "LOW", "product": "libz", "version": "1.2.11"},
+    ]
+    rows = _findings_from_cve_bin_tool(cve_report)
+    assert len(rows) == 2
+    assert rows[0]["id"] == "CVE-2024-2222"
+    assert rows[1]["id"] == "CVE-2024-3333"
+    assert rows[0]["tool"] == "cve-bin-tool"
+
+
+def test_findings_from_cve_bin_tool_non_list_input():
+    """Non-list input returns empty list."""
+    assert _findings_from_cve_bin_tool({}) == []
+
+
+def test_findings_from_cve_bin_tool_skips_non_dict_items():
+    """Non-dict entries are skipped."""
+    rows = _findings_from_cve_bin_tool(["not-a-dict", {"cve_number": "CVE-X", "severity": "LOW"}])
+    assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# DiffSummary.to_dict
+# ---------------------------------------------------------------------------
+
+
+def test_diff_summary_to_dict(tmp_path: Path):
+    """DiffSummary.to_dict() returns the expected structure."""
+    before = _make_run(tmp_path / "before", syft=_syft([("a", "1")]), grype=_grype([]))
+    after = _make_run(
+        tmp_path / "after",
+        syft=_syft([("a", "1"), ("b", "2")]),
+        grype=_grype([("CVE-X", "High", "b", "2")]),
+    )
+    diff = diff_runs(before, after)
+    d = diff.to_dict()
+    assert "components" in d
+    assert "findings" in d
+    assert "severity_delta" in d
+    assert d["components"]["added_count"] == 1
+    assert d["findings"]["added_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Markdown renderer — removed components and resolved findings
+# ---------------------------------------------------------------------------
+
+
+def test_to_markdown_shows_removed_components(tmp_path: Path):
+    """Markdown includes a 'Removed components' section when components are removed."""
+    before = _make_run(
+        tmp_path / "before",
+        syft=_syft([("alpha", "1.0"), ("beta", "2.0")]),
+        grype=_grype([]),
+    )
+    after = _make_run(
+        tmp_path / "after",
+        syft=_syft([("beta", "2.0")]),
+        grype=_grype([]),
+    )
+    md = to_markdown(diff_runs(before, after), before_label="v1", after_label="v2")
+    assert "Removed components" in md
+    assert "alpha" in md
+
+
+def test_to_markdown_shows_resolved_findings(tmp_path: Path):
+    """Markdown includes a 'Resolved findings' section when findings are removed."""
+    before = _make_run(
+        tmp_path / "before",
+        syft=_syft([]),
+        grype=_grype([("CVE-2024-OLD", "High", "alpha", "1.0")]),
+    )
+    after = _make_run(
+        tmp_path / "after",
+        syft=_syft([]),
+        grype=_grype([]),
+    )
+    md = to_markdown(diff_runs(before, after), before_label="v1", after_label="v2")
+    assert "Resolved findings" in md
+    assert "CVE-2024-OLD" in md
+
+
+# ---------------------------------------------------------------------------
+# Trivy and cve-bin-tool integrated into diff_runs
+# ---------------------------------------------------------------------------
+
+
+def test_diff_runs_includes_trivy_findings(tmp_path: Path):
+    """Trivy findings from reports/trivy/report.json are included in the diff."""
+    trivy_report = {
+        "Results": [
+            {
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2024-TRIVY",
+                        "PkgName": "openssl",
+                        "InstalledVersion": "1.1.1",
+                        "Severity": "HIGH",
+                    }
+                ]
+            }
+        ]
+    }
+    before = _make_run(tmp_path / "before", syft=_syft([]), grype=_grype([]), trivy=trivy_report)
+    after = _make_run(tmp_path / "after", syft=_syft([]), grype=_grype([]), trivy={"Results": []})
+    diff = diff_runs(before, after)
+    removed_ids = [f["id"] for f in diff.findings_removed]
+    assert "CVE-2024-TRIVY" in removed_ids
+
+
+def test_diff_runs_includes_cve_bin_tool_findings(tmp_path: Path):
+    """cve-bin-tool findings from reports/cve-bin-tool/report.json are included."""
+    cve_report = [{"cve_number": "CVE-2024-CBT", "severity": "MEDIUM", "product": "curl", "version": "7.80.0"}]
+    before = _make_run(tmp_path / "before", syft=_syft([]), grype=_grype([]), cve=[])
+    after = _make_run(tmp_path / "after", syft=_syft([]), grype=_grype([]), cve=cve_report)
+    diff = diff_runs(before, after)
+    added_ids = [f["id"] for f in diff.findings_added]
+    assert "CVE-2024-CBT" in added_ids
