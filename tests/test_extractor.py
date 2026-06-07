@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import gzip
 import io
-import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from resilient_updates.extractor import (
-    ExtractionLimitError,
     ExtractionStats,
     ExtractLimits,
     _archive_kind,
@@ -105,7 +102,6 @@ def test_extract_tar_allows_root_dot_directory_entry(tmp_path: Path):
 # _strip_archive_suffix — §12 regression guard
 # ---------------------------------------------------------------------------
 
-import pytest  # noqa: E402
 
 from resilient_updates.extractor import _strip_archive_suffix  # noqa: E402
 

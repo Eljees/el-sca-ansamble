@@ -130,7 +130,6 @@ def test_extraction_manifest_listed_in_artefacts(tmp_path: Path) -> None:
 
 def test_glob_relpaths_ioerror_returns_empty(tmp_path: Path, monkeypatch: object) -> None:
     """OSError inside _glob_relpaths returns an empty list (provenance dir unreadable)."""
-    from resilient_updates import manifest as _mod
 
     # Patch Path.rglob on the provenance subdir to raise OSError.
     original_rglob = Path.rglob

@@ -8,7 +8,7 @@ import tarfile
 import time
 from copy import deepcopy
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,7 +23,6 @@ from resilient_updates.cli import (
     _provenance_path,
     _render_trivy_flags,
     _resolve_listing,
-    _run_cve_db_audit,
     _safe_exists,
     _safe_is_dir,
     _validate_grype_archive,
@@ -644,7 +643,7 @@ def test_audit_cve_db_subcommand_passes(tmp_path, monkeypatch, capsys):
             str(db_root),
         ],
     )
-    rc = main()
+    main()
     out = json.loads(capsys.readouterr().out)
     # The example config's required_sources might include sources the minimal DB
     # doesn't have, so just verify the subcommand ran and produced JSON.
@@ -693,7 +692,7 @@ def test_freshness_subcommand_returns_json(monkeypatch, capsys):
     from resilient_updates.cli import main
 
     monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "freshness"])
-    rc = main()
+    main()
     # rc is 0 or EXIT_VALIDATION_FAILED depending on stale state — just verify JSON
     out = json.loads(capsys.readouterr().out)
     assert "should_fail" in out
@@ -746,7 +745,7 @@ def test_resolve_listing_available_list():
         {"url": "https://cdn.example.com/db-new.tar.gz", "built": "2025-06-01"},
     ]
     data = json.dumps({"available": entries}).encode()
-    url, checksum, built = _resolve_listing(data, "https://example.com")
+    url, _checksum, built = _resolve_listing(data, "https://example.com")
     # Must pick latest by 'built'
     assert "new" in url
     assert built == "2025-06-01"
@@ -755,7 +754,7 @@ def test_resolve_listing_available_list():
 def test_resolve_listing_url_key():
     """Flat schema with just 'url' at the top level."""
     data = json.dumps({"url": "https://cdn.example.com/db.tar.gz", "built": "2025-06-01"}).encode()
-    url, checksum, built = _resolve_listing(data, "https://example.com")
+    url, _checksum, _built = _resolve_listing(data, "https://example.com")
     assert url == "https://cdn.example.com/db.tar.gz"
 
 
@@ -925,8 +924,8 @@ def test_scan_dry_run_text_format_subcommand(tmp_path, monkeypatch, capsys):
 
 def test_scan_run_subcommand(tmp_path, monkeypatch, capsys):
     """scan (non-dry-run) with a mocked run_scan returns the scan result as JSON."""
-    from resilient_updates.cli import main
     from resilient_updates import scan as _scan_mod
+    from resilient_updates.cli import main
 
     mock_result = {"status": "ok", "tool": "trivy", "findings": []}
     monkeypatch.setattr(_scan_mod, "run_scan", lambda **kw: mock_result)
@@ -970,8 +969,8 @@ def test_dashboard_subcommand_no_uvicorn(tmp_path, monkeypatch, capsys):
 
 def test_update_doctor_json_output(monkeypatch, capsys):
     """update-doctor --json must print the reachability matrix as JSON."""
-    from resilient_updates.cli import main
     from resilient_updates import update_doctor as _ud
+    from resilient_updates.cli import main
 
     mock_matrix = {
         "chains": ["direct"],
@@ -990,8 +989,8 @@ def test_update_doctor_json_output(monkeypatch, capsys):
 
 def test_update_doctor_text_output(monkeypatch, capsys):
     """update-doctor without --json must print formatted text."""
-    from resilient_updates.cli import main
     from resilient_updates import update_doctor as _ud
+    from resilient_updates.cli import main
 
     mock_matrix = {"chains": ["direct"], "rows": [], "recommended": {"trivy": "direct"}}
     monkeypatch.setattr(_ud, "build_matrix", lambda config, **kw: mock_matrix)
@@ -1005,8 +1004,8 @@ def test_update_doctor_text_output(monkeypatch, capsys):
 
 def test_update_doctor_suggest_proxy_found(monkeypatch, capsys):
     """update-doctor --suggest-proxy prints the proxy URL and returns 0."""
-    from resilient_updates.cli import main
     from resilient_updates import update_doctor as _ud
+    from resilient_updates.cli import main
 
     monkeypatch.setattr(_ud, "recommended_proxy", lambda config, **kw: "http://proxy:3128")
 
@@ -1018,8 +1017,8 @@ def test_update_doctor_suggest_proxy_found(monkeypatch, capsys):
 
 def test_update_doctor_suggest_proxy_not_found(monkeypatch, capsys):
     """update-doctor --suggest-proxy returns EXIT_ALL_SOURCES_FAILED when no proxy works."""
-    from resilient_updates.cli import main
     from resilient_updates import update_doctor as _ud
+    from resilient_updates.cli import main
 
     monkeypatch.setattr(_ud, "recommended_proxy", lambda config, **kw: None)
 
@@ -1035,8 +1034,8 @@ def test_update_doctor_suggest_proxy_not_found(monkeypatch, capsys):
 
 def test_update_vex_subcommand(monkeypatch, capsys):
     """update vex with a mocked fetch_vex must print JSON and return 0."""
-    from resilient_updates.cli import main
     from resilient_updates import vex as _vex
+    from resilient_updates.cli import main
 
     mock_payload = {"published": True, "status": "ok"}
     monkeypatch.setattr(_vex, "fetch_vex", lambda config, session=None: mock_payload)
@@ -1050,8 +1049,8 @@ def test_update_vex_subcommand(monkeypatch, capsys):
 
 def test_update_vex_subcommand_failure(monkeypatch, capsys):
     """update vex returns EXIT_ALL_SOURCES_FAILED when published is False."""
-    from resilient_updates.cli import main
     from resilient_updates import vex as _vex
+    from resilient_updates.cli import main
 
     mock_payload = {"published": False, "used_last_known_good": False, "status": "failed"}
     monkeypatch.setattr(_vex, "fetch_vex", lambda config, session=None: mock_payload)
@@ -1069,8 +1068,8 @@ def test_update_vex_subcommand_failure(monkeypatch, capsys):
 def test_proxy_status_no_chains_configured(monkeypatch, capsys):
     """proxy-status returns 0 with a no-chains-configured message when the
     config uses the legacy flat proxy block (ProxyRouter.from_config → None)."""
-    from resilient_updates.cli import main
     from resilient_updates import proxy_chain as _pc
+    from resilient_updates.cli import main
 
     monkeypatch.setattr(_pc.ProxyRouter, "from_config", classmethod(lambda cls, cfg: None))
 
@@ -1083,8 +1082,8 @@ def test_proxy_status_no_chains_configured(monkeypatch, capsys):
 
 def test_proxy_status_with_chains_all_ok(tmp_path, monkeypatch, capsys):
     """proxy-status returns 0 when at least one chain reports status='ok'."""
-    from resilient_updates.cli import main
     from resilient_updates import proxy_chain as _pc
+    from resilient_updates.cli import main
 
     cfg_abs = str(Path(_CFG).resolve())
 
@@ -1110,8 +1109,8 @@ def test_proxy_status_with_chains_all_ok(tmp_path, monkeypatch, capsys):
 
 def test_proxy_status_all_chains_down(tmp_path, monkeypatch, capsys):
     """proxy-status returns EXIT_ALL_SOURCES_FAILED when every chain is down."""
-    from resilient_updates.cli import main
     from resilient_updates import proxy_chain as _pc
+    from resilient_updates.cli import main
 
     cfg_abs = str(Path(_CFG).resolve())
 
