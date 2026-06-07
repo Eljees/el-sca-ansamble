@@ -10,7 +10,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from resilient_updates.run_summary import derive, write_to_disk
+from resilient_updates.run_summary import (
+    _count_list,
+    _cve_provenance_state,
+    _db_drift,
+    _grype_provenance_state,
+    _input_hashes,
+    _input_sha256,
+    derive,
+    write_to_disk,
+)
 
 
 def _seed_root(
@@ -306,3 +315,182 @@ def test_no_probe_files_keeps_unknown(tmp_path: Path):
 
     assert snapshot["tools"]["grype"]["update_state"] == "unknown"
     assert snapshot["snapshot_id"] == ""
+
+
+# ---------------------------------------------------------------------------
+# _count_list helper
+# ---------------------------------------------------------------------------
+
+
+def test_count_list_non_list_returns_zero():
+    """Non-list input returns 0."""
+    assert _count_list(None) == 0
+    assert _count_list({}) == 0
+    assert _count_list("string") == 0
+
+
+# ---------------------------------------------------------------------------
+# _input_sha256 edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_input_sha256_empty_items_returns_none():
+    """Empty items list → None."""
+    assert _input_sha256({"items": []}) is None
+
+
+def test_input_sha256_multi_item_no_valid_sha256():
+    """Multiple items with no valid sha256 values → None."""
+    result = _input_sha256({"items": [{}, {}]})
+    assert result is None
+
+
+def test_input_sha256_single_item_empty_sha():
+    """Single item with empty sha256 → None."""
+    assert _input_sha256({"items": [{"sha256": ""}]}) is None
+
+
+# ---------------------------------------------------------------------------
+# _input_hashes — file path hashing
+# ---------------------------------------------------------------------------
+
+
+def test_input_hashes_with_real_file(tmp_path: Path):
+    """_input_hashes returns sha1+sha256 when the archive file exists."""
+    archive = tmp_path / "archive.tar.gz"
+    archive.write_bytes(b"fake archive")
+    extraction = {"items": [{"archive": str(archive), "sha256": "abc"}]}
+    result = _input_hashes(extraction)
+    assert "sha1" in result
+    assert "sha256" in result
+
+
+def test_input_hashes_missing_file_returns_empty(tmp_path: Path):
+    """Non-existent archive path → empty dict."""
+    extraction = {"items": [{"archive": str(tmp_path / "no.tar.gz")}]}
+    assert _input_hashes(extraction) == {}
+
+
+# ---------------------------------------------------------------------------
+# _grype_provenance_state branches
+# ---------------------------------------------------------------------------
+
+
+def test_grype_provenance_state_active_noop():
+    """'active-noop' activation status → 'reused-cached'."""
+    prov = {"activation_status": "active-noop", "used_last_known_good": False}
+    state = _grype_provenance_state(prov)
+    assert state["update_grype_db"] == "reused-cached"
+
+
+def test_grype_provenance_state_last_known_good():
+    """'last-known-good' activation status → 'reused-cached'."""
+    prov = {"activation_status": "last-known-good", "used_last_known_good": False}
+    state = _grype_provenance_state(prov)
+    assert state["update_grype_db"] == "reused-cached"
+
+
+def test_grype_provenance_state_custom_status():
+    """Unknown/custom status string is passed through verbatim."""
+    prov = {"activation_status": "stale-rejected"}
+    state = _grype_provenance_state(prov)
+    assert state["update_grype_db"] == "stale-rejected"
+
+
+# ---------------------------------------------------------------------------
+# _cve_provenance_state branches
+# ---------------------------------------------------------------------------
+
+
+def test_cve_provenance_state_non_dict_returns_unknown():
+    """Non-dict provenance → update_cve_db=unknown."""
+    state = _cve_provenance_state(None)
+    assert state["update_cve_db"] == "unknown"
+
+
+def test_cve_provenance_state_fresh_status():
+    """'fresh' activation status is returned as-is."""
+    prov = {"activation_status": "fresh"}
+    state = _cve_provenance_state(prov)
+    assert state["update_cve_db"] == "fresh"
+
+
+def test_cve_provenance_state_active():
+    """'active' → maps to 'fresh'."""
+    prov = {"activation_status": "active"}
+    state = _cve_provenance_state(prov)
+    assert state["update_cve_db"] == "fresh"
+
+
+def test_cve_provenance_state_last_known_good():
+    """'last-known-good' → maps to 'lkg'."""
+    prov = {"activation_status": "last-known-good"}
+    state = _cve_provenance_state(prov)
+    assert state["update_cve_db"] == "lkg"
+
+
+def test_cve_provenance_state_used_lkg_flag():
+    """used_last_known_good=True → maps to 'lkg'."""
+    prov = {"activation_status": "", "used_last_known_good": True}
+    state = _cve_provenance_state(prov)
+    assert state["update_cve_db"] == "lkg"
+
+
+def test_cve_provenance_state_version_from_cve_db_mtime(tmp_path: Path):
+    """When selected_source is empty, cve.db mtime from last_known_good_audit is used."""
+    prov = {
+        "activation_status": "fresh",
+        "selected_source": "",
+        "last_known_good_audit": {"files": {"cve.db": {"mtime_utc": "2026-01-01T00:00:00Z"}}},
+    }
+    state = _cve_provenance_state(prov)
+    assert "2026" in state["cve_db_version"]
+
+
+# ---------------------------------------------------------------------------
+# _overall_db_state — reused-cached path
+# ---------------------------------------------------------------------------
+
+
+def test_overall_db_state_fresh_or_reused(tmp_path: Path):
+    """When one DB is 'refreshed-this-run' and another 'reused-cached',
+    _overall_db_state should return 'fresh-or-reused'."""
+    root = _seed_root(
+        tmp_path / "artifacts",
+        prov_grype={"activation_status": "active", "used_last_known_good": False},
+        prov_cve={"activation_status": "last-known-good", "used_last_known_good": False},
+        prov_trivy={"activation_status": "active", "used_last_known_good": False},
+    )
+    snapshot = derive(root)["db_snapshot"]
+    # grype was "active" → "refreshed-this-run"; cve was "last-known-good" → "reused-cached"
+    # When one DB refreshed and another reused, individual states are what matter.
+    assert snapshot["grype_update_state"] == "refreshed-this-run"
+    assert snapshot["cve_update_state"] == "lkg"
+
+
+# ---------------------------------------------------------------------------
+# _db_drift — reused-cached path (lines 316-318)
+# ---------------------------------------------------------------------------
+
+
+def test_db_drift_fresh_or_reused():
+    """When states include both 'refreshed-this-run' and 'reused-cached',
+    _db_drift should return 'fresh-or-reused'."""
+    from pathlib import Path
+
+    grype = {"update_grype_db": "refreshed-this-run"}
+    cve = {"update_cve_db": "reused-cached"}
+    trivy = {"update_trivy_db": "refreshed-this-run"}
+    result = _db_drift(Path("."), grype, cve, trivy)
+    assert result == "fresh-or-reused"
+
+
+def test_db_drift_all_refreshed():
+    """When all states are 'refreshed-this-run', returns 'refreshed-this-run'."""
+    from pathlib import Path
+
+    grype = {"update_grype_db": "refreshed-this-run"}
+    cve = {"update_cve_db": "refreshed-this-run"}
+    trivy = {"update_trivy_db": "refreshed-this-run"}
+    result = _db_drift(Path("."), grype, cve, trivy)
+    assert result == "refreshed-this-run"
