@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from resilient_updates.manifest import derive_manifest, write_manifest
+from resilient_updates.manifest import derive_manifest, hash_input_archive, write_manifest
 
 
 def _populate(root: Path) -> None:
@@ -85,3 +85,77 @@ def test_artefacts_does_not_include_missing_files(tmp_path: Path) -> None:
     (tmp_path / "sbom" / "syft.json").write_text("{}")
     payload = derive_manifest(tmp_path)
     assert payload["artefacts"] == {"sbom": ["sbom/syft.json"]}
+
+
+def test_tools_extracted_from_status_json(tmp_path: Path) -> None:
+    """Tools block from status.json is surfaced in the manifest."""
+    (tmp_path / "status.json").write_text(
+        json.dumps(
+            {"tools": {"trivy": {"version": "0.48.0"}, "grype": "0.74.3"}}
+        ),
+        encoding="utf-8",
+    )
+    payload = derive_manifest(tmp_path)
+    assert payload["tools"]["trivy"] == "0.48.0"
+    assert payload["tools"]["grype"] == "0.74.3"
+
+
+def test_tools_fallback_from_db_snapshot_json(tmp_path: Path) -> None:
+    """When status.json has no tools, db_snapshot.json is used as fallback."""
+    (tmp_path / "db_snapshot.json").write_text(
+        json.dumps({"tools": {"trivy": "0.48.0", "grype": {"version": "0.74.3"}}}),
+        encoding="utf-8",
+    )
+    payload = derive_manifest(tmp_path)
+    assert payload["tools"]["trivy"] == "0.48.0"
+    assert payload["tools"]["grype"] == "0.74.3"
+
+
+def test_input_sha256_included_in_target_block(tmp_path: Path) -> None:
+    """extraction_manifest.json input_sha256 is surfaced in the target block."""
+    (tmp_path / "extraction_manifest.json").write_text(
+        json.dumps({"input_sha256": "deadbeef", "status": "pass", "extracted_count": 0}),
+        encoding="utf-8",
+    )
+    payload = derive_manifest(tmp_path, target_host="scanner-host")
+    assert payload["target"]["sha256"] == "deadbeef"
+
+
+def test_extraction_manifest_listed_in_artefacts(tmp_path: Path) -> None:
+    """When extraction_manifest.json exists it appears under artefacts."""
+    (tmp_path / "extraction_manifest.json").write_text("{}", encoding="utf-8")
+    payload = derive_manifest(tmp_path)
+    assert "extraction" in payload["artefacts"]
+
+
+def test_glob_relpaths_ioerror_returns_empty(tmp_path: Path, monkeypatch: object) -> None:
+    """OSError inside _glob_relpaths returns an empty list (provenance dir unreadable)."""
+    from resilient_updates import manifest as _mod
+
+    # Patch Path.rglob on the provenance subdir to raise OSError.
+    original_rglob = Path.rglob
+
+    def _boom(self, pattern):
+        if "provenance" in str(self):
+            raise OSError("permission denied")
+        return original_rglob(self, pattern)
+
+    monkeypatch.setattr(Path, "rglob", _boom)
+
+    prov_dir = tmp_path / "provenance"
+    prov_dir.mkdir()
+    (prov_dir / "trivy.json").write_text("{}", encoding="utf-8")
+
+    payload = derive_manifest(tmp_path)
+    # provenance should be absent or empty because OSError was swallowed
+    assert "provenance" not in payload["artefacts"]
+
+
+def test_hash_input_archive(tmp_path: Path) -> None:
+    """hash_input_archive returns sha1 and sha256 for a file."""
+    f = tmp_path / "archive.tar.gz"
+    f.write_bytes(b"fake archive content")
+    result = hash_input_archive(f)
+    assert "sha1" in result
+    assert "sha256" in result
+    assert len(result["sha256"]) == 64  # hex sha256
