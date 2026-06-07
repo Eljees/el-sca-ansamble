@@ -86,6 +86,9 @@ artifacts/db_status/
 artifacts/mcp-jobs/
 artifacts/run-scan.log*
 
+# Session-completion scratch notes (not source, not docs)
+docs/олл-ок.txt
+
 # Per-run history snapshots and local enrichment feeds (EPSS/KEV).
 artifacts/runs/
 artifacts/enrichment/
