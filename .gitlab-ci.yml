@@ -1,0 +1,221 @@
+# GitLab CI/CD pipeline for el-sca-ansamble.
+#
+# Mirrors .github/workflows/ci.yml — keep both in sync when adding or
+# removing jobs.  The GitLab runner is assumed to be a shared
+# docker-based runner (image: python:3.12-slim for most jobs).
+#
+# To wire this pipeline to your GitLab instance:
+#   1.  Register a gitlab-runner on the host or in a docker agent.
+#   2.  Push this file on a branch — GitLab auto-detects it.
+#   3.  Docker-based jobs (docker-build, compose-config) require
+#       DOCKER_HOST to be set and docker-in-docker (dind) or
+#       a bind-mounted /var/run/docker.sock.
+#
+# Environment variables expected:
+#   (none required for lint / test jobs)
+#   SCAN_TARGET_HOST (optional) — used only by docker-build to satisfy
+#       compose volume declarations; defaults to $CI_PROJECT_DIR.
+
+stages:
+  - lint
+  - build
+  - test
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+default:
+  interruptible: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lint — fast feedback first
+# ─────────────────────────────────────────────────────────────────────────────
+
+pre-commit:
+  stage: lint
+  image: python:3.12-slim
+  variables:
+    PRE_COMMIT_HOME: "${CI_PROJECT_DIR}/.pre-commit-cache"
+  cache:
+    key: pre-commit-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pre-commit-cache/
+  before_script:
+    - pip install --quiet "pre-commit>=3"
+  script:
+    - pre-commit run --all-files --show-diff-on-failure
+
+lint-python:
+  stage: lint
+  image: python:3.12-slim
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+  variables:
+    PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.pip-cache"
+  before_script:
+    - pip install --quiet "ruff>=0.5"
+  script:
+    - ruff check .
+    - ruff format --check .
+    - python -m compileall -q resilient_updates tests
+
+bandit:
+  stage: lint
+  image: python:3.12-slim
+  before_script:
+    - pip install --quiet "bandit>=1.7"
+  script:
+    # MEDIUM+ in runtime code blocks the build; LOW is informational.
+    - bandit -q -r resilient_updates tools --severity-level medium
+
+lint-yaml:
+  stage: lint
+  image: python:3.12-slim
+  before_script:
+    - pip install --quiet "yamllint>=1.35"
+  script:
+    - yamllint -s -c .yamllint .
+
+lint-shell:
+  stage: lint
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - shellcheck --severity=warning $(find scripts -name "*.sh" ! -path "scripts/windows/*")
+
+lint-docker:
+  stage: lint
+  image: hadolint/hadolint:latest-debian
+  parallel:
+    matrix:
+      - DOCKERFILE:
+          - Dockerfile.resilient-updater
+          - Dockerfile.extractor
+          - Dockerfile.cve-bin-tool
+          - Dockerfile.apk-analyzer
+          - Dockerfile.win-analyzer
+          - Dockerfile.db-data
+  script:
+    # hadolint exits 1 if any rule fires above the configured threshold.
+    - hadolint --config .hadolint.yaml "$DOCKERFILE"
+
+lint-powershell:
+  stage: lint
+  image: mcr.microsoft.com/powershell:lts-ubuntu-22.04
+  script:
+    - pwsh -NonInteractive -Command '
+        Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -ErrorAction Stop;
+        $issues = Invoke-ScriptAnalyzer -Path ./scripts/windows -Recurse -Settings ./PSScriptAnalyzerSettings.psd1;
+        $errors = @($issues | Where-Object Severity -eq "Error");
+        if ($issues) { $issues | Format-Table -AutoSize | Out-String | Write-Host }
+        if ($errors.Count -gt 0) { Write-Error "PSScriptAnalyzer found $($errors.Count) error(s)."; exit 1 }
+      '
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build — docker compose validation & image builds
+# ─────────────────────────────────────────────────────────────────────────────
+
+compose-config:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    SCAN_TARGET_HOST: "${CI_PROJECT_DIR}"
+    EXTRACT_INPUT_HOST: "${CI_PROJECT_DIR}"
+  before_script:
+    - apk add --no-cache docker-compose-plugin 2>/dev/null || true
+    - docker compose version
+  script:
+    - docker compose config -q
+    - docker compose -f docker-compose.yml -f docker-compose.windows.override.yml config -q
+
+docker-build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    SCAN_TARGET_HOST: "${CI_PROJECT_DIR}"
+    EXTRACT_INPUT_HOST: "${CI_PROJECT_DIR}"
+  needs:
+    - lint-docker
+  parallel:
+    matrix:
+      - SERVICE:
+          - resilient-updater
+          - extractor
+          - cve-bin-tool
+          - apk-analyzer
+          - win-analyzer
+  script:
+    - docker compose build "$SERVICE"
+  # Docker builds can be slow — allow up to 20 min.
+  timeout: 20 minutes
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test
+# ─────────────────────────────────────────────────────────────────────────────
+
+smoke:
+  stage: test
+  image: python:3.12-slim
+  needs:
+    - lint-python
+  cache:
+    key: pip-test-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+  variables:
+    PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.pip-cache"
+  before_script:
+    - pip install --quiet -r requirements.txt "pytest>=8"
+  script:
+    - pytest -q -m smoke --tb=short
+
+pytest:
+  stage: test
+  needs:
+    - smoke
+  parallel:
+    matrix:
+      - PYTHON_IMAGE:
+          - python:3.10-slim
+          - python:3.12-slim
+  image: "${PYTHON_IMAGE}"
+  cache:
+    key: pip-test-${PYTHON_IMAGE}-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+  variables:
+    PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.pip-cache"
+  before_script:
+    - pip install --quiet -r requirements.txt "pytest>=8" "pytest-cov>=5"
+  script:
+    # Coverage gate only on 3.12 (the primary target).
+    - |
+      if echo "$PYTHON_IMAGE" | grep -q "3.12"; then
+        GATE="--cov-fail-under=75"
+      else
+        GATE=""
+      fi
+      pytest -q --disable-warnings \
+        --cov=resilient_updates \
+        --cov-report=term-missing \
+        --cov-report=xml \
+        $GATE
+  artifacts:
+    when: always
+    paths:
+      - .coverage
+      - coverage.xml
+    expire_in: 14 days
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
