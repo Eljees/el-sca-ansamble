@@ -676,8 +676,8 @@ def main() -> int:
     scanner_diff.add_argument(
         "--format",
         choices=["json", "md"],
-        default="json",
-        help="Force output format regardless of --output extension",
+        default=None,
+        help="Force output format; if omitted, inferred from --output extension (.md→md, else→json)",
     )
     args = parser.parse_args()
 

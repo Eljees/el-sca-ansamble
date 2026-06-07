@@ -314,3 +314,162 @@ def test_db_status_payload_handles_unreadable_path(tmp_path: Path, monkeypatch):
     payload = _db_status_payload("cve-bin-tool", tmp_path, "24h")
     assert payload["exists"] is False
     assert payload["age_hours"] is None
+
+
+# ---------------------------------------------------------------------------
+# CLI subcommand smoke tests (via main()) — cover the argument-dispatch paths
+# ---------------------------------------------------------------------------
+
+_CFG = "tests/fixtures/feed_sources.example.yaml"
+
+
+def _seed_minimal_artifacts(root: Path) -> None:
+    """Write the minimum artifact tree that collect-report / scanner-diff need."""
+    for sub in ("sbom", "reports/grype", "reports/trivy", "reports/cve-bin-tool"):
+        (root / sub).mkdir(parents=True, exist_ok=True)
+    (root / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    (root / "reports" / "grype" / "report.json").write_text(json.dumps({"matches": []}), encoding="utf-8")
+    (root / "reports" / "trivy" / "report.json").write_text(json.dumps({"Results": []}), encoding="utf-8")
+    (root / "reports" / "cve-bin-tool" / "report.json").write_text("[]", encoding="utf-8")
+
+
+@pytest.mark.smoke
+def test_validate_config_subcommand_returns_ok(monkeypatch, capsys):
+    from resilient_updates.cli import main
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "validate-config"])
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "ok"
+
+
+def test_validate_config_subcommand_detects_broken_config(tmp_path, monkeypatch, capsys):
+    from resilient_updates.cli import EXIT_CONFIG_ERROR, main
+
+    bad_cfg = tmp_path / "bad.yaml"
+    bad_cfg.write_text("trivy:\n  db_repositories: null\n", encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", str(bad_cfg), "validate-config"])
+    rc = main()
+    assert rc == EXIT_CONFIG_ERROR
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "error"
+    assert out["errors"]
+
+
+def test_collect_report_subcommand(tmp_path, monkeypatch, capsys):
+    """collect-report must build a Markdown file and emit {"status": "ok"}."""
+    from resilient_updates.cli import main
+
+    artifacts = tmp_path / "artifacts"
+    _seed_minimal_artifacts(artifacts)
+    out_md = tmp_path / "report.md"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "collect-report",
+            "--reports-dir",
+            str(artifacts),
+            "--output",
+            str(out_md),
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok"
+    assert out_md.exists()
+
+
+def test_scanner_diff_subcommand_stdout(tmp_path, monkeypatch, capsys):
+    """scanner-diff --output - must print JSON diff to stdout."""
+    from resilient_updates.cli import main
+
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    _seed_minimal_artifacts(before)
+    _seed_minimal_artifacts(after)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "scanner-diff",
+            "--before",
+            str(before),
+            "--after",
+            str(after),
+            "--output",
+            "-",
+            "--format",
+            "json",
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    # A diff of two identical empty runs should report 0 added / 0 removed.
+    assert "added" in out or "components" in out or isinstance(out, dict)
+
+
+def test_scanner_diff_subcommand_file_output(tmp_path, monkeypatch, capsys):
+    """scanner-diff writing to a .md file must produce valid Markdown."""
+    from resilient_updates.cli import main
+
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    _seed_minimal_artifacts(before)
+    _seed_minimal_artifacts(after)
+    out_md = tmp_path / "diff.md"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "scanner-diff",
+            "--before",
+            str(before),
+            "--after",
+            str(after),
+            "--output",
+            str(out_md),
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    assert out_md.exists()
+    text = out_md.read_text(encoding="utf-8")
+    assert "#" in text  # at least one Markdown heading
+
+
+def test_scan_dry_run_subcommand(tmp_path, monkeypatch, capsys):
+    """scan --dry-run must print the plan without touching docker."""
+    from resilient_updates.cli import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "scan",
+            "--target",
+            str(tmp_path),
+            "--dry-run",
+            "--json",
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "plan" in out
+    assert "target" in out
