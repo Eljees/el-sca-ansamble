@@ -148,7 +148,23 @@ def test_manifest_contains_manifest_path_key(tmp_path: Path):
 
 
 def test_pre_filter_counts_skipped_by_extension(tmp_path: Path):
-    archive = tmp_path  # noqa: F841 — test body incomplete, placeholder
+    """skip_extensions drops matching members; pre_filter counts must reflect it."""
+    archive = tmp_path / "mixed.zip"
+    _zip_file(
+        archive,
+        {
+            "docs/readme.pdf": b"pdf content",
+            "app/binary.bin": b"real binary",
+            "fonts/font.ttf": b"font data",
+        },
+    )
+
+    manifest = extract_artifacts(archive, tmp_path / "out", skip_extensions=[".pdf", ".ttf"])
+
+    assert manifest["pre_filter"]["skipped_by_extension"] == 2
+    assert list((tmp_path / "out").rglob("binary.bin")), ".bin must be extracted"
+    assert not list((tmp_path / "out").rglob("readme.pdf")), ".pdf must be skipped"
+    assert not list((tmp_path / "out").rglob("font.ttf")), ".ttf must be skipped"
 
 
 from resilient_updates.extractor import _ensure_safe_member  # noqa: E402
