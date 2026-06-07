@@ -99,6 +99,10 @@ jobs:
           - Dockerfile.cve-bin-tool
           - Dockerfile.apk-analyzer
           - Dockerfile.win-analyzer
+          # db-data uses a non-standard build context (artifacts/db-image) so it
+          # cannot be built via `docker compose build`; it IS included here so
+          # hadolint catches syntax/best-practice regressions.
+          - Dockerfile.db-data
     steps:
       - uses: actions/checkout@v4
       - name: hadolint ${{ matrix.dockerfile }}
