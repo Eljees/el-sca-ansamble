@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import io
 import json
 import os
+import sys
+import tarfile
 import time
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,10 +17,16 @@ from resilient_updates.cli import (
     EXIT_VALIDATION_FAILED,
     _db_status_payload,
     _dedup_attempted_sources,
+    _extract_checksum_from_text,
     _health_summary,
+    _latest_mtime,
+    _provenance_path,
     _render_trivy_flags,
+    _resolve_listing,
+    _run_cve_db_audit,
     _safe_exists,
     _safe_is_dir,
+    _validate_grype_archive,
 )
 from resilient_updates.config import load_config
 from resilient_updates.fallback import AttemptResult, FailureReason
@@ -687,3 +697,436 @@ def test_freshness_subcommand_returns_json(monkeypatch, capsys):
     # rc is 0 or EXIT_VALIDATION_FAILED depending on stale state — just verify JSON
     out = json.loads(capsys.readouterr().out)
     assert "should_fail" in out
+
+
+# ---------------------------------------------------------------------------
+# _resolve_listing — various grype listing JSON schemas
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_listing_path_key():
+    """Schema with top-level 'path' key (oldest format)."""
+    data = json.dumps({"path": "/db.tar.gz", "checksum": "abc", "built": "2025-01-01"}).encode()
+    url, checksum, built = _resolve_listing(data, "https://example.com")
+    assert url == "/db.tar.gz"
+    assert checksum == "abc"
+    assert built == "2025-01-01"
+
+
+def test_resolve_listing_archive_url_key():
+    """Schema with 'archive_url' key."""
+    data = json.dumps({"archive_url": "https://cdn.example.com/db.tar.gz"}).encode()
+    url, checksum, built = _resolve_listing(data, "https://example.com")
+    assert url == "https://cdn.example.com/db.tar.gz"
+    assert checksum is None
+    assert built is None
+
+
+def test_resolve_listing_available_dict():
+    """Schema with 'available' dict of lists (grype v6 format)."""
+    entry = {"url": "https://cdn.example.com/db.tar.gz", "built": "2025-06-01", "checksum": "cafebabe"}
+    data = json.dumps({"available": {"6": [entry]}}).encode()
+    url, checksum, built = _resolve_listing(data, "https://example.com")
+    assert url == "https://cdn.example.com/db.tar.gz"
+    assert checksum == "cafebabe"
+    assert built == "2025-06-01"
+
+
+def test_resolve_listing_available_dict_empty_raises():
+    """Empty 'available' dict must raise ValueError."""
+    data = json.dumps({"available": {"6": []}}).encode()
+    with pytest.raises(ValueError, match="empty"):
+        _resolve_listing(data, "https://example.com")
+
+
+def test_resolve_listing_available_list():
+    """Schema with 'available' as a plain list (some mirrors)."""
+    entries = [
+        {"url": "https://cdn.example.com/db-old.tar.gz", "built": "2025-01-01"},
+        {"url": "https://cdn.example.com/db-new.tar.gz", "built": "2025-06-01"},
+    ]
+    data = json.dumps({"available": entries}).encode()
+    url, checksum, built = _resolve_listing(data, "https://example.com")
+    # Must pick latest by 'built'
+    assert "new" in url
+    assert built == "2025-06-01"
+
+
+def test_resolve_listing_url_key():
+    """Flat schema with just 'url' at the top level."""
+    data = json.dumps({"url": "https://cdn.example.com/db.tar.gz", "built": "2025-06-01"}).encode()
+    url, checksum, built = _resolve_listing(data, "https://example.com")
+    assert url == "https://cdn.example.com/db.tar.gz"
+
+
+def test_resolve_listing_unsupported_schema():
+    """A JSON object with no recognised keys must raise ValueError."""
+    data = json.dumps({"unknown_key": "value"}).encode()
+    with pytest.raises(ValueError, match="unsupported"):
+        _resolve_listing(data, "https://example.com")
+
+
+# ---------------------------------------------------------------------------
+# _extract_checksum_from_text
+# ---------------------------------------------------------------------------
+
+
+def test_extract_checksum_from_text():
+    assert _extract_checksum_from_text("deadbeef  db.tar.gz\n") == "deadbeef"
+    assert _extract_checksum_from_text("  abc123\n") == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# _validate_grype_archive
+# ---------------------------------------------------------------------------
+
+
+def test_validate_grype_archive_valid_tarfile(tmp_path):
+    """A real .tar.gz passes validation without a checksum."""
+    archive = tmp_path / "db.tar.gz"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        content = b"fake db content"
+        info = tarfile.TarInfo(name="db")
+        info.size = len(content)
+        tf.addfile(info, io.BytesIO(content))
+    archive.write_bytes(buf.getvalue())
+    _validate_grype_archive(archive, None)  # must not raise
+
+
+def test_validate_grype_archive_zstd_magic(tmp_path):
+    """A file starting with the zstd magic bytes passes as a valid archive."""
+    archive = tmp_path / "db.tar.zst"
+    archive.write_bytes(b"\x28\xb5\x2f\xfd" + b"\x00" * 16)
+    _validate_grype_archive(archive, None)  # must not raise
+
+
+def test_validate_grype_archive_corrupt_raises(tmp_path):
+    """A file that is neither tar nor zstd raises ValueError."""
+    archive = tmp_path / "bad.bin"
+    archive.write_bytes(b"GARBAGE_DATA_NOT_A_VALID_ARCHIVE")
+    with pytest.raises(ValueError):
+        _validate_grype_archive(archive, None)
+
+
+def test_validate_grype_archive_checksum_mismatch_raises(tmp_path):
+    """Passing a wrong checksum raises ValueError even for a valid tarfile."""
+    archive = tmp_path / "db.tar.gz"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        content = b"data"
+        info = tarfile.TarInfo(name="db")
+        info.size = len(content)
+        tf.addfile(info, io.BytesIO(content))
+    archive.write_bytes(buf.getvalue())
+    with pytest.raises(ValueError):
+        _validate_grype_archive(archive, "0000000000000000000000000000000000000000000000000000000000000000")
+
+
+# ---------------------------------------------------------------------------
+# _provenance_path
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_path_grype():
+    """_provenance_path for 'grype' reads from atomic_activation_policy."""
+    config = load_config("tests/fixtures/feed_sources.example.yaml")
+    p = _provenance_path(config, "grype")
+    assert isinstance(p, Path)
+    assert "grype" in str(p).lower() or "provenance" in str(p).lower()
+
+
+def test_provenance_path_non_grype():
+    """_provenance_path for any non-grype tool builds a path under artifacts/provenance."""
+    config = load_config("tests/fixtures/feed_sources.example.yaml")
+    p = _provenance_path(config, "trivy")
+    assert p == Path("artifacts/provenance/trivy.json")
+
+
+# ---------------------------------------------------------------------------
+# _latest_mtime — directory traversal
+# ---------------------------------------------------------------------------
+
+
+def test_latest_mtime_directory_with_files(tmp_path):
+    """_latest_mtime on a directory returns the newest file mtime."""
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (tmp_path / "a.txt").write_text("a")
+    (subdir / "b.txt").write_text("b")
+    mt = _latest_mtime(tmp_path)
+    assert mt is not None
+    assert isinstance(mt, float)
+
+
+def test_latest_mtime_empty_directory(tmp_path):
+    """An empty directory returns None (no files)."""
+    result = _latest_mtime(tmp_path)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _db_status_payload — cve-bin-tool path that contains cve.db
+# ---------------------------------------------------------------------------
+
+
+def test_db_status_cve_bin_tool_with_cvedb(tmp_path):
+    """When cve.db exists inside the path, status uses its mtime."""
+    cve_db = tmp_path / "cve.db"
+    cve_db.write_bytes(b"\x00" * 16)
+    payload = _db_status_payload("cve-bin-tool", tmp_path, "24h")
+    assert payload["exists"] is True
+    assert payload["age_hours"] is not None
+
+
+# ---------------------------------------------------------------------------
+# provenance subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_subcommand(tmp_path, monkeypatch, capsys):
+    """provenance must print all JSON files under artifacts/provenance/ and return 0."""
+    from resilient_updates.cli import main
+
+    # Resolve the config path before chdir so the relative path still works.
+    cfg_abs = str(Path(_CFG).resolve())
+
+    prov_dir = tmp_path / "artifacts" / "provenance"
+    prov_dir.mkdir(parents=True)
+    (prov_dir / "trivy.json").write_text('{"tool": "trivy"}', encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["cli", "--config", cfg_abs, "provenance"])
+    rc = main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '"tool"' in out
+
+
+# ---------------------------------------------------------------------------
+# scan subcommand — text dry-run and live-run paths
+# ---------------------------------------------------------------------------
+
+
+def test_scan_dry_run_text_format_subcommand(tmp_path, monkeypatch, capsys):
+    """scan --dry-run without --json must print plan as human-readable text."""
+    from resilient_updates.cli import main
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "--config", _CFG, "scan", "--target", str(tmp_path), "--dry-run"],
+    )
+    rc = main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    # format_plan returns a non-empty text block
+    assert out.strip()
+
+
+def test_scan_run_subcommand(tmp_path, monkeypatch, capsys):
+    """scan (non-dry-run) with a mocked run_scan returns the scan result as JSON."""
+    from resilient_updates.cli import main
+    from resilient_updates import scan as _scan_mod
+
+    mock_result = {"status": "ok", "tool": "trivy", "findings": []}
+    monkeypatch.setattr(_scan_mod, "run_scan", lambda **kw: mock_result)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "--config", _CFG, "scan", "--target", str(tmp_path)],
+    )
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# dashboard subcommand — graceful ImportError when uvicorn is absent
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_subcommand_no_uvicorn(tmp_path, monkeypatch, capsys):
+    """dashboard must print a helpful message and return EXIT_VALIDATION_FAILED
+    when uvicorn is not installed."""
+    from resilient_updates.cli import main
+
+    # Suppress uvicorn in sys.modules to simulate it being absent.
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "--config", _CFG, "dashboard", "--artifacts-dir", str(tmp_path)],
+    )
+    rc = main()
+    assert rc == EXIT_VALIDATION_FAILED
+    assert "uvicorn" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# update-doctor subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_update_doctor_json_output(monkeypatch, capsys):
+    """update-doctor --json must print the reachability matrix as JSON."""
+    from resilient_updates.cli import main
+    from resilient_updates import update_doctor as _ud
+
+    mock_matrix = {
+        "chains": ["direct"],
+        "rows": [],
+        "recommended": {"trivy": "direct", "grype": None},
+    }
+    monkeypatch.setattr(_ud, "build_matrix", lambda config, **kw: mock_matrix)
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "update-doctor", "--json"])
+    rc = main()
+    # grype recommended is None → unreachable → EXIT_ALL_SOURCES_FAILED
+    assert rc == EXIT_ALL_SOURCES_FAILED
+    out = json.loads(capsys.readouterr().out)
+    assert "recommended" in out
+
+
+def test_update_doctor_text_output(monkeypatch, capsys):
+    """update-doctor without --json must print formatted text."""
+    from resilient_updates.cli import main
+    from resilient_updates import update_doctor as _ud
+
+    mock_matrix = {"chains": ["direct"], "rows": [], "recommended": {"trivy": "direct"}}
+    monkeypatch.setattr(_ud, "build_matrix", lambda config, **kw: mock_matrix)
+    monkeypatch.setattr(_ud, "format_matrix", lambda m: "MATRIX TEXT")
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "update-doctor"])
+    rc = main()
+    assert rc == 0
+    assert "MATRIX TEXT" in capsys.readouterr().out
+
+
+def test_update_doctor_suggest_proxy_found(monkeypatch, capsys):
+    """update-doctor --suggest-proxy prints the proxy URL and returns 0."""
+    from resilient_updates.cli import main
+    from resilient_updates import update_doctor as _ud
+
+    monkeypatch.setattr(_ud, "recommended_proxy", lambda config, **kw: "http://proxy:3128")
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "update-doctor", "--suggest-proxy"])
+    rc = main()
+    assert rc == 0
+    assert "http://proxy:3128" in capsys.readouterr().out
+
+
+def test_update_doctor_suggest_proxy_not_found(monkeypatch, capsys):
+    """update-doctor --suggest-proxy returns EXIT_ALL_SOURCES_FAILED when no proxy works."""
+    from resilient_updates.cli import main
+    from resilient_updates import update_doctor as _ud
+
+    monkeypatch.setattr(_ud, "recommended_proxy", lambda config, **kw: None)
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "update-doctor", "--suggest-proxy"])
+    rc = main()
+    assert rc == EXIT_ALL_SOURCES_FAILED
+
+
+# ---------------------------------------------------------------------------
+# update vex subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_update_vex_subcommand(monkeypatch, capsys):
+    """update vex with a mocked fetch_vex must print JSON and return 0."""
+    from resilient_updates.cli import main
+    from resilient_updates import vex as _vex
+
+    mock_payload = {"published": True, "status": "ok"}
+    monkeypatch.setattr(_vex, "fetch_vex", lambda config, session=None: mock_payload)
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "update", "vex"])
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["published"] is True
+
+
+def test_update_vex_subcommand_failure(monkeypatch, capsys):
+    """update vex returns EXIT_ALL_SOURCES_FAILED when published is False."""
+    from resilient_updates.cli import main
+    from resilient_updates import vex as _vex
+
+    mock_payload = {"published": False, "used_last_known_good": False, "status": "failed"}
+    monkeypatch.setattr(_vex, "fetch_vex", lambda config, session=None: mock_payload)
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "update", "vex"])
+    rc = main()
+    assert rc == EXIT_ALL_SOURCES_FAILED
+
+
+# ---------------------------------------------------------------------------
+# proxy-status subcommand
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_status_no_chains_configured(monkeypatch, capsys):
+    """proxy-status returns 0 with a no-chains-configured message when the
+    config uses the legacy flat proxy block (ProxyRouter.from_config → None)."""
+    from resilient_updates.cli import main
+    from resilient_updates import proxy_chain as _pc
+
+    monkeypatch.setattr(_pc.ProxyRouter, "from_config", classmethod(lambda cls, cfg: None))
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "proxy-status"])
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "no-chains-configured"
+
+
+def test_proxy_status_with_chains_all_ok(tmp_path, monkeypatch, capsys):
+    """proxy-status returns 0 when at least one chain reports status='ok'."""
+    from resilient_updates.cli import main
+    from resilient_updates import proxy_chain as _pc
+
+    cfg_abs = str(Path(_CFG).resolve())
+
+    mock_router = MagicMock()
+    mock_router.healthcheck_all.return_value = {
+        "direct": {"status": "ok", "latency_ms": 42},
+    }
+    mock_router.write_provenance = MagicMock()
+
+    monkeypatch.setattr(_pc.ProxyRouter, "from_config", classmethod(lambda cls, cfg: mock_router))
+
+    prov_dir = tmp_path / "artifacts" / "provenance"
+    prov_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", cfg_abs, "proxy-status"])
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "ok"
+    assert "direct" in out["chains"]
+
+
+def test_proxy_status_all_chains_down(tmp_path, monkeypatch, capsys):
+    """proxy-status returns EXIT_ALL_SOURCES_FAILED when every chain is down."""
+    from resilient_updates.cli import main
+    from resilient_updates import proxy_chain as _pc
+
+    cfg_abs = str(Path(_CFG).resolve())
+
+    mock_router = MagicMock()
+    mock_router.healthcheck_all.return_value = {
+        "direct": {"status": "error", "latency_ms": None},
+    }
+    mock_router.write_provenance = MagicMock()
+
+    monkeypatch.setattr(_pc.ProxyRouter, "from_config", classmethod(lambda cls, cfg: mock_router))
+
+    prov_dir = tmp_path / "artifacts" / "provenance"
+    prov_dir.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", cfg_abs, "proxy-status"])
+    rc = main()
+    assert rc == EXIT_ALL_SOURCES_FAILED
