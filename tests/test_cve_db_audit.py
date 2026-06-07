@@ -260,7 +260,7 @@ def test_classify_cve_db_health_skips_non_dict_source_entries():
             "GAD": {"observable": True, "status": "ok"},
         },
     }
-    status, details = classify_cve_db_health(audit_payload, ["NVD", "GAD"])
+    status, _details = classify_cve_db_health(audit_payload, ["NVD", "GAD"])
     assert status == "fresh"  # GAD is ok; NVD entry is skipped
 
 

@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import gzip
 import importlib.util
-import io
 import json
-import shutil
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -349,7 +347,7 @@ def test_format_data_api2_safe_configurations_forwarded_to_parse_node():
     class Src:
         LOGGER = None
 
-        def parse_node_api2(self, node):  # noqa: ARG002
+        def parse_node_api2(self, node):
             return [parsed_row]
 
     entries = [
@@ -504,7 +502,7 @@ def test_format_data_api2_safe_configurations_with_real_logger():
         )
     ]
 
-    cve_data, affects_data = MOD._format_data_api2_safe(src, entries)
+    cve_data, _affects_data = MOD._format_data_api2_safe(src, entries)
 
     # The LOGGER should have received a debug message about the node.
     debug_lines = src.LOGGER.lines

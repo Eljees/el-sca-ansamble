@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -95,7 +95,6 @@ def _config():
 
 def _force_chain_health(router: ProxyRouter, name: str, status: str, latency_ms: float = 100.0):
     """Bypass the network probe by pre-seeding the health cache."""
-    import time
 
     from resilient_updates.proxy_chain import _HealthState
 
@@ -347,7 +346,7 @@ def test_session_for_source_returns_empty_session_when_no_chain():
     _force_chain_health(router, "corp", "down")
     _force_chain_health(router, "direct", "down")
     # None source, no default → preferred is None
-    session, name = router.session_for_source(None)
+    session, _name = router.session_for_source(None)
     # If preferred is None and no candidates are healthy → last resort is None
     # session_for_source returns (empty_session, None) in that case
     assert session is not None  # session is always returned
@@ -366,7 +365,6 @@ def test_probe_chain_uses_cached_result_within_ttl():
     cached = router._health["corp"]
 
     # Probe again — should return the same cached object (no network call).
-    from resilient_updates.proxy_chain import _HealthState as HS
 
     chain = router._chains["corp"]
     result = router._probe_chain("corp", chain, force=False)

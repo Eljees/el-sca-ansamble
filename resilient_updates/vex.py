@@ -15,6 +15,7 @@ touching the cache.
 from __future__ import annotations
 
 import os
+
 try:
     from datetime import UTC  # py3.11+
 except ImportError:
