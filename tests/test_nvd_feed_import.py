@@ -590,3 +590,136 @@ def test_download_falls_back_to_urllib_when_no_curl(tmp_path: Path, monkeypatch)
     MOD.download("https://nvd.nist.gov/feeds/x.json.gz", timeout=30, dest=str(dest))
 
     assert dest.read_bytes() == response_body
+
+
+# ===========================================================================
+# main() — integration smoke tests with mocked cve_bin_tool
+# ===========================================================================
+
+
+def _write_gzip_feed(path: Path, n_cves: int = 1) -> None:
+    """Write a minimal NVD 2.0 gzip feed file to *path*."""
+    entries = [
+        {
+            "cve": {
+                "id": f"CVE-2024-{i:04d}",
+                "descriptions": [{"value": f"Test vuln {i}"}],
+                "published": "2024-01-01T00:00:00.000",
+            }
+        }
+        for i in range(n_cves)
+    ]
+    feed_data = {"vulnerabilities": entries}
+    with gzip.open(str(path), "wb") as f:
+        f.write(json.dumps(feed_data).encode())
+
+
+def _patch_cve_bin_tool(monkeypatch, db_root: Path) -> None:
+    """Inject fake cve_bin_tool classes into sys.modules."""
+    mock_db_instance = MagicMock()
+    mock_db_instance.dbpath = str(db_root / "cve.db")
+
+    mock_cvedb_cls = MagicMock(return_value=mock_db_instance)
+
+    mock_nvd_instance = MagicMock()
+    mock_nvd_instance.LOGGER = MagicMock()
+    mock_nvd_instance.parse_node_api2.return_value = []
+    mock_nvd_cls = MagicMock(return_value=mock_nvd_instance)
+
+    fake_cbt_cvedb = MagicMock()
+    fake_cbt_cvedb.CVEDB = mock_cvedb_cls
+
+    fake_cbt_nvd = MagicMock()
+    fake_cbt_nvd.NVD_Source = mock_nvd_cls
+
+    monkeypatch.setitem(sys.modules, "cve_bin_tool", MagicMock())
+    monkeypatch.setitem(sys.modules, "cve_bin_tool.cvedb", fake_cbt_cvedb)
+    monkeypatch.setitem(sys.modules, "cve_bin_tool.data_sources", MagicMock())
+    monkeypatch.setitem(sys.modules, "cve_bin_tool.data_sources.nvd_source", fake_cbt_nvd)
+
+
+def test_main_success_with_local_feed(tmp_path, monkeypatch):
+    """main() returns 0 when feeds are read from a local directory and min-cves is met."""
+    feed_dir = tmp_path / "feeds"
+    feed_dir.mkdir()
+    _write_gzip_feed(feed_dir / "nvdcve-2.0-2024.json.gz", n_cves=5)
+
+    db_root = tmp_path / "dbcache"
+    db_root.mkdir()
+    _patch_cve_bin_tool(monkeypatch, db_root)
+
+    # Use a Windows-style absolute path (no file:// prefix) as feed-base.
+    feed_base = str(feed_dir).replace("\\", "/")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "nvd_feed_import",
+            "--db-root", str(db_root),
+            "--start-year", "2024",
+            "--end-year", "2024",
+            "--no-modified",
+            "--feed-base", feed_base,
+            "--min-cves", "1",
+        ],
+    )
+
+    rc = MOD.main()
+    assert rc == 0
+
+
+def test_main_returns_2_when_min_cves_not_met(tmp_path, monkeypatch):
+    """main() returns 2 when fewer CVEs than --min-cves are downloaded."""
+    feed_dir = tmp_path / "feeds"
+    feed_dir.mkdir()
+    _write_gzip_feed(feed_dir / "nvdcve-2.0-2024.json.gz", n_cves=2)
+
+    db_root = tmp_path / "dbcache"
+    db_root.mkdir()
+    _patch_cve_bin_tool(monkeypatch, db_root)
+
+    feed_base = str(feed_dir).replace("\\", "/")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "nvd_feed_import",
+            "--db-root", str(db_root),
+            "--start-year", "2024",
+            "--end-year", "2024",
+            "--no-modified",
+            "--feed-base", feed_base,
+            "--min-cves", "9999",  # far above the 2 we provide
+        ],
+    )
+
+    rc = MOD.main()
+    assert rc == 2
+
+
+def test_main_continues_after_feed_download_failure(tmp_path, monkeypatch):
+    """main() skips missing feeds and returns 2 when entries < min-cves."""
+    feed_dir = tmp_path / "feeds"
+    feed_dir.mkdir()
+    # Do NOT create the .json.gz file — shutil.copyfile will raise FileNotFoundError,
+    # which main() catches with `except Exception` and appends to failures.
+
+    db_root = tmp_path / "dbcache"
+    db_root.mkdir()
+    _patch_cve_bin_tool(monkeypatch, db_root)
+
+    feed_base = str(feed_dir).replace("\\", "/")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "nvd_feed_import",
+            "--db-root", str(db_root),
+            "--start-year", "2024",
+            "--end-year", "2024",
+            "--no-modified",
+            "--feed-base", feed_base,
+            "--min-cves", "1",
+        ],
+    )
+
+    rc = MOD.main()
+    # All feeds failed → 0 entries < min-cves=1 → return 2
+    assert rc == 2
