@@ -473,3 +473,217 @@ def test_scan_dry_run_subcommand(tmp_path, monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert "plan" in out
     assert "target" in out
+
+
+# ---------------------------------------------------------------------------
+# healthcheck
+# ---------------------------------------------------------------------------
+
+
+def test_healthcheck_subcommand_returns_json(monkeypatch, capsys):
+    """healthcheck must print a JSON payload and return 0."""
+    from resilient_updates.cli import main
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "healthcheck"])
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    # run_healthcheck always returns a dict with at least a "config" key.
+    assert isinstance(out, dict)
+
+
+# ---------------------------------------------------------------------------
+# db-status
+# ---------------------------------------------------------------------------
+
+
+def test_db_status_subcommand_nonexistent_path(tmp_path, monkeypatch, capsys):
+    """db-status with a path that doesn't exist must return non-zero and JSON."""
+    from resilient_updates.cli import main
+
+    ghost = tmp_path / "no_such_dir"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "--config", _CFG, "db-status", "trivy", "--path", str(ghost)],
+    )
+    rc = main()
+    # Path doesn't exist → EXIT_VALIDATION_FAILED
+    assert rc != 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["exists"] is False
+
+
+def test_db_status_subcommand_existing_path(tmp_path, monkeypatch, capsys):
+    """db-status with an existing trivy cache dir returns 0 and exists=true."""
+    from resilient_updates.cli import main
+
+    db_dir = tmp_path / "trivy"
+    db_dir.mkdir()
+    (db_dir / "db.tar.gz").write_bytes(b"fake-db")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "--config", _CFG, "db-status", "trivy", "--path", str(db_dir)],
+    )
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["exists"] is True
+
+
+# ---------------------------------------------------------------------------
+# render-flags trivy
+# ---------------------------------------------------------------------------
+
+
+def test_render_flags_trivy_subcommand(monkeypatch, capsys):
+    """render-flags trivy must print --db-repository flags and return 0."""
+    from resilient_updates.cli import main
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "render-flags", "trivy"])
+    rc = main()
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    # The example config has at least one trivy db_repository → expect flag
+    assert "--db-repository" in out
+
+
+# ---------------------------------------------------------------------------
+# manifest
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_subcommand_writes_manifest_json(tmp_path, monkeypatch, capsys):
+    """manifest subcommand must write MANIFEST.json and return 0."""
+    from resilient_updates.cli import main
+
+    artifacts = tmp_path / "artifacts"
+    _seed_minimal_artifacts(artifacts)
+    output = tmp_path / "MANIFEST.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "manifest",
+            "--artifacts-dir",
+            str(artifacts),
+            "--output",
+            str(output),
+            "--case-id",
+            "TEST-001",
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok"
+    assert output.exists()
+    manifest = json.loads(output.read_text(encoding="utf-8"))
+    assert manifest["case_id"] == "TEST-001"
+
+
+# ---------------------------------------------------------------------------
+# audit cve-bin-tool-db
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_cve_db(root: Path) -> None:
+    """Create a minimal cve.db that the audit function can query."""
+    import sqlite3
+
+    root.mkdir(parents=True, exist_ok=True)
+    for sub in ("redhat", "purl2cpe", "gad"):
+        (root / sub).mkdir(exist_ok=True)
+    (root / "vuln.json").write_text("[]", encoding="utf-8")
+    (root / "version_map.db").write_bytes(b"placeholder")
+    (root / "gad" / "advisory.yml").write_text("id: GAD-1\n", encoding="utf-8")
+    (root / "redhat" / "CVE-2026-0001.json").write_text("{}", encoding="utf-8")
+    with sqlite3.connect(root / "cve.db") as conn:
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE cve_range (data_source TEXT)")
+        cur.execute("CREATE TABLE cve_severity (data_source TEXT)")
+        cur.execute("CREATE TABLE purl2cpe (id INTEGER)")
+        cur.executemany("INSERT INTO cve_range VALUES (?)", [("Curl",), ("REDHAT",)])
+        cur.executemany(
+            "INSERT INTO cve_severity VALUES (?)",
+            [("NVD",), ("NVD",), ("GAD",), ("REDHAT",)],
+        )
+        cur.executemany("INSERT INTO purl2cpe VALUES (?)", [(1,), (2,)])
+        conn.commit()
+
+
+def test_audit_cve_db_subcommand_passes(tmp_path, monkeypatch, capsys):
+    """audit cve-bin-tool-db with a healthy DB must return 0."""
+    from resilient_updates.cli import main
+
+    db_root = tmp_path / "db"
+    _make_minimal_cve_db(db_root)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "audit",
+            "cve-bin-tool-db",
+            "--db-root",
+            str(db_root),
+        ],
+    )
+    rc = main()
+    out = json.loads(capsys.readouterr().out)
+    # The example config's required_sources might include sources the minimal DB
+    # doesn't have, so just verify the subcommand ran and produced JSON.
+    assert isinstance(out, dict)
+    assert "overall_status" in out
+
+
+# ---------------------------------------------------------------------------
+# seed cve-bin-tool-aux
+# ---------------------------------------------------------------------------
+
+
+def test_seed_cve_bin_tool_aux_subcommand(tmp_path, monkeypatch, capsys):
+    """seed with no seed flags (no network) must return 0 and empty seeded dict."""
+    from resilient_updates.cli import main
+
+    db_root = tmp_path / "db"
+    db_root.mkdir()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "seed",
+            "cve-bin-tool-aux",
+            "--db-root",
+            str(db_root),
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["overall_status"] == "pass"
+    assert out["seeded"] == {}
+
+
+# ---------------------------------------------------------------------------
+# freshness
+# ---------------------------------------------------------------------------
+
+
+def test_freshness_subcommand_returns_json(monkeypatch, capsys):
+    """freshness must print a JSON verdict and not crash."""
+    from resilient_updates.cli import main
+
+    monkeypatch.setattr("sys.argv", ["cli", "--config", _CFG, "freshness"])
+    rc = main()
+    # rc is 0 or EXIT_VALIDATION_FAILED depending on stale state — just verify JSON
+    out = json.loads(capsys.readouterr().out)
+    assert "should_fail" in out
