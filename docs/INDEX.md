@@ -47,9 +47,10 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/220-analysis-2026-06-07.md` — latest full analysis pass (start here;
+6. `audit/240-analysis-2026-06-08.md` — latest full analysis pass (start here;
    earlier files in `audit/` are baseline or per-fix records).
-7. `audit/archive/` — superseded planning notes (`PLAN_2026-05-1x.md`).
+7. `audit/230-fixups-2026-06-08.md` — UTC compat + ruff lint fixes (2026-06-08).
+8. `audit/archive/` — superseded planning notes (`PLAN_2026-05-1x.md`).
 8. `../CHANGELOG.md` — release notes (Keep a Changelog).
 
 ## Architectural decisions

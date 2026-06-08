@@ -6,8 +6,10 @@ import json
 import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 from resilient_updates.enrichment import (
+    _safe_exists,
     enrich_findings,
     evaluate_enrichment_policy,
     load_epss_scores,
@@ -204,3 +206,112 @@ def test_policy_defaults_when_no_config(tmp_path: Path):
     verdict = evaluate_enrichment_policy(None, roots=[tmp_path])
     assert verdict["on_stale"] == "warn"
     assert verdict["should_fail"] is False
+
+
+# ---------------------------------------------------------------------------
+# Exception / edge-case paths (coverage for previously uncovered branches)
+# ---------------------------------------------------------------------------
+
+
+def test_safe_exists_returns_false_on_oserror():
+    """_safe_exists must swallow OSError (e.g. PermissionError on /root/... in containers)."""
+    p = Path("/some/path")
+    with patch.object(Path, "exists", side_effect=PermissionError("denied")):
+        assert _safe_exists(p) is False
+
+
+def test_load_epss_scores_empty_after_metadata_header_returns_empty(tmp_path: Path):
+    """File with only a #metadata row and nothing else → returns {}."""
+    epss_dir = tmp_path / "epss"
+    epss_dir.mkdir(parents=True)
+    (epss_dir / "epss_scores-current.csv").write_text(
+        "#model_version:v2024.test,score_date:2024-06-01T00:00:00+0000\n",
+        encoding="utf-8",
+    )
+    assert load_epss_scores(roots=[tmp_path]) == {}
+
+
+def test_load_epss_scores_missing_required_columns_returns_empty(tmp_path: Path):
+    """CSV without 'cve' or 'epss' column names → returns {} (not a crash)."""
+    epss_dir = tmp_path / "epss"
+    epss_dir.mkdir(parents=True)
+    (epss_dir / "epss_scores-current.csv").write_text(
+        "date,score,percentile\n2024-01-01,0.5,0.9\n",
+        encoding="utf-8",
+    )
+    assert load_epss_scores(roots=[tmp_path]) == {}
+
+
+def test_load_epss_scores_oserror_on_open_is_skipped(tmp_path: Path):
+    """If opening the CSV raises OSError the root is skipped and {} is returned."""
+    epss_dir = tmp_path / "epss"
+    epss_dir.mkdir(parents=True)
+    target = epss_dir / "epss_scores-current.csv"
+    target.write_text("cve,epss,percentile\nCVE-X,0.1,0.5\n", encoding="utf-8")
+
+    original_open = Path.open
+
+    def _patched_open(self, *args, **kwargs):
+        if self == target:
+            raise OSError("simulated read error")
+        return original_open(self, *args, **kwargs)
+
+    with patch.object(Path, "open", _patched_open):
+        assert load_epss_scores(roots=[tmp_path]) == {}
+
+
+def test_load_epss_scores_percentile_malformed_stored_as_empty(tmp_path: Path):
+    """Row with bad percentile value → percentile stored as '' but row is kept."""
+    epss_dir = tmp_path / "epss"
+    epss_dir.mkdir(parents=True)
+    (epss_dir / "epss_scores-current.csv").write_text(
+        "cve,epss,percentile\nCVE-2024-0001,0.42,NOT_A_FLOAT\n",
+        encoding="utf-8",
+    )
+    scores = load_epss_scores(roots=[tmp_path])
+    assert "CVE-2024-0001" in scores
+    assert scores["CVE-2024-0001"]["epss"] == 0.42
+    assert scores["CVE-2024-0001"]["percentile"] == ""
+
+
+def test_load_kev_set_invalid_json_is_skipped(tmp_path: Path):
+    """A KEV file containing invalid JSON is silently skipped → returns empty set."""
+    kev_dir = tmp_path / "kev"
+    kev_dir.mkdir(parents=True)
+    (kev_dir / "known_exploited_vulnerabilities.json").write_text(
+        "{not: valid json",
+        encoding="utf-8",
+    )
+    assert load_kev_set(roots=[tmp_path]) == set()
+
+
+def test_load_kev_set_oserror_on_read_is_skipped(tmp_path: Path):
+    """If reading the KEV file raises OSError the root is skipped → returns empty set."""
+    kev_dir = tmp_path / "kev"
+    kev_dir.mkdir(parents=True)
+    target = kev_dir / "known_exploited_vulnerabilities.json"
+    target.write_text(json.dumps({"vulnerabilities": [{"cveID": "CVE-2024-1111"}]}))
+
+    original_read_text = Path.read_text
+
+    def _patched_read_text(self, *args, **kwargs):
+        if self == target:
+            raise OSError("simulated read error")
+        return original_read_text(self, *args, **kwargs)
+
+    with patch.object(Path, "read_text", _patched_read_text):
+        assert load_kev_set(roots=[tmp_path]) == set()
+
+
+def test_candidate_roots_respects_env_vars(tmp_path: Path, monkeypatch):
+    """EL_SCA_ENRICHMENT_ROOT and CVE_BIN_TOOL_DB_ROOT env vars are prepended to the root list."""
+    custom_root = tmp_path / "custom"
+    custom_root.mkdir()
+    _write_epss(custom_root, [("CVE-2024-ENV", "0.77", "0.88")])
+
+    monkeypatch.setenv("EL_SCA_ENRICHMENT_ROOT", str(custom_root))
+    # CVE_BIN_TOOL_DB_ROOT points to a non-existent path; should be filtered silently
+    monkeypatch.setenv("CVE_BIN_TOOL_DB_ROOT", str(tmp_path / "nonexistent"))
+
+    scores = load_epss_scores()  # uses _candidate_roots() internally
+    assert "CVE-2024-ENV" in scores
