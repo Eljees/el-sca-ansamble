@@ -8,15 +8,44 @@ docker-образы и базы уязвимостей. На машине нич
 
 ## Что нужно заранее (один раз)
 
-- **Docker** + docker compose v2 (Docker Desktop на Windows / `docker` на Linux), **запущен**.
-- **git** и **git-lfs** (образы/базы лежат в репозитории через Git LFS).
-- **Python 3.10+**.
+### Минимальные требования
 
-Проверка:
+- ОС: **Windows 10/11 x64 с WSL2** или **Linux x86_64** (Ubuntu 20.04+/аналог).
+- **4 ГБ RAM** (рекомендуется 8 ГБ+), **2 ядра** (рекомендуется 4+).
+- **20 ГБ свободного диска** (бандл ~3.3 ГБ + образы + тома БД + артефакты).
+- Сеть нужна только при онлайн-обновлении баз; из бандла работает офлайн.
+
+### Необходимые компоненты
+
+- **Docker** (Engine 20.10+ / Docker Desktop 4.x) с **Compose v2** (`docker compose`, не `docker-compose`), **запущен**. На Windows — бэкенд **WSL2**.
+- **git** + **git-lfs** (образы и базы лежат в `bundle/` через Git LFS, ~3.3 ГБ).
+- **Python 3.10+** (нужен для GUI-дашборда и CLI; в контейнерах используется 3.12).
+
+### Установка
+
+**Windows (PowerShell от администратора):**
+```powershell
+winget install -e --id Docker.DockerDesktop   # запустить, включить WSL2 backend
+winget install -e --id Git.Git
+winget install -e --id GitHub.GitLFS
+winget install -e --id Python.Python.3.12
+git lfs install
+```
+
+**Linux (Ubuntu/Debian):**
+```sh
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"               # затем перелогиниться
+sudo apt-get update && sudo apt-get install -y git git-lfs python3 python3-pip python3-venv
+git lfs install
+```
+
+### Проверка
 ```bash
-docker version            # должна быть секция Server
+docker version            # должна быть секция Server (демон запущен)
+docker compose version    # "Docker Compose version v2.x"
 git lfs version
-python3 --version         # (на Windows: python --version)
+python3 --version         # (на Windows: python --version) — 3.10+
 ```
 
 ---

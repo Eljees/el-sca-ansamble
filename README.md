@@ -153,10 +153,76 @@
 
 ### Требования
 
-- Docker с поддержкой `docker compose`;
-- Python `3.12+`;
-- доступ в сеть для online update-stage, если не подготовлены свои внутренние зеркала;
-- хост Windows или Linux.
+#### Минимальные системные требования
+
+| Ресурс | Минимум | Рекомендуется | Зачем |
+|---|---|---|---|
+| ОС | Windows 10/11 x64 (с WSL2) или Linux x86_64 (Ubuntu 20.04+/аналог) | — | хост Docker |
+| CPU | 2 ядра | 4+ ядра | cve-bin-tool гоняет регэкспы по бинарям |
+| RAM | 4 ГБ | 8 ГБ+ | Trivy/Grype/cve-bin-tool + распаковка |
+| Диск (свободно) | 20 ГБ | 30 ГБ+ | бандл ~3.3 ГБ (LFS) + загруженные образы + тома БД + артефакты сканов |
+| Сеть | нужна для online-обновления баз | — | при работе из бандла/зеркал не требуется |
+
+#### Необходимые компоненты
+
+| Компонент | Версия | Для чего | Обязателен |
+|---|---|---|---|
+| Docker Engine / Docker Desktop | Engine 20.10+ / Desktop 4.x | запуск всего стека сканеров | да |
+| Docker Compose v2 | плагин `docker compose` (не `docker-compose`) | оркестрация сервисов | да |
+| Git | 2.x | клонирование | да |
+| Git LFS | 3.x | образы и базы уязвимостей лежат в `bundle/` через LFS (~3.3 ГБ) | да |
+| Python | 3.10+ (в контейнерах — 3.12) | CLI-обёртка (`resilient_updates`), `run-scan.sh`, GUI-дашборд | да для CLI/GUI |
+| pip + venv | под вашу версию Python | установка зависимостей дашборда | для GUI |
+
+> Чистый поток «`docker compose --profile ...`» требует только Docker + Git/Git LFS.
+> Python на хосте нужен для CLI-обёртки (`run-scan.sh`, `validate-config`) и веб-дашборда.
+> На Windows Docker Desktop должен работать на бэкенде **WSL2** (не Hyper-V/Windows-контейнеры).
+
+#### Установка компонентов
+
+**Windows (PowerShell от администратора, через `winget`):**
+
+```powershell
+winget install -e --id Docker.DockerDesktop      # после установки: запустить, включить WSL2 backend
+winget install -e --id Git.Git
+winget install -e --id GitHub.GitLFS
+winget install -e --id Python.Python.3.12
+git lfs install
+```
+
+Проверка:
+
+```powershell
+docker --version
+docker compose version
+git lfs version
+python --version
+```
+
+**Linux (Ubuntu/Debian):**
+
+```sh
+# Docker Engine + Compose v2 (официальный скрипт)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"          # затем перелогиниться, чтобы группа применилась
+
+# Git, Git LFS, Python
+sudo apt-get update
+sudo apt-get install -y git git-lfs python3 python3-pip python3-venv
+git lfs install
+```
+
+Проверка:
+
+```sh
+docker --version
+docker compose version          # должно быть "Docker Compose version v2.x"
+git lfs version
+python3 --version
+```
+
+> Если `docker compose version` сообщает об ошибке, а есть только старый `docker-compose` (v1) —
+> поставьте плагин Compose v2: `sudo apt-get install -y docker-compose-plugin`.
 
 ### Шаг 1. Клонирование репозитория
 
@@ -179,6 +245,7 @@ Windows PowerShell:
 ```powershell
 docker --version
 docker compose version
+git lfs version
 python --version
 ```
 
@@ -187,6 +254,7 @@ Linux:
 ```sh
 docker --version
 docker compose version
+git lfs version
 python3 --version
 ```
 
