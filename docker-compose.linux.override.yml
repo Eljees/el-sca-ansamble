@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------------------
+# Linux volume-permission fix overlay
+# ---------------------------------------------------------------------------
+#
+# Activate with:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.linux.override.yml ...
+#
+# or set COMPOSE_FILE in .env:
+#
+#     COMPOSE_FILE=docker-compose.yml:docker-compose.linux.override.yml
+#
+# The Makefile does this automatically when it detects Linux (uname -s).
+#
+# Why this is needed
+# ------------------
+# All project containers run as appuser (UID 1001, CIS Docker Benchmark 4.1).
+# On Windows/macOS, Docker Desktop virtualises volume access so host UID checks
+# are not enforced.  On a native Linux host, Docker creates named volumes with
+# root ownership (UID 0) and bind-mounted directories keep their host UID —
+# both inaccessible to UID 1001 without an explicit chown.
+#
+# This overlay adds a one-shot `volume-init` service that runs as root, checks
+# each volume root, and chowns only those not already owned by UID 1001
+# (idempotent — fast on repeated runs once ownership is correct).  Every
+# service that writes to a volume or to ./artifacts lists `volume-init` as a
+# dependency so the fix is applied before any writer starts.
+#
+# On Windows / macOS this file should NOT be loaded — it is harmless there but
+# adds an unnecessary container startup on each compose invocation.
+# ---------------------------------------------------------------------------
+
+services:
+  volume-init:
+    image: alpine:3.20
+    profiles:
+      - update
+      - default
+      - scan
+      - report
+      - extract
+      - offline
+      - airgap
+      - test-failover
+    user: "0"
+    volumes:
+      - grype-db:/vol/grype-db
+      - grype-cache:/vol/grype-cache
+      - trivy-cache:/vol/trivy-cache
+      - cve-bin-tool-cache:/vol/cve-bin-tool-cache
+      - internal-mirror-data:/vol/internal-mirror-data
+      - ./artifacts:/vol/artifacts
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for d in /vol/grype-db /vol/grype-cache /vol/trivy-cache \
+                 /vol/cve-bin-tool-cache /vol/internal-mirror-data \
+                 /vol/artifacts; do
+          owner=$$(stat -c '%u' "$$d" 2>/dev/null || echo 0)
+          if [ "$$owner" != "1001" ]; then
+            echo "[volume-init] chown 1001:1001 $$d"
+            chown -R 1001:1001 "$$d"
+          else
+            echo "[volume-init] ok (already 1001): $$d"
+          fi
+        done
+    networks: [scanner-net]
+
+  # ── depends_on additions ──────────────────────────────────────────────────
+  # Each service below gains volume-init as a prerequisite so the chown runs
+  # before any writer opens a file.  All other service settings come from the
+  # base docker-compose.yml and are unchanged.
+
+  grype-updater:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  cve-bin-tool-updater:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  trivy-updater:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  report-collector:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  grype-scanner:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  cve-bin-tool-scanner:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  syft-sbom:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
+
+  artifact-extractor:
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
