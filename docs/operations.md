@@ -1,5 +1,7 @@
 # Operations
 
+For the exact repeatable remote-machine sequence with proxy/VPN routing, DB refresh, and GUI verification, see [`docs/remote-analysis.md`](remote-analysis.md).
+
 Bring up the stack:
 
 ```powershell

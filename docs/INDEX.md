@@ -22,6 +22,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 7. `proxy.md` — quick reference for proxy configuration.
 8. `deployment-example.md` — worked example of one org's full
    deployment (host-specific values — treat as a template, not canon).
+9. `remote-analysis.md` — exact repeatable remote-machine sequence for DB refresh + full scan + GUI check.
 
 ## I need to review security posture
 
