@@ -474,9 +474,7 @@ def test_validate_chains_hop_not_dict():
 
 def test_validate_chains_failover_not_list():
     """failover_order that is not a list → error."""
-    errors = validate_chains(
-        {"chains": {"c": {"hops": []}}, "policies": {"failover_order": "bad"}}
-    )
+    errors = validate_chains({"chains": {"c": {"hops": []}}, "policies": {"failover_order": "bad"}})
     assert any("failover_order must be a list" in e for e in errors)
 
 

@@ -18,19 +18,44 @@ def _base_config() -> dict:
     return {
         "trivy": {
             "db_repositories": [
-                {"name": "trivy-p1", "url": "https://ghcr.io/aquasecurity/trivy-db", "priority": 10, "enabled": True},
-                {"name": "trivy-p2", "url": "https://mirror.example/trivy-db", "priority": 20, "enabled": True},
+                {
+                    "name": "trivy-p1",
+                    "url": "https://ghcr.io/aquasecurity/trivy-db",
+                    "priority": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "trivy-p2",
+                    "url": "https://mirror.example/trivy-db",
+                    "priority": 20,
+                    "enabled": True,
+                },
             ],
             "java_db_repositories": [
-                {"name": "java-p1", "url": "https://ghcr.io/aquasecurity/trivy-java-db", "priority": 10, "enabled": True}
+                {
+                    "name": "java-p1",
+                    "url": "https://ghcr.io/aquasecurity/trivy-java-db",
+                    "priority": 10,
+                    "enabled": True,
+                }
             ],
             "checks_bundle_repositories": [],
             "vex_repositories": [],
         },
         "grype": {
             "upstream_update_urls": [
-                {"name": "primary", "url": "https://toolbox-data.anchore.io/grype/databases/listing.json", "priority": 10, "enabled": True},
-                {"name": "disabled-mirror", "url": "https://disabled.example/listing.json", "priority": 5, "enabled": False},
+                {
+                    "name": "primary",
+                    "url": "https://toolbox-data.anchore.io/grype/databases/listing.json",
+                    "priority": 10,
+                    "enabled": True,
+                },
+                {
+                    "name": "disabled-mirror",
+                    "url": "https://disabled.example/listing.json",
+                    "priority": 5,
+                    "enabled": False,
+                },
             ]
         },
         "cve_bin_tool": {
@@ -38,9 +63,7 @@ def _base_config() -> dict:
                 {"name": "cvebt-mirror", "url": "https://cve.circl.lu/", "priority": 10, "enabled": True}
             ]
         },
-        "syft": {
-            "scan_sources": ["dir", "registry"]
-        },
+        "syft": {"scan_sources": ["dir", "registry"]},
         "custom_sources": {"entries": []},
     }
 

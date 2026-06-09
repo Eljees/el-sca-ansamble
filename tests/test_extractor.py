@@ -515,3 +515,143 @@ def test_extract_tar_large_member_skipped_by_size(tmp_path: Path):
     assert list(out.rglob("small.bin")), "small file must be extracted"
     assert not list(out.rglob("bigfile.bin")), "big file must be skipped"
     assert manifest["pre_filter"]["skipped_by_size"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# _extract_external — branch coverage for external-tool paths (lines 322-354)
+# All tests monkeypatch _run_checked so no real 7z / zstd / rpm tools needed.
+# ---------------------------------------------------------------------------
+
+
+from resilient_updates.extractor import _extract_external  # noqa: E402
+
+
+def test_extract_external_7z_calls_correct_command(tmp_path: Path, monkeypatch):
+    """kind='7z' must call 7z with the right flags."""
+    calls = []
+    import resilient_updates.extractor as _ext
+
+    monkeypatch.setattr(_ext, "_run_checked", lambda cmd, **_kw: calls.append(cmd))
+    archive = tmp_path / "payload.7z"
+    archive.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\x00" * 10)
+    out = tmp_path / "out"
+    _extract_external(archive, out, "7z")
+    assert len(calls) == 1
+    assert calls[0][0] == "7z"
+    assert "-y" in calls[0]
+    assert str(archive) in calls[0]
+
+
+def test_extract_external_rar_calls_7z(tmp_path: Path, monkeypatch):
+    """kind='rar' must also delegate to the 7z binary."""
+    calls = []
+    import resilient_updates.extractor as _ext
+
+    monkeypatch.setattr(_ext, "_run_checked", lambda cmd, **_kw: calls.append(cmd))
+    archive = tmp_path / "payload.rar"
+    archive.write_bytes(b"Rar!\x1a\x07" + b"\x00" * 10)
+    out = tmp_path / "out"
+    _extract_external(archive, out, "rar")
+    assert len(calls) == 1
+    assert calls[0][0] == "7z"
+
+
+def test_extract_external_zst_calls_zstd(tmp_path: Path, monkeypatch):
+    """kind='zst' must decompress with zstd -d."""
+    calls = []
+    import resilient_updates.extractor as _ext
+
+    monkeypatch.setattr(_ext, "_run_checked", lambda cmd, **_kw: calls.append(cmd))
+    archive = tmp_path / "data.zst"
+    archive.write_bytes(b"\x28\xb5\x2f\xfd" + b"\x00" * 12)
+    out = tmp_path / "out"
+    _extract_external(archive, out, "zst")
+    assert len(calls) == 1
+    assert "zstd" in calls[0][0]
+    assert "-d" in calls[0]
+    assert str(archive) in calls[0]
+
+
+def test_extract_external_tar_zst_decompresses_then_extracts_and_cleans_up(tmp_path: Path, monkeypatch):
+    """kind='tar-zst': zstd decompresses to .tar, _extract_tar runs, .tar removed."""
+    import tarfile
+
+    import resilient_updates.extractor as _ext
+
+    zstd_calls: list[list[str]] = []
+
+    def fake_run_checked(cmd, **_kw):
+        zstd_calls.append(cmd)
+        # Simulate zstd writing a real tar so _extract_tar works.
+        for part in cmd:
+            if part.endswith(".tar"):
+                with tarfile.open(part, "w") as tf:
+                    data = b"hello"
+                    m = tarfile.TarInfo("extracted.bin")
+                    m.size = len(data)
+                    tf.addfile(m, io.BytesIO(data))
+
+    monkeypatch.setattr(_ext, "_run_checked", fake_run_checked)
+    archive = tmp_path / "archive.tar.zst"
+    archive.write_bytes(b"\x28\xb5\x2f\xfd" + b"\x00" * 12)
+    out = tmp_path / "out"
+    _extract_external(archive, out, "tar-zst")
+    assert len(zstd_calls) == 1
+    assert "zstd" in zstd_calls[0][0]
+    # temp .tar must have been cleaned up
+    assert not list(out.glob("*.tar"))
+
+
+def test_extract_external_rpm_uses_rpm2cpio_pipeline(tmp_path: Path, monkeypatch):
+    """kind='rpm' must call sh -c 'rpm2cpio ... | cpio ...'."""
+    calls = []
+    import resilient_updates.extractor as _ext
+
+    monkeypatch.setattr(_ext, "_run_checked", lambda cmd, **_kw: calls.append(cmd))
+    archive = tmp_path / "package.rpm"
+    archive.write_bytes(b"\xed\xab\xee\xdb" + b"\x00" * 12)
+    out = tmp_path / "out"
+    _extract_external(archive, out, "rpm")
+    assert len(calls) == 1
+    assert calls[0][:2] == ["sh", "-c"]
+    assert "rpm2cpio" in calls[0][2]
+    assert "cpio" in calls[0][2]
+
+
+def test_extract_external_deb_calls_dpkg_deb(tmp_path: Path, monkeypatch):
+    """kind='deb' must call dpkg-deb -x."""
+    calls = []
+    import resilient_updates.extractor as _ext
+
+    monkeypatch.setattr(_ext, "_run_checked", lambda cmd, **_kw: calls.append(cmd))
+    archive = tmp_path / "package.deb"
+    archive.write_bytes(b"!<arch>\n" + b"\x00" * 8)
+    out = tmp_path / "out"
+    _extract_external(archive, out, "deb")
+    assert len(calls) == 1
+    assert calls[0][0] == "dpkg-deb"
+    assert "-x" in calls[0]
+
+
+def test_extract_external_unsupported_kind_raises(tmp_path: Path):
+    """An unrecognised kind must raise RuntimeError."""
+    archive = tmp_path / "unknown.bin"
+    archive.write_bytes(b"garbage")
+    with pytest.raises(RuntimeError, match="unsupported external archive kind"):
+        _extract_external(archive, tmp_path / "out", "unknown-format")
+
+
+def test_extract_artifacts_external_tool_failure_records_in_manifest(tmp_path: Path, monkeypatch):
+    """If the external tool fails, the manifest records it without crashing."""
+    import resilient_updates.extractor as _ext
+
+    monkeypatch.setattr(
+        _ext, "_run_checked", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("tool crashed"))
+    )
+    # File with 7z magic bytes so _archive_kind returns "7z"
+    archive = tmp_path / "corrupt.7z"
+    archive.write_bytes(b"7z\xbc\xaf\x27\x1c" + b"\x00" * 50)
+    out = tmp_path / "out"
+    manifest = extract_artifacts(archive, out, max_depth=1)
+    assert manifest["status"] in ("warn", "error")
+    assert manifest["failures"]

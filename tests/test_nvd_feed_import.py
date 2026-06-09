@@ -29,6 +29,7 @@ MOD = _load_module()
 # Helper: build a minimal NVD 2.0 CVE entry dict
 # ---------------------------------------------------------------------------
 
+
 def _cve_entry(
     id: str = "CVE-2099-0001",
     description: str = "test vuln",
@@ -652,12 +653,17 @@ def test_main_success_with_local_feed(tmp_path, monkeypatch):
         "sys.argv",
         [
             "nvd_feed_import",
-            "--db-root", str(db_root),
-            "--start-year", "2024",
-            "--end-year", "2024",
+            "--db-root",
+            str(db_root),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
             "--no-modified",
-            "--feed-base", feed_base,
-            "--min-cves", "1",
+            "--feed-base",
+            feed_base,
+            "--min-cves",
+            "1",
         ],
     )
 
@@ -680,12 +686,17 @@ def test_main_returns_2_when_min_cves_not_met(tmp_path, monkeypatch):
         "sys.argv",
         [
             "nvd_feed_import",
-            "--db-root", str(db_root),
-            "--start-year", "2024",
-            "--end-year", "2024",
+            "--db-root",
+            str(db_root),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
             "--no-modified",
-            "--feed-base", feed_base,
-            "--min-cves", "9999",  # far above the 2 we provide
+            "--feed-base",
+            feed_base,
+            "--min-cves",
+            "9999",  # far above the 2 we provide
         ],
     )
 
@@ -709,12 +720,17 @@ def test_main_continues_after_feed_download_failure(tmp_path, monkeypatch):
         "sys.argv",
         [
             "nvd_feed_import",
-            "--db-root", str(db_root),
-            "--start-year", "2024",
-            "--end-year", "2024",
+            "--db-root",
+            str(db_root),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
             "--no-modified",
-            "--feed-base", feed_base,
-            "--min-cves", "1",
+            "--feed-base",
+            feed_base,
+            "--min-cves",
+            "1",
         ],
     )
 

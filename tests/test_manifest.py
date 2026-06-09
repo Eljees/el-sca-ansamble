@@ -90,9 +90,7 @@ def test_artefacts_does_not_include_missing_files(tmp_path: Path) -> None:
 def test_tools_extracted_from_status_json(tmp_path: Path) -> None:
     """Tools block from status.json is surfaced in the manifest."""
     (tmp_path / "status.json").write_text(
-        json.dumps(
-            {"tools": {"trivy": {"version": "0.48.0"}, "grype": "0.74.3"}}
-        ),
+        json.dumps({"tools": {"trivy": {"version": "0.48.0"}, "grype": "0.74.3"}}),
         encoding="utf-8",
     )
     payload = derive_manifest(tmp_path)

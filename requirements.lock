@@ -12,3 +12,8 @@ PyYAML>=6.0
 requests>=2.31.0
 PySocks>=1.7.1
 pytest>=8.0.0
+# Dashboard (ADR-0006) — keep in sync with requirements.in / requirements.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+httpx>=0.27
