@@ -17,7 +17,16 @@ SHELL := /usr/bin/env bash
 PYTHON         ?= python3
 COMPOSE        ?= docker compose
 COMPOSE_PROFILES ?= scan,update
+# On Linux, Docker enforces host UID on bind mounts and creates named volumes
+# as root.  Automatically include the linux overlay so volume-init fixes
+# ownership before any writer starts.  On Windows/macOS (Docker Desktop) the
+# virtualisation layer neutralises the issue and the overlay is not loaded.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+COMPOSE_FILE   ?= docker-compose.yml:docker-compose.linux.override.yml
+else
 COMPOSE_FILE   ?= docker-compose.yml
+endif
 
 # Reference target for the pipeline targets below.  Override on the CLI:
 #   make full TARGET=/abs/path/to/artifact.tar.gz
@@ -33,7 +42,8 @@ YAMLLINT   ?= yamllint
 PY_SOURCES   := resilient_updates tests
 SH_SOURCES   := $(shell find scripts -maxdepth 2 -type f -name '*.sh' -not -path 'scripts/windows/*')
 DOCKERFILES  := Dockerfile.resilient-updater Dockerfile.extractor Dockerfile.cve-bin-tool Dockerfile.apk-analyzer Dockerfile.win-analyzer Dockerfile.db-data
-YAML_SOURCES := docker-compose.yml docker-compose.windows.override.yml docker-compose.prod.example.yml \
+YAML_SOURCES := docker-compose.yml docker-compose.windows.override.yml docker-compose.linux.override.yml \
+                docker-compose.prod.example.yml \
                 configs/feed_sources.yaml .github .pre-commit-config.yaml .yamllint
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -154,6 +164,11 @@ feeds:  ## Fetch EPSS + CISA KEV feeds into artifacts/enrichment (enables EPSS/K
 	curl -fsSL --retry 3 https://epss.cyentia.com/epss_scores-current.csv.gz | gunzip > artifacts/enrichment/epss/epss_scores-current.csv
 	curl -fsSL --retry 3 https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json -o artifacts/enrichment/kev/known_exploited_vulnerabilities.json
 	@echo "feeds ready: artifacts/enrichment/{epss,kev}"
+
+.PHONY: setup-linux
+setup-linux:  ## (Linux) Fix named-volume + artifacts/ ownership for appuser (UID 1001). Run once on fresh clone or after make clean-deep.
+	docker compose -f docker-compose.yml -f docker-compose.linux.override.yml \
+	    --profile update run --rm volume-init
 
 .PHONY: clean clean-deep
 clean:  ## Remove scan output (artifacts/) keeping .gitkeep stubs.
