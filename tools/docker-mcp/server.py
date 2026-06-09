@@ -45,6 +45,9 @@ PROJECT_DIR = Path(os.environ.get("EL_SCA_DIR", "/mnt/d/dev/el-sca-ansamble"))
 
 SCANNER_TOOLS = {"trivy", "grype", "cve-bin-tool"}
 ALL_SCAN_TOOLS = {"all", "syft", "trivy", "grype", "cve-bin-tool"}
+# cve-bin-tool aggregate data sources (configs/feed_sources.yaml: cve_bin_tool.data_sources).
+# Used by update_db(only_source=...) to update a single source by disabling the rest.
+CVE_BIN_TOOL_SOURCES = {"NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"}
 KNOWN_SERVICES = {
     "trivy-updater",
     "trivy-scanner",
@@ -170,7 +173,7 @@ def compose_logs(service: str, tail: int = 80) -> dict:
 
 
 @mcp.tool()
-def update_db(tool: str, proxy: str | None = None) -> dict:
+def update_db(tool: str, proxy: str | None = None, only_source: str | None = None) -> dict:
     """Update a scanner DB by running its updater container (profile ``update``).
 
     For grype, also runs grype-db-importer.  Pass ``proxy`` (e.g.
@@ -180,11 +183,36 @@ def update_db(tool: str, proxy: str | None = None) -> dict:
     Args:
         tool: one of trivy | grype | cve-bin-tool.
         proxy: optional proxy URL for the DB fetch.
+        only_source: cve-bin-tool only — update just this single data source
+            (NVD|OSV|GAD|REDHAT|CURL|EPSS|PURL2CPE|RSD).  Implemented by passing
+            ``-e CVE_BIN_TOOL_DISABLE_SOURCES=<all the others>`` to the updater
+            container, so only the requested source is fetched.
     """
     if tool not in SCANNER_TOOLS:
         return {"ok": False, "error": f"tool must be one of {sorted(SCANNER_TOOLS)}"}
+
+    extra_env: list[str] = []
+    if only_source is not None:
+        if tool != "cve-bin-tool":
+            return {"ok": False, "error": "only_source is supported for cve-bin-tool only"}
+        src = only_source.strip().upper()
+        if src not in CVE_BIN_TOOL_SOURCES:
+            return {
+                "ok": False,
+                "error": f"only_source must be one of {sorted(CVE_BIN_TOOL_SOURCES)}",
+            }
+        disabled = sorted(CVE_BIN_TOOL_SOURCES - {src})
+        # Disable every other source for the base run, and clear the retry-disable
+        # default (OSV) so a single-source run is not silently skipped on retry.
+        extra_env = [
+            "-e",
+            "CVE_BIN_TOOL_DISABLE_SOURCES=" + " ".join(disabled),
+            "-e",
+            "CVE_BIN_TOOL_DISABLE_SOURCES_ON_RETRY=",
+        ]
+
     result = _run(
-        ["docker", "compose", "--profile", "update", "run", "--rm", f"{tool}-updater"],
+        ["docker", "compose", "--profile", "update", "run", "--rm", *extra_env, f"{tool}-updater"],
         timeout=2400,
         proxy=proxy,
     )

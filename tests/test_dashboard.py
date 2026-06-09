@@ -193,3 +193,173 @@ def test_job_unknown_is_404(tmp_path: Path):
     client = _client(tmp_path)
     assert client.get("/api/jobs/nope").status_code == 404
     assert client.get("/api/jobs/nope/stream").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /api/scan — file upload and tools parsing
+# ---------------------------------------------------------------------------
+
+
+def _mock_registry(monkeypatch, tmp_path):
+    """Patch JobRegistry so start_scan/start_update never spawn subprocesses."""
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import SCAN_STAGES, UPDATE_STAGES, Job, JobRegistry
+
+    def fake_start_scan(self, target_host, tools=None):
+        job = Job("scan", SCAN_STAGES, target=target_host)
+        with self._lock:
+            self._jobs[job.id] = job
+        job.status = "done"
+        return job
+
+    def fake_start_update(self, target="all"):
+        job = Job("update", UPDATE_STAGES)
+        with self._lock:
+            self._jobs[job.id] = job
+        job.target = target
+        job.status = "done"
+        return job
+
+    monkeypatch.setattr(JobRegistry, "start_scan", fake_start_scan)
+    monkeypatch.setattr(JobRegistry, "start_update", fake_start_update)
+    return _client(tmp_path)
+
+
+def test_api_scan_returns_job_id(tmp_path: Path, monkeypatch):
+    client = _mock_registry(monkeypatch, tmp_path)
+    import io
+
+    resp = client.post(
+        "/api/scan",
+        files={"file": ("app.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+        data={"tools": "syft"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "job_id" in body
+    assert "target" in body
+
+
+def test_api_scan_empty_tools_selects_all(tmp_path: Path, monkeypatch):
+    """tools='' must pass selected=None to start_scan (meaning run all tools)."""
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import SCAN_STAGES, Job, JobRegistry
+
+    captured: list = []
+
+    def fake_start_scan(self, target_host, tools=None):
+        captured.append(tools)
+        job = Job("scan", SCAN_STAGES, target=target_host)
+        with self._lock:
+            self._jobs[job.id] = job
+        return job
+
+    monkeypatch.setattr(JobRegistry, "start_scan", fake_start_scan)
+    import io
+
+    _client(tmp_path).post(
+        "/api/scan",
+        files={"file": ("a.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+        data={"tools": ""},
+    )
+    assert captured[0] is None
+
+
+def test_api_scan_sparse_tools_string(tmp_path: Path, monkeypatch):
+    """tools='syft,,grype' with extra commas must yield {'syft', 'grype'}."""
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import SCAN_STAGES, Job, JobRegistry
+
+    captured: list = []
+
+    def fake_start_scan(self, target_host, tools=None):
+        captured.append(tools)
+        job = Job("scan", SCAN_STAGES, target=target_host)
+        with self._lock:
+            self._jobs[job.id] = job
+        return job
+
+    monkeypatch.setattr(JobRegistry, "start_scan", fake_start_scan)
+    import io
+
+    _client(tmp_path).post(
+        "/api/scan",
+        files={"file": ("a.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+        data={"tools": "syft,,grype"},
+    )
+    assert captured[0] == {"syft", "grype"}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/update-db — job creation
+# ---------------------------------------------------------------------------
+
+
+def test_api_update_db_default_target(tmp_path: Path, monkeypatch):
+    client = _mock_registry(monkeypatch, tmp_path)
+    resp = client.post("/api/update-db")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "job_id" in body
+    assert body["target"] == "all"
+
+
+def test_api_update_db_specific_target(tmp_path: Path, monkeypatch):
+    client = _mock_registry(monkeypatch, tmp_path)
+    resp = client.post("/api/update-db?target=trivy")
+    assert resp.status_code == 200
+    assert resp.json()["target"] == "trivy"
+
+
+def test_api_update_db_log_path_none(tmp_path: Path, monkeypatch):
+    """When log_path is None the response contains an empty string for 'log'."""
+    client = _mock_registry(monkeypatch, tmp_path)
+    resp = client.post("/api/update-db")
+    assert resp.json()["log"] == ""
+
+
+# ---------------------------------------------------------------------------
+# GET /api/jobs/{job_id} and /stream — job status + SSE
+# ---------------------------------------------------------------------------
+
+
+def test_api_job_status_after_update(tmp_path: Path, monkeypatch):
+    """After start_update, /api/jobs/{id} must return the job snapshot."""
+    client = _mock_registry(monkeypatch, tmp_path)
+    job_id = client.post("/api/update-db").json()["job_id"]
+    resp = client.get(f"/api/jobs/{job_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == job_id
+    assert body["kind"] == "update"
+
+
+def test_api_job_stream_returns_event_stream(tmp_path: Path, monkeypatch):
+    """SSE stream for an existing job returns text/event-stream content-type."""
+    client = _mock_registry(monkeypatch, tmp_path)
+    job_id = client.post("/api/update-db").json()["job_id"]
+    resp = client.get(f"/api/jobs/{job_id}/stream")
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/report/{path} — file serving and path-traversal guard
+# ---------------------------------------------------------------------------
+
+
+def test_api_report_serves_existing_file(tmp_path: Path):
+    client = _client(tmp_path)
+    report_dir = tmp_path / "reports" / "final"
+    report_dir.mkdir(parents=True)
+    (report_dir / "out.md").write_text("# results", encoding="utf-8")
+    resp = client.get("/api/report/out.md")
+    assert resp.status_code == 200
+
+
+def test_api_report_404_for_missing_file(tmp_path: Path):
+    assert _client(tmp_path).get("/api/report/nonexistent.md").status_code == 404
+
+
+def test_api_report_400_for_path_traversal(tmp_path: Path):
+    assert _client(tmp_path).get("/api/report/../../etc/passwd").status_code in (400, 404)

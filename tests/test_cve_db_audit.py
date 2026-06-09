@@ -355,9 +355,7 @@ def test_seed_epss_writes_csv(tmp_path: Path):
     fake_gz = _make_gz(csv_content)
 
     with patch("requests.get", return_value=_mock_response(fake_gz)):
-        result = seed_cve_bin_tool_aux_sources(
-            tmp_path, seed_epss=True, seed_rsd=False, osv_ecosystems=[]
-        )
+        result = seed_cve_bin_tool_aux_sources(tmp_path, seed_epss=True, seed_rsd=False, osv_ecosystems=[])
 
     assert result["overall_status"] == "pass"
     assert "EPSS" in result["seeded"]
@@ -371,9 +369,7 @@ def test_seed_rsd_extracts_zip(tmp_path: Path):
     fake_zip = _make_zip({"vuln1.yml": b"id: RSD-1\n", "vuln2.yml": b"id: RSD-2\n"})
 
     with patch("requests.get", return_value=_mock_response(fake_zip)):
-        result = seed_cve_bin_tool_aux_sources(
-            tmp_path, seed_epss=False, seed_rsd=True, osv_ecosystems=[]
-        )
+        result = seed_cve_bin_tool_aux_sources(tmp_path, seed_epss=False, seed_rsd=True, osv_ecosystems=[])
 
     assert result["overall_status"] == "pass"
     assert "RSD" in result["seeded"]
@@ -401,9 +397,7 @@ def test_seed_epss_failure_recorded_in_result(tmp_path: Path):
     failing_resp.content = b""
 
     with patch("requests.get", return_value=failing_resp):
-        result = seed_cve_bin_tool_aux_sources(
-            tmp_path, seed_epss=True, seed_rsd=False, osv_ecosystems=[]
-        )
+        result = seed_cve_bin_tool_aux_sources(tmp_path, seed_epss=True, seed_rsd=False, osv_ecosystems=[])
 
     assert result["overall_status"] == "warn"
     assert any("EPSS" in f for f in result["failures"])

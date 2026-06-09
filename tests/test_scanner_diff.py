@@ -371,7 +371,9 @@ def test_diff_runs_includes_trivy_findings(tmp_path: Path):
 
 def test_diff_runs_includes_cve_bin_tool_findings(tmp_path: Path):
     """cve-bin-tool findings from reports/cve-bin-tool/report.json are included."""
-    cve_report = [{"cve_number": "CVE-2024-CBT", "severity": "MEDIUM", "product": "curl", "version": "7.80.0"}]
+    cve_report = [
+        {"cve_number": "CVE-2024-CBT", "severity": "MEDIUM", "product": "curl", "version": "7.80.0"}
+    ]
     before = _make_run(tmp_path / "before", syft=_syft([]), grype=_grype([]), cve=[])
     after = _make_run(tmp_path / "after", syft=_syft([]), grype=_grype([]), cve=cve_report)
     diff = diff_runs(before, after)
