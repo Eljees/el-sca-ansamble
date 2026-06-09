@@ -9,6 +9,7 @@
 | `run_scan.sh` *(underscore)* | Native per-tool wrapper for the resilient-updater container or a developer host with tools already installed. Not the full pipeline. | No | — |
 | `scan_archive.sh` | Stripped-down full pipeline focused on archive-style targets (extract → scan → report). Mostly superseded by `run-scan.sh`; kept for backward compatibility. | Yes | — |
 | `preflight_compose.sh` | Preflight env/render validation for compose runs: normalizes `EXTRACT_INPUT_HOST`, checks absolute paths, catches unresolved `${...}` and trailing-brace path artifacts. | Yes (`docker compose config`) | — |
+| `remote_analysis.sh` | Host-side operator wrapper for the repeatable remote-machine sequence: preflight, pull, proxy-status, DB refresh, freshness checks, then the full scan. | Yes | — |
 | `update_trivy.sh` | Trivy update / scan stage entrypoint used by the `trivy-updater` / `trivy-scanner` services. Renders DB-repository flags via Python. | Inside container | `windows/update-trivy.ps1` |
 | `update_grype.sh` | Grype DB update stage. Calls `python -m resilient_updates.cli update grype`. | Inside container | `windows/update-grype.ps1` |
 | `update_cve_bin_tool.sh` | cve-bin-tool update + scan stages. Handles the multi-mode NVD fallback, audit, SBOM fast-path, and the scan timeout wrapper. | Inside container | `windows/update-cve-bin-tool.ps1` |

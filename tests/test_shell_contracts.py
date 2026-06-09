@@ -52,3 +52,16 @@ def test_preflight_script_checks_unresolved_vars_and_trailing_brace():
     assert "REPORT_OUTPUT" in script
     assert "Unresolved compose variables found in rendered config" in script
     assert "Bad trailing brace in rendered compose source path" in script
+
+
+def test_remote_analysis_wrapper_runs_the_expected_sequence():
+    script = (ROOT / "scripts" / "remote_analysis.sh").read_text(encoding="utf-8")
+
+    assert "docker-compose.yml:docker-compose.prod.yml" in script
+    assert "./scripts/preflight_compose.sh" in script
+    assert "--profile update run --rm trivy-updater" in script
+    assert "--profile update run --rm grype-updater" in script
+    assert "--profile update run --rm grype-db-importer" in script
+    assert "--profile update run --rm cve-bin-tool-updater" in script
+    assert "./scripts/run-scan.sh" in script
+    assert "scan_args=(-t" in script
