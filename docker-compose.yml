@@ -467,14 +467,11 @@ services:
       - "host.docker.internal:host-gateway"
     networks: [scanner-net]
     healthcheck:
-      # dokodemo-door inbound on 127.0.0.1:18080 just echoes TCP; a probe with
-      # python urllib that gets ANY response (incl. ConnectionReset on close)
-      # is enough to confirm the runtime is up.
-      test: ["CMD", "sh", "-c", "echo > /dev/tcp/127.0.0.1/1080"]
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 5s
+      # xray-core image is distroless (no sh/wget/curl in PATH), so the former
+      # "echo > /dev/tcp" probe caused FailingStreak > 20000 while the proxy
+      # was actually working fine.  Disable the healthcheck; liveness is
+      # confirmed by tinyproxy's ability to forward through it.
+      disable: true
 
   tinyproxy:
     image: kalaksi/tinyproxy:${TINYPROXY_VERSION:-1.11.2}

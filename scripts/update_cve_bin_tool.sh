@@ -35,17 +35,27 @@ if ! command -v cve-bin-tool >/dev/null 2>&1; then
 fi
 
 _disable_sources_to_args() {
+  # cve-bin-tool's --disable-data-source uses StringToListAction (store, not
+  # append): repeating the flag overwrites the previous value, so only the LAST
+  # invocation is honoured.  Pass all sources as a single comma-separated list
+  # in ONE flag: "--disable-data-source A,B,C".
   _ds_raw="$1"
-  _ds_result=""
+  _ds_csv=""
   for source in $_ds_raw; do
     [ -n "$source" ] || continue
-    _ds_result="$_ds_result --disable-data-source $source"
+    if [ -z "$_ds_csv" ]; then
+      _ds_csv="$source"
+    else
+      _ds_csv="${_ds_csv},$source"
+    fi
   done
-  printf '%s' "$_ds_result"
+  [ -n "$_ds_csv" ] && printf -- '--disable-data-source %s' "$_ds_csv"
 }
 
 BASE_DISABLE_ARGS="$(_disable_sources_to_args "$CVE_DISABLE_SOURCES")"
 RETRY_DISABLE_ARGS="$(_disable_sources_to_args "$CVE_DISABLE_SOURCES_ON_RETRY")"
+# Combined arg for retry attempts: BASE sources + RETRY sources in one CSV flag.
+BASE_PLUS_RETRY_DISABLE_ARGS="$(_disable_sources_to_args "$CVE_DISABLE_SOURCES $CVE_DISABLE_SOURCES_ON_RETRY")"
 
 write_status() {
   status="$1"
@@ -218,7 +228,12 @@ feed_import_attempt() {
   #    here is non-fatal — NVD-only is still a usable, activatable DB.
   if [ "${CVE_BIN_TOOL_FEED_ENRICH:-1}" = "1" ]; then
     mkdir -p "$UPDATE_SCAN_DIR"
-    enrich_disable="$(_disable_sources_to_args "${CVE_BIN_TOOL_ENRICH_DISABLE:-}")"
+    # Build ONE combined --disable-data-source arg for the enrichment step:
+    # NVD always off (feed import handles NVD) + contour-specific skips +
+    # caller-specified CVE_BIN_TOOL_DISABLE_SOURCES.  Using a single CSV flag
+    # is required because StringToListAction (store) only keeps the last flag.
+    # shellcheck disable=SC2086
+    _enrich_disable_arg="$(_disable_sources_to_args "NVD ${CVE_BIN_TOOL_ENRICH_DISABLE:-} $CVE_DISABLE_SOURCES")"
     {
       echo "[feed] enrichment (pre-NVD) proxy=${CVE_BIN_TOOL_ENRICH_PROXY:-none}"
       set +e
@@ -232,7 +247,7 @@ feed_import_attempt() {
         HTTP_PROXY="${CVE_BIN_TOOL_ENRICH_PROXY:-${HTTP_PROXY:-}}" \
         HTTPS_PROXY="${CVE_BIN_TOOL_ENRICH_PROXY:-${HTTPS_PROXY:-}}" \
         cve-bin-tool --update now --disable-version-check \
-          --disable-data-source NVD $enrich_disable $BASE_DISABLE_ARGS "$UPDATE_SCAN_DIR"
+          $_enrich_disable_arg "$UPDATE_SCAN_DIR"
       echo "[feed] enrichment exit=$?"
       set -e
     } >>"$attempt_log" 2>&1
@@ -305,7 +320,7 @@ case "$MODE" in
             retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
             candidate_count=$((candidate_count + 1))
             set -- "$@" --candidate-root "$retry_root"
-            if attempt_update "$nvd_mode" "$retry_label" "$api_key" "$BASE_DISABLE_ARGS $RETRY_DISABLE_ARGS"; then
+            if attempt_update "$nvd_mode" "$retry_label" "$api_key" "$BASE_PLUS_RETRY_DISABLE_ARGS"; then
               updated=1
               break
             fi
@@ -333,7 +348,7 @@ case "$MODE" in
             retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
             candidate_count=$((candidate_count + 1))
             set -- "$@" --candidate-root "$retry_root"
-            if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_DISABLE_ARGS $RETRY_DISABLE_ARGS"; then
+            if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_PLUS_RETRY_DISABLE_ARGS"; then
               updated=1
               break
             fi
@@ -358,7 +373,7 @@ case "$MODE" in
           retry_root="$STAGING_ROOT/candidates/${nvd_mode}-${retry_label}/.cache/cve-bin-tool"
           candidate_count=$((candidate_count + 1))
           set -- "$@" --candidate-root "$retry_root"
-          if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_DISABLE_ARGS $RETRY_DISABLE_ARGS"; then
+          if attempt_update "$nvd_mode" "$retry_label" "" "$BASE_PLUS_RETRY_DISABLE_ARGS"; then
             updated=1
             break
           fi
