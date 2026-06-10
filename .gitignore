@@ -13,6 +13,10 @@ _el_cvebt_source_research/
 --exps/
 comands.txt
 docker-compose.prod.yml
+# Local per-machine Docker Compose overrides (not for commit).
+# docker-compose.override.yml is auto-loaded by compose and is host-specific.
+docker-compose.override.yml
+docker-compose.port.override.yml
 
 artifacts/cache/*
 artifacts/extracted/*

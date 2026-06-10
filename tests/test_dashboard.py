@@ -363,3 +363,71 @@ def test_api_report_404_for_missing_file(tmp_path: Path):
 
 def test_api_report_400_for_path_traversal(tmp_path: Path):
     assert _client(tmp_path).get("/api/report/../../etc/passwd").status_code in (400, 404)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/proxy-chain and POST /api/proxy-chain — proxy toggle
+# ---------------------------------------------------------------------------
+
+
+def _client_with_cfg(tmp_path: Path, default_chain: str = "corp"):
+    """Create a TestClient with a minimal feed_sources.yaml that contains default_chain."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from resilient_updates.dashboard import create_app
+
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    (configs / "feed_sources.yaml").write_text(
+        f"proxy:\n  default_chain: {default_chain}\n",
+        encoding="utf-8",
+    )
+    return TestClient(create_app(tmp_path, repo_root=tmp_path))
+
+
+def test_get_proxy_chain_returns_current_chain(tmp_path: Path):
+    """GET /api/proxy-chain reads default_chain from feed_sources.yaml."""
+    client = _client_with_cfg(tmp_path, default_chain="corp")
+    resp = client.get("/api/proxy-chain")
+    assert resp.status_code == 200
+    assert resp.json() == {"chain": "corp"}
+
+
+def test_get_proxy_chain_unknown_when_file_missing(tmp_path: Path):
+    """When feed_sources.yaml is absent, chain is reported as 'unknown'."""
+    client = _client(tmp_path)  # no configs dir
+    resp = client.get("/api/proxy-chain")
+    assert resp.status_code == 200
+    assert resp.json()["chain"] == "unknown"
+
+
+def test_post_proxy_chain_updates_yaml(tmp_path: Path):
+    """POST /api/proxy-chain rewrites default_chain and returns the new value."""
+    client = _client_with_cfg(tmp_path, default_chain="direct")
+    resp = client.post("/api/proxy-chain?chain=via-vpn")
+    assert resp.status_code == 200
+    assert resp.json() == {"chain": "via-vpn"}
+    # Verify the YAML was actually rewritten.
+    cfg_text = (tmp_path / "configs" / "feed_sources.yaml").read_text(encoding="utf-8")
+    assert "default_chain: via-vpn" in cfg_text
+
+
+def test_post_proxy_chain_roundtrip_all_values(tmp_path: Path):
+    """All three valid chain values can be written and read back."""
+    # Each iteration creates its own sub-directory to avoid mkdir collisions.
+    for i, chain in enumerate(("direct", "corp", "via-vpn")):
+        sub = tmp_path / str(i)
+        sub.mkdir()
+        client = _client_with_cfg(sub, default_chain="direct")
+        resp = client.post(f"/api/proxy-chain?chain={chain}")
+        assert resp.status_code == 200, f"chain={chain!r} failed"
+        assert resp.json()["chain"] == chain
+
+
+def test_post_proxy_chain_rejects_invalid_chain(tmp_path: Path):
+    """Unknown chain values must return 400."""
+    client = _client_with_cfg(tmp_path)
+    resp = client.post("/api/proxy-chain?chain=evil")
+    assert resp.status_code == 400
