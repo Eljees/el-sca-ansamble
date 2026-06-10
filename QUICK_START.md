@@ -50,6 +50,9 @@ To ship the project to GitLab/Docker **with the current databases bundled**, and
 to deploy it elsewhere ready for a first scan, see
 [`docs/SHIP_AND_DEPLOY.md`](docs/SHIP_AND_DEPLOY.md).
 
+For the cleaner "clone from GitHub, pull images from Docker Hub, refresh DBs on
+the Ubuntu host" path, see [`docs/ubuntu-from-github.md`](docs/ubuntu-from-github.md).
+
 ---
 
 ## ⚡ In One Command (Windows)
