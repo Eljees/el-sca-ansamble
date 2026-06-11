@@ -136,7 +136,7 @@ function Show-DbFreshnessBanner {
   $tools = @(
     @{ Name='Trivy';        Tool='trivy';        Path='/var/lib/resilient-db/trivy' }
     @{ Name='Grype';        Tool='grype';        Path='/var/lib/resilient-db/grype/active' }
-    @{ Name='cve-bin-tool'; Tool='cve-bin-tool'; Path='/root/.cache/cve-bin-tool' }
+    @{ Name='cve-bin-tool'; Tool='cve-bin-tool'; Path='/home/appuser/.cache/cve-bin-tool' }
   )
 
   $rows = @()
@@ -451,7 +451,7 @@ if ($Format -eq "apk") {
       Write-Host "[apk] Running cve-bin-tool on $($nativeFiles.Count) native .so files…" -ForegroundColor Cyan
       $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/apk-native"
       $env:SCAN_TARGET_HOST    = (Resolve-Path $nativeDir).Path
-      Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
+      Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
       Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
     }
   }
@@ -471,7 +471,7 @@ if ($Format -eq "apk") {
     Invoke-ComposeChecked -Args @("--profile","update","run","--rm","cve-bin-tool-updater")
   }
   Invoke-DbStatus -DbTool "grype"        -DbPath "/var/lib/resilient-db/grype/active"
-  Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
+  Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
   Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
 
   # cve-bin-tool binary scan on extracted files
@@ -516,7 +516,7 @@ switch ($Tool) {
     }
     Invoke-DbStatus -DbTool "trivy"        -DbPath "/var/lib/resilient-db/trivy"
     Invoke-DbStatus -DbTool "grype"        -DbPath "/var/lib/resilient-db/grype/active"
-    Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
+    Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
     Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
@@ -545,7 +545,7 @@ switch ($Tool) {
     if ($UpdateDb) {
       Invoke-ComposeChecked -Args @("--profile","update","run","--rm","cve-bin-tool-updater")
     }
-    Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/root/.cache/cve-bin-tool"
+    Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
     Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 }

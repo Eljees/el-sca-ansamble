@@ -762,7 +762,7 @@ def main() -> int:
                 .get("atomic_activation_policy", {})
                 .get("active_dir", "/var/lib/resilient-db/grype/active")
             ),
-            "cve-bin-tool": Path("/root/.cache/cve-bin-tool"),
+            "cve-bin-tool": Path("/home/appuser/.cache/cve-bin-tool"),
         }
         path = Path(args.path) if args.path else defaults[args.tool]
         payload = _db_status_payload(args.tool, path, args.warning_age)

@@ -33,7 +33,8 @@ from typing import Any
 # Default lookup roots, in priority order.  Override via
 # CVE_BIN_TOOL_DB_ROOT or EL_SCA_ENRICHMENT_ROOT env vars.
 _DEFAULT_ROOTS = (
-    "/root/.cache/cve-bin-tool",
+    "/home/appuser/.cache/cve-bin-tool",
+    "/root/.cache/cve-bin-tool",  # legacy path (pre-appuser-cache); kept for back-compat
     "/var/lib/resilient-db/cve-bin-tool/active",
     # Repo-local feed drop (host CWD and container /workspace are both the
     # repo root): populate via `make feeds` to light up the EPSS/KEV columns

@@ -22,7 +22,7 @@ mkdir -p "$bundle_root"
   -e BUNDLE_NAME="$bundle_name" \
   --entrypoint sh cve-bin-tool-updater -lc '
 set -euo pipefail
-db_root="${CVE_BIN_TOOL_DB_ROOT:-/root/.cache/cve-bin-tool}"
+db_root="${CVE_BIN_TOOL_DB_ROOT:-/home/appuser/.cache/cve-bin-tool}"
 bundle_dir="$BUNDLE_ROOT"
 base="$BUNDLE_NAME"
 archive_path="$bundle_dir/$base.tar.zst"

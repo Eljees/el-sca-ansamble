@@ -262,7 +262,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./:/workspace
-      - cve-bin-tool-cache:/root/.cache
+      - cve-bin-tool-cache:/home/appuser/.cache
       - ./artifacts:/workspace/artifacts
       - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
     networks: [scanner-net]
@@ -289,7 +289,7 @@ services:
       CVE_BIN_TOOL_DB_POLICY: ${CVE_BIN_TOOL_DB_POLICY:-}
     volumes:
       - ./:/workspace
-      - cve-bin-tool-cache:/root/.cache
+      - cve-bin-tool-cache:/home/appuser/.cache
       - ./artifacts:/workspace/artifacts
       - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
       - type: bind
@@ -326,8 +326,9 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        # Named DB volumes: only the uid-1001 containers write them -> chown 1001.
         for d in /vol/grype-db /vol/grype-cache /vol/trivy-cache \
-                 /vol/cve-bin-tool-cache /vol/internal-mirror-data /vol/artifacts; do
+                 /vol/cve-bin-tool-cache /vol/internal-mirror-data; do
           owner=$$(stat -c '%u' "$$d" 2>/dev/null || echo 0)
           if [ "$$owner" != "1001" ]; then
             echo "[volume-init] chown 1001:1001 $$d"
@@ -336,6 +337,14 @@ services:
             echo "[volume-init] ok (already 1001): $$d"
           fi
         done
+        # ./artifacts is a host bind-mount written by BOTH the host deploy-user
+        # and the uid-1001 containers (report-collector, scanners + host-side
+        # collect-report).  chown'ing it to either side locks the other out, so
+        # make it world-writable (no sticky bit, so the host-side [clean] step
+        # can still delete container-created files).  artifacts is non-sensitive
+        # scan output; this removes all cross-uid permission conflicts on deploy.
+        echo "[volume-init] making /vol/artifacts world-writable (shared host/uid-1001)"
+        chmod -R 0777 /vol/artifacts 2>/dev/null || true
     networks: [scanner-net]
 
   db-admin:
@@ -352,7 +361,7 @@ services:
       - trivy-cache:/var/lib/resilient-db/trivy
       - grype-db:/var/lib/resilient-db/grype
       - grype-cache:/var/lib/resilient-db/grype-cache
-      - cve-bin-tool-cache:/root/.cache
+      - cve-bin-tool-cache:/home/appuser/.cache
       - internal-mirror-data:/var/lib/resilient-db/cve-bin-tool
     networks: [scanner-net]
 

@@ -107,7 +107,7 @@ fi
 
 "${compose[@]}" run --rm db-admin db-status trivy --path /var/lib/resilient-db/trivy --warning-age 24h
 "${compose[@]}" run --rm db-admin db-status grype --path /var/lib/resilient-db/grype/active --warning-age 24h
-"${compose[@]}" run --rm db-admin db-status cve-bin-tool --path /root/.cache/cve-bin-tool --warning-age 24h
+"${compose[@]}" run --rm db-admin db-status cve-bin-tool --path /home/appuser/.cache/cve-bin-tool --warning-age 24h
 
 scan_args=(-t "$TARGET_RESOLVED" -c)
 if [[ -n "$CASE_ID" ]]; then

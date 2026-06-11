@@ -128,6 +128,20 @@ db_status() {
   printf '%s\n' "$out" | sed -n '/^{/,/^}/p' > "$ARTIFACTS_DIR/db_status/$tool.json" 2>/dev/null || true
 }
 
+# Normalise named-volume / artifacts ownership to uid 1001 so the appuser
+# containers (extractor, scanners, updaters, report-collector) can always write
+# — Docker creates named volumes root-owned and the host owns ./artifacts.
+# This is the committed, cross-platform replacement for the manual chown/ACL
+# steps; runs at most once per pipeline. Idempotent (skips already-correct vols).
+VOLINIT_DONE=0
+volume_init_once() {
+  [[ $VOLINIT_DONE -eq 1 ]] && return 0
+  VOLINIT_DONE=1
+  echo "[volinit] normalising volume/artifacts ownership..."
+  docker compose --profile volinit run --rm volume-init >/dev/null 2>&1 \
+    || echo "[volinit] WARN: volume-init failed (updates/scan may hit permission errors)"
+}
+
 # Run the in-network route-doctor and source its plan so the updater containers
 # inherit HTTP_PROXY / ALL_PROXY / CVE_BIN_TOOL_ENRICH_PROXY for the chosen
 # egress. Best-effort: any failure leaves the environment untouched (direct /
@@ -244,6 +258,10 @@ for f in syft.json cyclonedx.json spdx.json; do
   rm -f "$ARTIFACTS_DIR/sbom/$f"
 done
 
+# Ensure volumes/artifacts are writable by the appuser containers before any
+# stage runs (extract/scan/update all write to named volumes + ./artifacts).
+volume_init_once
+
 # Pick a live egress before any updater runs (only when refreshing DBs).
 [[ $UPDATE_DB -eq 1 ]] && auto_route_once
 
@@ -352,7 +370,7 @@ if [[ "$FORMAT" == "apk" ]]; then
     echo "[apk] Running cve-bin-tool on native .so files..."
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/apk-native"
     export SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
-    db_status cve-bin-tool /root/.cache/cve-bin-tool
+    db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
     compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
@@ -369,7 +387,7 @@ elif [[ "$FORMAT" == "win" ]]; then
     compose_checked --profile update run --rm cve-bin-tool-updater
   fi
   db_status grype /var/lib/resilient-db/grype/active
-  db_status cve-bin-tool /root/.cache/cve-bin-tool
+  db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
   compose_checked --profile "$PROFILE" run --rm grype-scanner
 
   WIN_EXTRACT_DIR="$ARTIFACTS_DIR/extracted/win-installer"
@@ -426,7 +444,7 @@ else
       fi
       db_status trivy /var/lib/resilient-db/trivy
       db_status grype /var/lib/resilient-db/grype/active
-      db_status cve-bin-tool /root/.cache/cve-bin-tool
+      db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
       echo "[stage] syft-sbom";        compose_checked --profile "$PROFILE" run --rm syft-sbom
       echo "[stage] trivy-scanner";    compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
       echo "[stage] grype-scanner";    compose_checked --profile "$PROFILE" run --rm grype-scanner
@@ -438,65 +456,4 @@ else
       [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm grype-updater && compose_checked --profile update run --rm grype-db-importer
       db_status grype /var/lib/resilient-db/grype/active
       compose_checked --profile "$PROFILE" run --rm syft-sbom
-      compose_checked --profile "$PROFILE" run --rm grype-scanner
-      ;;
-    trivy)
-      [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-updater
-      db_status trivy /var/lib/resilient-db/trivy
-      compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
-      ;;
-    cve-bin-tool)
-      [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm cve-bin-tool-updater
-      db_status cve-bin-tool /root/.cache/cve-bin-tool
-      compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
-      ;;
-  esac
-fi
-
-# ── Collect reports ─────────────────────────────────────────────────
-export CASE_ID="$CASE_ID"
-echo "[stage] report-collector"; compose_checked --profile report run --rm report-collector
-
-echo "[stage] collect-report (host $PYTHON_BIN)"
-"$PYTHON_BIN" -m resilient_updates.cli collect-report \
-  --reports-dir artifacts \
-  --target      "$SCAN_TARGET_HOST" \
-  --display-target "$SCAN_TARGET_DISPLAY" \
-  --case-id     "$CASE_ID" \
-  --output      "$REPORT_MD"
-
-echo "[stage] report-html (host $PYTHON_BIN)"
-"$PYTHON_BIN" scripts/report_html.py \
-  --artifacts-dir artifacts \
-  --target        "$SCAN_TARGET_DISPLAY" \
-  --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"
-
-# ── Archive run history ───────────────────────────────────────────────────────
-# Snapshot per-run evidence into a project-timestamp directory.  By default the
-# helper tries to place it near the source artifact and falls back to
-# artifacts/runs/ when that is not possible.  Best-effort: never fails the scan.
-{
-  archive_args=(
-    -m resilient_updates.cli archive-run
-    --artifacts-dir "$ARTIFACTS_DIR"
-    --target-host "$TARGET_RESOLVED"
-    --target-container "$SCAN_TARGET_HOST"
-    --case-id "$CASE_ID"
-    --mode "$ARTIFACT_MODE"
-    --stage final
-    --status done
-  )
-  if [[ "${EL_SCA_ARCHIVE_EXTRACTED_TREE:-0}" =~ ^(1|true|yes|on)$ ]]; then
-    archive_args+=(--include-extracted-tree)
-  fi
-  "$PYTHON_BIN" "${archive_args[@]}"
-} || echo "[history] WARN: archive-run failed" >&2
-
-# ── Done ──────────────────────────────────────────────────────────────────────────────────
-echo ""
-printf '\e[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
-printf '\e[32m Reports ready:\e[0m\n'
-printf '   MD  : %s\n' "$REPORT_MD"
-printf '   HTML: %s\n' "$REPORT_HTML"
-printf '\e[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
-echo ""
+      compose_

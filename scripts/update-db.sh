@@ -145,7 +145,7 @@ esac
 # ── Freshness summary (best-effort) ──────────────────────────────────────────
 for pair in "trivy:/var/lib/resilient-db/trivy/active" \
             "grype:/var/lib/resilient-db/grype/active" \
-            "cve-bin-tool:/root/.cache/cve-bin-tool"; do
+            "cve-bin-tool:/home/appuser/.cache/cve-bin-tool"; do
   t="${pair%%:*}"; p="${pair#*:}"
   [[ "$TOOL" == "all" || "$TOOL" == "$t" ]] || continue
   docker compose run --rm db-admin db-status "$t" --path "$p" --warning-age 24h 2>/dev/null || true

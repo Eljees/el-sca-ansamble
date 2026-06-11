@@ -56,7 +56,7 @@ esac
 set -euo pipefail
 candidate_home="/var/lib/resilient-db/cve-bin-tool/candidates/bundle-import-manual"
 candidate_root="$candidate_home/.cache/cve-bin-tool"
-db_root="${CVE_BIN_TOOL_DB_ROOT:-/root/.cache/cve-bin-tool}"
+db_root="${CVE_BIN_TOOL_DB_ROOT:-/home/appuser/.cache/cve-bin-tool}"
 config_path="${CONFIG_PATH:-configs/feed_sources.yaml}"
 
 rm -rf "$candidate_home"
