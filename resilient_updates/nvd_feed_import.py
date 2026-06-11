@@ -329,7 +329,7 @@ def main() -> int:
             or os.environ.get("ALL_PROXY")
             or os.environ.get("all_proxy")  # noqa: SIM112
             or os.environ.get("HTTP_PROXY")
-            or os.environ.get("http_proxy")  # noqa: SIM112
+            or os.environ.get("http_proxy")
         )
         if has_egress:
             log(
