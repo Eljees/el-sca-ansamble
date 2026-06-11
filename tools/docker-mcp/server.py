@@ -147,7 +147,11 @@ def _auto_route_for(tool: str) -> tuple[str | None, list[str], dict[str, Any]]:
     doctor = _run_route_doctor()
     plan = _load_route_plan()
     if not plan:
-        return None, [], {"auto_route": "skipped", "reason": "route-doctor produced no plan", "doctor": doctor}
+        return (
+            None,
+            [],
+            {"auto_route": "skipped", "reason": "route-doctor produced no plan", "doctor": doctor},
+        )
     sel = (plan.get("plan") or {}).get(_ROUTE_PLAN_KEY.get(tool, tool)) or {}
     proxy_url = sel.get("proxy_url")
     extra_env: list[str] = []
@@ -313,9 +317,8 @@ def update_db(
                 proxy=proxy,
             ),
         }
-    if route_info is not None:
-        if isinstance(result, dict):
-            result["route"] = route_info
+    if route_info is not None and isinstance(result, dict):
+        result["route"] = route_info
     return result
 
 

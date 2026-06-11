@@ -689,6 +689,27 @@ def main() -> int:
         default=None,
         help="Override run_id; default derives one deterministically from target+case+timestamp",
     )
+    archive_run = subparsers.add_parser(
+        "archive-run",
+        help="Snapshot current artifacts/ into a named per-run directory with MANIFEST.json and checkpoint.json",
+    )
+    archive_run.add_argument("--artifacts-dir", default="artifacts")
+    archive_run.add_argument("--target-host", default=None)
+    archive_run.add_argument("--target-container", default=None)
+    archive_run.add_argument("--case-id", default=None)
+    archive_run.add_argument(
+        "--mode",
+        choices=["artifacts", "near-source", "auto"],
+        default="artifacts",
+        help="where to create the run directory",
+    )
+    archive_run.add_argument(
+        "--include-extracted-tree",
+        action="store_true",
+        help="also copy artifacts/extracted/current (can be very large)",
+    )
+    archive_run.add_argument("--stage", default="archive")
+    archive_run.add_argument("--status", default="archived")
 
     scanner_diff = subparsers.add_parser(
         "scanner-diff",
@@ -964,6 +985,32 @@ def main() -> int:
         print(
             json.dumps(
                 {"status": "ok", "output": str(out_path), "run_id": payload["run_id"]},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return EXIT_SUCCESS
+    if args.command == "archive-run":
+        from .run_layout import archive_current_run
+
+        payload = archive_current_run(
+            artifacts_dir=args.artifacts_dir,
+            target_host=args.target_host,
+            target_container=args.target_container,
+            case_id=args.case_id,
+            mode=args.mode,
+            include_extracted_tree=args.include_extracted_tree,
+            stage=args.stage,
+            status=args.status,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "run_dir": payload["run_dir"],
+                    "run_id": payload["manifest"].get("run_id"),
+                    "copied": payload["copied"],
+                },
                 indent=2,
                 ensure_ascii=False,
             )

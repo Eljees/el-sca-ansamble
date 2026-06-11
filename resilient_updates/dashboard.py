@@ -1,8 +1,8 @@
-"""Read-only FastAPI dashboard over ``artifacts/`` (ADR-0006, Phase 1).
+"""FastAPI dashboard over ``artifacts/`` (ADR-0006).
 
-P1 ships a JSON API only — no UI, no compose service.  The app **reads**
-already-written artifacts (provenance, MANIFEST, reports) and never scans or
-mutates anything, mirroring ``scripts/report_html.py``.
+The app has a read-only run browser and a host-active GUI.  Host-active mode
+starts scan/update jobs through :mod:`resilient_updates.orchestrator`; compose
+dashboard mode disables those POST endpoints and only browses saved artefacts.
 
 FastAPI is imported lazily inside :func:`create_app`, so importing this module
 (and unit-testing the pure helpers below) does not require fastapi to be
@@ -59,34 +59,54 @@ def _reports(artifacts_dir: Path) -> list[str]:
 def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
     """Return the available runs.
 
-    The on-disk layout holds a single current run (``artifacts/provenance``,
-    ``MANIFEST.json``, ``reports/``); P1 surfaces it as one logical run with
-    ``id="current"``.  Empty list when nothing has been produced yet.
+    The live layout exposes ``id="current"``.  Saved runs live under
+    ``artifacts/runs/<run-name>/`` and mirror the same artifact structure.
     """
+    out: list[dict[str, Any]] = []
     prov = _provenance(artifacts_dir)
     manifest = _safe_read_json(artifacts_dir / "MANIFEST.json")
     reports = _reports(artifacts_dir)
-    if not prov and manifest is None and not reports:
-        return []
-    return [
-        {
-            "id": "current",
-            "manifest_present": manifest is not None,
-            "provenance_tools": sorted(prov.keys()),
-            "report_count": len(reports),
-        }
-    ]
+    if prov or manifest is not None or reports:
+        out.append(
+            {
+                "id": "current",
+                "path": str(artifacts_dir),
+                "manifest_present": manifest is not None,
+                "provenance_tools": sorted(prov.keys()),
+                "report_count": len(reports),
+            }
+        )
+
+    runs_root = artifacts_dir / "runs"
+    if runs_root.is_dir():
+        for run_dir in sorted((p for p in runs_root.iterdir() if p.is_dir()), reverse=True):
+            run_prov = _provenance(run_dir)
+            run_manifest = _safe_read_json(run_dir / "MANIFEST.json")
+            run_reports = _reports(run_dir)
+            out.append(
+                {
+                    "id": run_dir.name,
+                    "path": str(run_dir),
+                    "manifest_present": run_manifest is not None,
+                    "provenance_tools": sorted(run_prov.keys()),
+                    "report_count": len(run_reports),
+                }
+            )
+    return out
 
 
 def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
     """Full detail for a run, or ``None`` if unknown/absent."""
-    if run_id != "current" or not list_runs(artifacts_dir):
+    root = artifacts_dir if run_id == "current" else artifacts_dir / "runs" / run_id
+    if not root.is_dir() or not any(item["id"] == run_id for item in list_runs(artifacts_dir)):
         return None
     return {
-        "id": "current",
-        "manifest": _safe_read_json(artifacts_dir / "MANIFEST.json"),
-        "provenance": _provenance(artifacts_dir),
-        "reports": _reports(artifacts_dir),
+        "id": run_id,
+        "path": str(root),
+        "manifest": _safe_read_json(root / "MANIFEST.json"),
+        "checkpoint": _safe_read_json(root / "checkpoint.json"),
+        "provenance": _provenance(root),
+        "reports": _reports(root),
     }
 
 
@@ -499,6 +519,7 @@ _GUI_HTML = """<!doctype html>
     <div class="pipeline" id="pipeline"></div>
     <div class="row" style="margin:14px 0 10px">
       <strong id="job-status" class="muted">ожидание</strong>
+      <span id="run-info" class="muted"></span>
     </div>
     <pre id="log">Лог появится здесь после запуска…</pre>
   </section>
@@ -534,7 +555,7 @@ _GUI_HTML = """<!doctype html>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const logEl = $("#log"), pipeEl = $("#pipeline"), statusEl = $("#job-status"), connEl = $("#conn"), mapEl = $("#map");
+const logEl = $("#log"), pipeEl = $("#pipeline"), statusEl = $("#job-status"), connEl = $("#conn"), mapEl = $("#map"), runInfoEl = $("#run-info");
 let es = null;
 let stagesByKey = {};
 
@@ -581,6 +602,7 @@ function follow(jobId, kind){
   const isScan = (kind === "scan");
   if(es) es.close();
   logEl.textContent = "";
+  runInfoEl.textContent = "";
   statusEl.textContent = "выполняется…"; statusEl.className = "";
   // Карта анализа и панель отчёта относятся к скану; при обновлении баз скрываем.
   $("#map-panel").style.display = isScan ? "" : "none";
@@ -592,6 +614,8 @@ function follow(jobId, kind){
     if(m.type === "snapshot"){
       renderStages(m.stages); (m.log||[]).forEach(appendLog);
       statusEl.textContent = m.status;
+      if(m.run_dir) runInfoEl.textContent = "run: " + m.run_dir;
+      if(m.log_path) appendLog("# лог: " + m.log_path);
     } else {
       if("line" in m) appendLog(m.line);
       if(m.progress) setProgress(m.progress.stage, m.progress.pct);
@@ -761,6 +785,11 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     rroot = Path(repo_root) if repo_root is not None else root.resolve().parent
     uploads = root / "uploads"
     registry = JobRegistry(rroot)
+    active_enabled = os.environ.get("EL_SCA_DASHBOARD_ACTIVE", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
     app = FastAPI(title="el-sca-ansamble dashboard", version="0.2.0")
 
@@ -808,6 +837,8 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
 
     @app.post("/api/scan", response_model=None)
     def scan(file: UploadFile = File(...), tools: str = Form("")) -> dict[str, str]:
+        if not active_enabled:
+            raise HTTPException(status_code=403, detail="active scan is disabled for this dashboard")
         uploads.mkdir(parents=True, exist_ok=True)
         safe_name = Path(file.filename or "artifact").name
         dest = uploads / safe_name
@@ -817,7 +848,12 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         # tools = comma-separated subset of syft,grype,trivy,cve-bin-tool; empty = all.
         selected = {t.strip() for t in tools.split(",") if t.strip()} or None
         job = registry.start_scan(str(dest.resolve()), tools=selected)
-        return {"job_id": job.id, "target": str(dest)}
+        return {
+            "job_id": job.id,
+            "target": str(dest),
+            "run_dir": str(job.run_dir) if job.run_dir else "",
+            "log": str(job.log_path) if job.log_path else "",
+        }
 
     @app.get("/api/report/{path:path}")
     def report_file(path: str):
@@ -831,6 +867,8 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
 
     @app.post("/api/update-db")
     def update_db(target: str = "all") -> dict[str, str]:
+        if not active_enabled:
+            raise HTTPException(status_code=403, detail="active DB update is disabled for this dashboard")
         # target: all | trivy | grype | cve-bin-tool | cve-bin-tool:<SOURCE>
         job = registry.start_update(target=target)
         return {"job_id": job.id, "target": target, "log": str(job.log_path) if job.log_path else ""}

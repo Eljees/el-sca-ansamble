@@ -1,7 +1,7 @@
 # ADR-0006: FastAPI-дашборд — живой просмотр прогонов
 
-- Status: Proposed
-- Date: 2026-06-02
+- Status: Accepted (read-only browser + host-active GUI)
+- Date: 2026-06-02 (updated 2026-06-11)
 - Decision owners: SCA-pipeline team
 - Связанные документы: [adr/0005-unified-cli-scan.md](0005-unified-cli-scan.md),
   [docs/operations.md](../operations.md), [docs/security-notes.md](../security-notes.md)
@@ -26,48 +26,81 @@
 
 ## Decision
 
-Read-only FastAPI-приложение поверх `artifacts/`. Источник правды не меняется —
-дашборд только **читает** уже записанные артефакты (как `report_html.py`), сам
-ничего не сканирует и не пишет. Кладётся в новый профиль compose, по умолчанию
-слушает loopback.
+FastAPI-приложение поверх `artifacts/` с двумя режимами:
+
+- **host-active** (по умолчанию при запуске `cli dashboard --repo-root .`) —
+  drag-and-drop scan/update GUI запускает `docker compose` на хосте, стримит
+  стадии и лог через SSE, пишет per-run snapshot/checkpoint;
+- **compose read-only** (`docker compose --profile dashboard up`) — только
+  просмотр уже записанных артефактов. В контейнере `EL_SCA_DASHBOARD_ACTIVE=0`,
+  поэтому `POST /api/scan` и `POST /api/update-db` честно возвращают 403.
+
+Источник правды остаётся файловым: текущий прогон живёт в `artifacts/`, история
+прогонов — в `artifacts/runs/<project>-<timestamp>/` или рядом с исходным
+артефактом, если runner запущен с режимом `near-source`/`auto`.
 
 ### Компонент 1 — App (`resilient_updates/dashboard.py`)
 
 FastAPI-приложение, фабрика `create_app(artifacts_dir: Path) -> FastAPI`:
 
 - `GET /healthz` — liveness;
-- `GET /api/runs` — список прогонов (по `MANIFEST.json` / каталогам
-  `reports/`), с `case_id`, датой, `policy_decision`, счётчиками severity;
+- `GET /api/runs` — список текущего и сохранённых прогонов (`artifacts/runs/*`);
 - `GET /api/runs/{id}` — детали: provenance по каждому tool/layer, summary,
   `scanner_diff`, статус свежести БД/EPSS (через `enrichment.source_freshness`);
-- `GET /api/freshness` — текущий вердикт `evaluate_enrichment_policy`.
+- `GET /api/freshness` — текущий вердикт `evaluate_enrichment_policy`;
+- `POST /api/scan` — host-active запуск scan job с drag-and-drop upload;
+- `POST /api/update-db` — host-active запуск update job;
+- `GET /api/jobs/{id}/stream` — SSE snapshot/update stream: стадии, лог,
+  progress, `run_dir`, `log_path`.
 
 Парсинг артефактов переиспользует существующие хелперы (`_io.read_json`,
 `reporting`/`run_summary`/`scanner_diff`), без дублирования логики.
 
 ### Компонент 2 — UI
 
-Минимальный server-rendered HTML (Jinja2, без JS-фреймворка): индекс прогонов
-+ страница прогона. API (Компонент 1) самодостаточно — UI поверх него тонкий.
+Server-rendered HTML без JS-фреймворка: drag-and-drop зона, выбор инструментов,
+стадии pipeline, live log, карта анализа, embedded report, DB cards и список
+сохранённых прогонов.
+
+### Компонент 2.5 — Run snapshots
+
+`resilient_updates.run_layout` создаёт единый per-run layout:
+
+```
+<project>-<timestamp>/
+  MANIFEST.json
+  checkpoint.json
+  job.log | run-scan.log
+  sbom/
+  reports/
+  provenance/
+  extracted/current/extraction_manifest.json
+```
+
+По умолчанию полный `extracted/current` не копируется, чтобы не раздувать диск.
+Если нужно сохранить распакованное дерево для resume/debug, включается
+`EL_SCA_ARCHIVE_EXTRACTED_TREE=1`.
 
 ### Компонент 3 — Зависимости
 
-`requirements.in`: `fastapi`, `uvicorn[standard]`, `jinja2`. Регенерировать
+`requirements.in`: `fastapi`, `uvicorn[standard]`, `python-multipart`, `httpx`. Регенерировать
 `requirements.txt`/`.lock` через `make lock`. Это первая веб-зависимость в
 проекте — отметить в `docs/security-notes.md`.
 
 ### Компонент 4 — Запуск
 
-- CLI: `cli dashboard --host 127.0.0.1 --port 8080 --artifacts-dir artifacts`
-  (поднимает uvicorn);
+- CLI: `cli dashboard --host 127.0.0.1 --port 8080 --artifacts-dir artifacts --repo-root .`
+  (host-active режим, поднимает uvicorn);
 - compose: сервис `dashboard` в **новом профиле `dashboard`**, read-only
-  bind-mount `./artifacts:/artifacts:ro`, публикация порта только на loopback
+  bind-mount `./artifacts:/workspace/artifacts:ro`, публикация порта только на loopback
   (`127.0.0.1:8080:8080`).
 
 ### Компонент 5 — Безопасность
 
 - bind по умолчанию на `127.0.0.1`, не `0.0.0.0`;
-- сервис **read-only** (нет мутаций, нет запуска сканов из UI в v1);
+- compose-сервис **read-only** (нет мутаций, нет запуска сканов из контейнера);
+- host-active режим запускает Docker на хосте, поэтому должен слушать loopback и
+  использоваться как локальный операторский инструмент;
 - аутентификации нет в v1 (внутренний инструмент); для прод-выставления —
   только за reverse-proxy с auth (задокументировать в `security-notes.md`);
 - никаких секретов в ответах (provenance не содержит ключей — проверить).

@@ -17,6 +17,7 @@ extend-exclude = [
   ".pytest_cache",
   "-prompts",
   "--exps",
+  "to_analyze",
 ]
 
 [lint]

@@ -2,7 +2,7 @@
 
 | Script | Purpose | Runs Docker? | Mirror on Windows |
 |---|---|---|---|
-| `run-scan.sh` *(dash)* | Full SCA pipeline: extract → scan (syft/trivy/grype/cve-bin-tool) → MD + HTML report. Recommended entry point on Linux/macOS. | Yes (`docker compose`) | `windows/run-scan.ps1` |
+| `run-scan.sh` *(dash)* | Full SCA pipeline: extract → scan (syft/trivy/grype/cve-bin-tool) → MD + HTML report + per-run snapshot (`--artifact-mode artifacts\|near-source\|auto`). Recommended entry point on Linux/macOS. | Yes (`docker compose`) | `windows/run-scan.ps1` |
 | `batch-scan.sh` | Run `run-scan.sh` against multiple `{case, target}` pairs in one go. Loads jobs from `--case/--target`, `--jobs-json`, or `--jobs-csv`; tolerates per-job failures; prints SUMMARY; exit 2 if any job failed. | Yes (delegates) | `windows/batch-scan.ps1` |
 | `benchmark.sh` | N consecutive runs of `run-scan.sh` against the same target with wall-clock timing.  Writes `artifacts/provenance/benchmark.json` (host snapshot + per-run timings + summary stats). Use to validate Phase-3 optimisations (`COMPOSE_FILE`, BuildKit cache, SBOM fast-path). | Yes (delegates) | `windows/benchmark.ps1` |
 | `make-high-critical-report.sh` | Parses an existing `*_report_<DATE>.md` (and computes SHA-256 of the source archive) to produce a compact CYBERSEC-11531-style digest with only Critical/High findings, written next to the source report as `*_high_critical_<DATE>_ru.md`. Invoked automatically by `batch-scan.sh` after each successful job; can also be run standalone (`--target` / `--report` / `--jobs-json` / `--jobs-csv`). | No | `windows/make-high-critical-report.ps1` |
@@ -28,6 +28,12 @@
 ## Why two scripts that look like `run scan`?
 
 The dash/underscore variants exist on purpose. They sit in the same folder and look almost identical to a human eye, so each file now carries a header banner explaining its role. If you came here looking for "the entry point", you almost certainly want **`run-scan.sh`** (dash).
+
+## Per-run artifacts
+
+`run-scan.sh` and `windows/run-scan.ps1` keep the human MD/HTML reports next to the scanned source file. They also call `python -m resilient_updates.cli archive-run` to save a machine-readable snapshot with `MANIFEST.json` and `checkpoint.json`.
+
+The default mode is `auto`: save next to the source artifact when possible, otherwise use `artifacts/runs/<project>-<timestamp>/`. Override with `--artifact-mode artifacts|near-source|auto` on POSIX or `-ArtifactMode artifacts|near-source|auto` on Windows. Set `EL_SCA_ARCHIVE_EXTRACTED_TREE=1` only when you intentionally want to copy the full extracted tree.
 
 ## Windows-specific notes
 

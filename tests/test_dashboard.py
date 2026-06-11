@@ -57,6 +57,17 @@ def test_run_detail_current_and_unknown(tmp_path: Path):
     assert run_detail(tmp_path, "bogus") is None
 
 
+def test_list_runs_includes_saved_run_directories(tmp_path: Path):
+    saved = tmp_path / "runs" / "app-20260611-120000"
+    _populate(saved)
+    (saved / "checkpoint.json").write_text(json.dumps({"stage": "final"}), encoding="utf-8")
+    runs = list_runs(tmp_path)
+    assert [r["id"] for r in runs] == ["app-20260611-120000"]
+    detail = run_detail(tmp_path, "app-20260611-120000")
+    assert detail is not None
+    assert detail["checkpoint"]["stage"] == "final"
+
+
 # --- endpoints (skip when fastapi/httpx absent) -----------------------------
 
 

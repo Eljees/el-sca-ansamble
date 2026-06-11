@@ -44,7 +44,11 @@
   # "all" = run all 365 binary checkers (slow but thorough)
   # "go"  = Go language checker only (fast, ~2 min vs 30+ min for Go binaries)
   # "go,rust,python,javascript" = custom comma-separated list
-  [string]$CveBinToolCheckers = ""
+  [string]$CveBinToolCheckers = "",
+
+  # Save a per-run snapshot: artifacts | near-source | auto
+  [ValidateSet("artifacts","near-source","auto")]
+  [string]$ArtifactMode = $(if ($env:EL_SCA_ARTIFACT_MODE) { $env:EL_SCA_ARTIFACT_MODE } else { "auto" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -569,6 +573,27 @@ python scripts/report_html.py `
   --output        $ReportHtml
 if ($LASTEXITCODE -ne 0) {
   Write-Warning "HTML report generation failed — skipping"
+}
+
+# Snapshot per-run evidence into a project-timestamp directory.  Default `auto`
+# saves next to the source when possible and falls back to artifacts\runs.
+$archiveArgs = @(
+  "-m", "resilient_updates.cli", "archive-run",
+  "--artifacts-dir", $ArtifactsDir,
+  "--target-host", $TargetResolved,
+  "--target-container", $env:SCAN_TARGET_HOST,
+  "--case-id", $CaseId,
+  "--mode", $ArtifactMode,
+  "--stage", "final",
+  "--status", "done"
+)
+if ($env:EL_SCA_ARCHIVE_EXTRACTED_TREE -match '^(1|true|yes|on)$') {
+  $archiveArgs += "--include-extracted-tree"
+}
+try {
+  python @archiveArgs | Out-Host
+} catch {
+  Write-Warning "archive-run failed: $($_.Exception.Message)"
 }
 
 # ── Done ──────────────────────────────────────────────────────────────────────

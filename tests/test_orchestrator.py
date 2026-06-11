@@ -365,33 +365,40 @@ def test_extract_produced_output_false_on_empty_manifest(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# JobRegistry._archive_reports
+# JobRegistry._checkpoint
 # ---------------------------------------------------------------------------
 
 
-def test_archive_reports_copies_files_to_history(tmp_path: Path):
+def test_checkpoint_snapshots_report_to_run_dir(tmp_path: Path):
     reg = JobRegistry(tmp_path)
     final_dir = tmp_path / "artifacts" / "reports" / "final"
     final_dir.mkdir(parents=True)
     (final_dir / "report.md").write_text("# CVE Report", encoding="utf-8")
 
-    job = Job("scan", SCAN_STAGES)
-    reg._archive_reports(job)
+    run_dir = tmp_path / "artifacts" / "runs" / "case-1"
+    job = Job("scan", SCAN_STAGES, artifacts_dir=tmp_path / "artifacts", run_dir=run_dir)
+    reg._checkpoint(job, "report", "done")
 
-    history = tmp_path / "artifacts" / "reports" / "history"
-    assert history.is_dir()
-    archived = list(history.rglob("report.md"))
-    assert len(archived) == 1
-    assert archived[0].read_text(encoding="utf-8") == "# CVE Report"
-    assert any("report archived" in line for line in job.log)
+    assert (run_dir / "reports" / "final" / "report.md").is_file()
+    assert (run_dir / "MANIFEST.json").is_file()
+    assert (run_dir / "checkpoint.json").is_file()
+    assert any("checkpoint report:done" in line for line in job.log)
 
 
-def test_archive_reports_noop_when_no_final_dir(tmp_path: Path):
-    """No final/ dir → _archive_reports returns without error and writes nothing."""
-    reg = JobRegistry(tmp_path)
-    job = Job("scan", SCAN_STAGES)
-    reg._archive_reports(job)  # should not raise
-    assert not (tmp_path / "artifacts" / "reports" / "history").exists()
+def test_start_scan_registers_run_dir_and_log(tmp_path: Path, monkeypatch):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+
+    def fake_run_scan(job, target_host, tools=None):
+        job.finish(0)
+
+    monkeypatch.setattr(reg, "_run_scan", fake_run_scan)
+    target = tmp_path / "input.zip"
+    target.write_bytes(b"PK")
+    job = reg.start_scan(str(target))
+
+    assert job.run_dir is not None
+    assert job.log_path == job.run_dir / "job.log"
+    assert job.log_path.is_file()
 
 
 # ---------------------------------------------------------------------------

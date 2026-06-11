@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -41,15 +42,13 @@ except ImportError:  # pragma: no cover - py3.10 fallback
     from datetime import timezone as _tz
 
     UTC = _tz.utc  # noqa: UP017
-from datetime import datetime
 
 from .update_doctor import (
+    _TOOL_LAYERS,
     Prober,
     TcpOpener,
-    _TOOL_LAYERS,
     _sources_for,
     default_prober,
-    discover_transports,
     enumerate_chains,
     tcp_open,
 )
@@ -147,7 +146,9 @@ def build_plan(
         for layer in layers:
             for src in _sources_for(config, tool, layer):
                 cells = {name: probe(src.url, prox, timeout) for name, prox in transports.items()}
-                rows.append({"tool": tool, "layer": layer, "source": src.name, "url": src.url, "chains": cells})
+                rows.append(
+                    {"tool": tool, "layer": layer, "source": src.name, "url": src.url, "chains": cells}
+                )
 
     plan: dict[str, dict[str, Any]] = {}
     for tool in _TOOL_LAYERS:
@@ -194,10 +195,20 @@ def _select_for_tool(
             break
 
     if chosen is None and reaches("direct"):
-        return {"transport": "direct", "proxy_url": None, "socks_ok": not http_only, "reason": "direct route works"}
+        return {
+            "transport": "direct",
+            "proxy_url": None,
+            "socks_ok": not http_only,
+            "reason": "direct route works",
+        }
 
     if chosen is None:
-        return {"transport": None, "proxy_url": None, "socks_ok": not http_only, "reason": "no reachable route"}
+        return {
+            "transport": None,
+            "proxy_url": None,
+            "socks_ok": not http_only,
+            "reason": "no reachable route",
+        }
 
     url = _transport_url(transports[chosen])
     return {

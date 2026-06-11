@@ -1,9 +1,9 @@
-"""Host-side scan/update orchestration for the dashboard GUI (ADR-0008).
+"""Host-side scan/update orchestration for the dashboard GUI (ADR-0006).
 
-The read-only dashboard (``dashboard.py``) only *reads* ``artifacts/``.  This
-module adds the *active* half: it launches ``docker compose`` on the host,
-maps each profile's services onto an ordered **stage pipeline**, and streams
-log lines + stage transitions to subscribers (the GUI consumes them over SSE).
+This module launches ``docker compose`` on the host, maps each profile's
+services onto an ordered **stage pipeline**, streams log lines + stage
+transitions to subscribers (the GUI consumes them over SSE), and writes
+per-run checkpoints/snapshots.
 
 Design notes
 ------------
@@ -23,6 +23,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -32,6 +33,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, ClassVar
+
+from .run_layout import resolve_run_dir, snapshot_artifacts, write_checkpoint
 
 # ── Stage pipelines ─────────────────────────────────────────────────────────
 # Each entry: (stage_key, human_label, [compose service names feeding it]).
@@ -126,10 +129,20 @@ class Job:
 
     LOG_MAXLEN = 4000
 
-    def __init__(self, kind: str, stages: list[tuple[str, str, list[str]]], target: str | None = None):
+    def __init__(
+        self,
+        kind: str,
+        stages: list[tuple[str, str, list[str]]],
+        target: str | None = None,
+        *,
+        artifacts_dir: Path | None = None,
+        run_dir: Path | None = None,
+    ):
         self.id = uuid.uuid4().hex[:12]
         self.kind = kind  # "scan" | "update"
         self.target = target
+        self.artifacts_dir = artifacts_dir
+        self.run_dir = run_dir
         self.status = "running"  # running | done | error
         self.returncode: int | None = None
         self.started_at = time.time()
@@ -154,6 +167,11 @@ class Job:
         # log to hand off for analysis.
         self.log_path: Path | None = None
         self._log_fh: Any = None
+        self._checkpoint_interval = max(
+            60,
+            int(os.environ.get("EL_SCA_CHECKPOINT_INTERVAL_SECONDS", "3600") or "3600"),
+        )
+        self._last_checkpoint_at = self.started_at
 
     # -- on-disk transcript -------------------------------------------------
     def attach_log(self, path: Path, header: list[str] | None = None) -> None:
@@ -328,6 +346,8 @@ class Job:
             "log": list(self.log),
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "run_dir": str(self.run_dir) if self.run_dir else "",
+            "log_path": str(self.log_path) if self.log_path else "",
         }
 
     def subscribe(self) -> Queue[dict[str, Any] | None]:
@@ -374,6 +394,27 @@ class Job:
             for q in dead:
                 self._subscribers.remove(q)
 
+    def current_stage_key(self) -> str | None:
+        with self._lock:
+            for stage in self.stages:
+                if stage["status"] == "active":
+                    return stage["key"]
+            return None
+
+    def maybe_periodic_checkpoint(self) -> None:
+        if not self.run_dir or not self.artifacts_dir:
+            return
+        now = time.time()
+        if now - self._last_checkpoint_at < self._checkpoint_interval:
+            return
+        self._last_checkpoint_at = now
+        write_checkpoint(
+            self.run_dir,
+            stage=self.current_stage_key(),
+            status=self.status,
+            artifacts_dir=self.artifacts_dir,
+        )
+
 
 # ── Registry + subprocess launcher ──────────────────────────────────────────
 
@@ -398,6 +439,7 @@ class JobRegistry:
     def __init__(self, repo_root: Path, compose: list[str] | None = None):
         self.repo_root = Path(repo_root)
         self.compose = compose or ["docker", "compose"]
+        self.artifacts_dir = self.repo_root / "artifacts"
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
 
@@ -412,7 +454,30 @@ class JobRegistry:
     def start_scan(self, target_host: str, tools: set[str] | None = None) -> Job:
         # tools = which analysers to run (subset of syft/grype/trivy/cve-bin-tool).
         # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
-        job = Job("scan", SCAN_STAGES, target=target_host)
+        mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "artifacts")
+        run_dir = resolve_run_dir(
+            artifacts_dir=self.artifacts_dir,
+            target_host=target_host,
+            case_id=os.environ.get("CASE_ID"),
+            mode=mode,
+            timestamp=time.time(),
+        )
+        job = Job(
+            "scan",
+            SCAN_STAGES,
+            target=target_host,
+            artifacts_dir=self.artifacts_dir,
+            run_dir=run_dir,
+        )
+        job.attach_log(
+            run_dir / "job.log",
+            header=[
+                "# el-sca-ansamble scan log",
+                f"# target : {target_host}",
+                f"# run_dir: {run_dir}",
+            ],
+        )
+        job.feed_line(f"# run artifacts -> {run_dir}")
         self._register(job)
         threading.Thread(
             target=self._run_scan,
@@ -545,8 +610,10 @@ class JobRegistry:
                 for seg in parts:
                     if seg:
                         job.feed_line(seg)
+                        job.maybe_periodic_checkpoint()
             if buf:
                 job.feed_line(buf)
+                job.maybe_periodic_checkpoint()
             proc.wait()
             return proc.returncode
         except Exception as exc:  # pragma: no cover - defensive
@@ -605,6 +672,8 @@ class JobRegistry:
         """
         compose = self.compose
         extracted_host = str((self.repo_root / "artifacts" / "extracted" / "current").resolve())
+        self._copy_input_to_run(job, target_host)
+        self._checkpoint(job, "start", "running")
 
         # Pre-create REPORT dirs on the host so a root-running scanner can't
         # leave a dir the (uid 1001) report-collector then can't write to.
@@ -645,6 +714,7 @@ class JobRegistry:
         if extract_ok and rc != 0:
             job.feed_line("extract: предупреждения, но содержимое распаковано — продолжаем")
         job.end_stage("extract", extract_ok)
+        self._checkpoint(job, "extract", "done" if extract_ok else "error")
 
         # Re-point every scanner at the extracted directory.
         sc_env = dict(os.environ)
@@ -691,32 +761,42 @@ class JobRegistry:
             run_cmd.append(service)
             rc = self._run_stream(job, run_cmd, sc_env)
             job.end_stage(key, rc in ok_codes)
+            self._checkpoint(job, key, "done" if rc in ok_codes else "error")
 
-        # Archive the report with a timestamp (keeps history of runs).
-        self._archive_reports(job)
+        self._checkpoint(job, "final", "done")
         # Stop the lingering grype-static dependency container (best effort).
         self._run_stream(job, [*compose, "--profile", "scan", "down", "--remove-orphans"], sc_env)
         job.finalize()
 
-    def _archive_reports(self, job: Job) -> None:
-        """Copy artifacts/reports/final/* into a timestamped history folder so
-        successive scans don't overwrite each other."""
-        import datetime
-        import shutil
-
-        final = self.repo_root / "artifacts" / "reports" / "final"
-        if not final.is_dir():
+    def _copy_input_to_run(self, job: Job, target_host: str) -> None:
+        if not job.run_dir:
             return
-        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        dest = self.repo_root / "artifacts" / "reports" / "history" / ts
+        target = Path(target_host)
+        if not target.is_file():
+            return
         try:
-            dest.mkdir(parents=True, exist_ok=True)
-            for f in final.glob("*"):
-                if f.is_file():
-                    shutil.copy2(f, dest / f.name)
-            job.feed_line(f"report archived -> artifacts/reports/history/{ts}/")
+            dest = job.run_dir / "input" / target.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, dest)
         except Exception as exc:  # pragma: no cover - defensive
-            job.feed_line(f"WARN: report archive failed: {exc!r}")
+            job.feed_line(f"WARN: input snapshot failed: {exc!r}")
+
+    def _checkpoint(self, job: Job, stage: str, status: str) -> None:
+        if not job.run_dir:
+            return
+        try:
+            snapshot_artifacts(
+                self.artifacts_dir,
+                job.run_dir,
+                case_id=os.environ.get("CASE_ID"),
+                target_host=job.target,
+                target_container="/scan-target",
+                stage=stage,
+                status=status,
+            )
+            job.feed_line(f"checkpoint {stage}:{status} -> {job.run_dir / 'checkpoint.json'}")
+        except Exception as exc:  # pragma: no cover - defensive
+            job.feed_line(f"WARN: checkpoint failed: {exc!r}")
 
 
 def sse_stream(job: Job, poll_timeout: float = 1.0) -> Iterator[str]:

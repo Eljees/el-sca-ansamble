@@ -198,7 +198,11 @@ def test_write_xray_config_points_at_host_proxy(tmp_path):
         json.dumps(
             {
                 "outbounds": [
-                    {"tag": "upstream", "protocol": "socks", "settings": {"servers": [{"address": "x", "port": 1}]}},
+                    {
+                        "tag": "upstream",
+                        "protocol": "socks",
+                        "settings": {"servers": [{"address": "x", "port": 1}]},
+                    },
                     {"tag": "direct", "protocol": "freedom", "settings": {}},
                 ]
             }

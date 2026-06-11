@@ -11,8 +11,8 @@ Status, Consequences.
 | [0003](0003-vex-feed.md) | VEX feed — suppress findings via Trivy `--vex` | proposed |
 | [0004](0004-epss-kev-freshness.md) | EPSS/KEV freshness (TTL) for enrichment | proposed |
 | [0005](0005-unified-cli-scan.md) | Unified `cli scan` — cross-platform pipeline orchestrator | proposed |
-| [0006](0006-fastapi-dashboard.md) | FastAPI dashboard — read-only live run browser | proposed |
-| [0007](0007-updates-from-anywhere.md) | Resilient DB updates from any vantage point | proposed |
+| [0006](0006-fastapi-dashboard.md) | FastAPI dashboard — read-only browser + host-active GUI | accepted |
+| [0007](0007-updates-from-anywhere.md) | Resilient DB updates from any vantage point | accepted |
 
 When you add an ADR:
 

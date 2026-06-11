@@ -12,6 +12,7 @@ Thumbs.db
 _el_cvebt_source_research/
 --exps/
 comands.txt
+to_analyze/
 docker-compose.prod.yml
 # Local per-machine Docker Compose overrides (not for commit).
 # docker-compose.override.yml is auto-loaded by compose and is host-specific.

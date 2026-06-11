@@ -23,6 +23,7 @@
 #       --auto-route        Before --update-db, run route-doctor to pick a live egress (default on)
 #       --no-auto-route     Disable egress auto-discovery (use .env/direct as-is)
 #       --timeout N         cve-bin-tool scan timeout in seconds (default: 1800)
+#       --artifact-mode M   Save run snapshot: artifacts|near-source|auto (default: auto)
 #
 # Requires: docker, docker compose, bash >= 4
 set -euo pipefail
@@ -40,6 +41,7 @@ CLEAN=0
 SBOM_SCAN=0
 CBT_TIMEOUT=1800
 CBT_CHECKERS=""
+ARTIFACT_MODE="${EL_SCA_ARTIFACT_MODE:-auto}"
 # Auto-route: when updating DBs, run route-doctor first to pick a live egress
 # (any tunnel/proxy/VPN) and source its plan before the updaters. On by default
 # for --update-db runs; disable with --no-auto-route or EL_SCA_AUTO_ROUTE=0.
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
     --no-auto-route)       AUTO_ROUTE=0; shift ;;
     --timeout)             CBT_TIMEOUT="$2"; shift 2 ;;
     --checkers)            CBT_CHECKERS="$2"; shift 2 ;;
+    --artifact-mode)       ARTIFACT_MODE="$2"; shift 2 ;;
     -h|--help)
       sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep "^#" | sed 's/^# \?//'
       exit 0 ;;
@@ -464,27 +467,25 @@ echo "[stage] report-html (host $PYTHON_BIN)"
   --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"
 
 # ── Archive run history ───────────────────────────────────────────────────────
-# Snapshot the per-run evidence into artifacts/runs/<case>-<ts>/ so consecutive
-# runs stop overwriting each other and `Diff с предыдущим прогоном` (reporting)
-# and the dashboard can look back. Layout mirrors artifacts/ so scanner_diff
-# can read an archived run directly. Best-effort: never fails the pipeline.
+# Snapshot per-run evidence into a project-timestamp directory.  By default the
+# helper tries to place it near the source artifact and falls back to
+# artifacts/runs/ when that is not possible.  Best-effort: never fails the scan.
 {
-  RUN_DIR="$ARTIFACTS_DIR/runs/${CASE_ID}-$(date +%Y%m%d-%H%M%S)"
-  mkdir -p "$RUN_DIR/sbom" "$RUN_DIR/reports/grype" "$RUN_DIR/reports/trivy" "$RUN_DIR/reports/cve-bin-tool"
-  cp -r "$ARTIFACTS_DIR/reports/final" "$RUN_DIR/reports/final" 2>/dev/null
-  for t in grype trivy cve-bin-tool; do
-    cp "$ARTIFACTS_DIR/reports/$t/report.json" "$RUN_DIR/reports/$t/" 2>/dev/null
-  done
-  cp "$ARTIFACTS_DIR/sbom/syft.json" "$RUN_DIR/sbom/" 2>/dev/null
-  for f in summary.json status.json run_manifest.json db_snapshot.json; do
-    cp "$ARTIFACTS_DIR/$f" "$RUN_DIR/" 2>/dev/null
-  done
-  cp "$ARTIFACTS_DIR/extracted/current/extraction_manifest.json" "$RUN_DIR/" 2>/dev/null
-  cp "$ARTIFACTS_DIR/run-scan.log" "$RUN_DIR/" 2>/dev/null
-  echo "[history] run archived -> $RUN_DIR"
-  # Retention: keep the 20 most recent runs.
-  ls -dt "$ARTIFACTS_DIR/runs"/*/ 2>/dev/null | tail -n +21 | xargs -r rm -rf
-} || true
+  archive_args=(
+    -m resilient_updates.cli archive-run
+    --artifacts-dir "$ARTIFACTS_DIR"
+    --target-host "$TARGET_RESOLVED"
+    --target-container "$SCAN_TARGET_HOST"
+    --case-id "$CASE_ID"
+    --mode "$ARTIFACT_MODE"
+    --stage final
+    --status done
+  )
+  if [[ "${EL_SCA_ARCHIVE_EXTRACTED_TREE:-0}" =~ ^(1|true|yes|on)$ ]]; then
+    archive_args+=(--include-extracted-tree)
+  fi
+  "$PYTHON_BIN" "${archive_args[@]}"
+} || echo "[history] WARN: archive-run failed" >&2
 
 # ── Done ──────────────────────────────────────────────────────────────────────────────────
 echo ""

@@ -594,6 +594,41 @@ def test_manifest_subcommand_writes_manifest_json(tmp_path, monkeypatch, capsys)
     assert manifest["case_id"] == "TEST-001"
 
 
+def test_archive_run_subcommand_writes_snapshot(tmp_path, monkeypatch, capsys):
+    """archive-run snapshots current artifacts into artifacts/runs."""
+    from resilient_updates.cli import main
+
+    artifacts = tmp_path / "artifacts"
+    _seed_minimal_artifacts(artifacts)
+    target = tmp_path / "input.tar.gz"
+    target.write_bytes(b"input")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "archive-run",
+            "--artifacts-dir",
+            str(artifacts),
+            "--target-host",
+            str(target),
+            "--case-id",
+            "TEST-ARCHIVE",
+            "--mode",
+            "artifacts",
+        ],
+    )
+    rc = main()
+    assert rc == 0
+    result = json.loads(capsys.readouterr().out)
+    run_dir = Path(result["run_dir"])
+    assert result["status"] == "ok"
+    assert (run_dir / "MANIFEST.json").is_file()
+    assert (run_dir / "checkpoint.json").is_file()
+
+
 # ---------------------------------------------------------------------------
 # audit cve-bin-tool-db
 # ---------------------------------------------------------------------------
