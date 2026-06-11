@@ -106,3 +106,13 @@ docs/олл-ок.txt
 # Per-run history snapshots and local enrichment feeds (EPSS/KEV).
 artifacts/runs/
 artifacts/enrichment/
+
+# temp freshcopy/fc editor artifacts
+*.fc
+*.fc2
+*.freshcopy
+
+# session output files
+*.out
+push.log
+rp.out

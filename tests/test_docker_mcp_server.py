@@ -186,10 +186,12 @@ def test_update_db_all_shares_one_route_probe(server, monkeypatch):
 
     monkeypatch.setattr(server, "_ensure_route_plan", fake_ensure)
     monkeypatch.setattr(server, "_update_one", fake_update_one)
+    monkeypatch.setattr(server, "_run_volume_init", lambda: {"ok": True})
     monkeypatch.delenv("EL_SCA_AUTO_ROUTE", raising=False)
 
     out = server.update_db("all")
     assert out["ok"] is True
+    assert out["volume_init_ok"] is True
     assert calls["plan"] == 1
     assert [t for t, _ in ran] == ["trivy", "grype", "cve-bin-tool"]
     by_tool = dict(ran)
@@ -207,6 +209,7 @@ def test_update_db_explicit_proxy_skips_probe(server, monkeypatch):
     probed = {"n": 0}
     monkeypatch.setattr(server, "_ensure_route_plan", lambda **kw: probed.__setitem__("n", probed["n"] + 1))
     monkeypatch.setattr(server, "_update_one", lambda tool, proxy, extra: {"ok": True, "proxy": proxy})
+    monkeypatch.setattr(server, "_run_volume_init", lambda: {"ok": True})
     out = server.update_db("trivy", proxy="http://127.0.0.1:3128")
     assert probed["n"] == 0
     assert out["proxy"] == "http://127.0.0.1:3128"
@@ -218,9 +221,22 @@ def test_update_db_auto_route_off_via_env(server, monkeypatch):
         server, "_ensure_route_plan", lambda **kw: (_ for _ in ()).throw(AssertionError("must not probe"))
     )
     monkeypatch.setattr(server, "_update_one", lambda tool, proxy, extra: {"ok": True, "proxy": proxy})
+    monkeypatch.setattr(server, "_run_volume_init", lambda: {"ok": True})
     out = server.update_db("grype")
     assert out["ok"] is True
     assert out["proxy"] is None
+
+
+def test_update_db_runs_volume_init_before_updaters(server, monkeypatch):
+    """update_db must chown volumes (volume-init) before any updater runs."""
+    order: list[str] = []
+    monkeypatch.setattr(server, "_run_volume_init", lambda: order.append("volinit") or {"ok": True})
+    monkeypatch.setattr(
+        server, "_update_one", lambda tool, proxy, extra: order.append(f"update:{tool}") or {"ok": True}
+    )
+    monkeypatch.setenv("EL_SCA_AUTO_ROUTE", "0")
+    server.update_db("grype")
+    assert order == ["volinit", "update:grype"]
 
 
 def test_update_db_only_source_rejected_for_all(server):
