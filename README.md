@@ -8,6 +8,27 @@
 
 **Версия проекта:** см. `EL_SCA_VERSION` в [`versions.env`](versions.env). Полный список изменений — в [`CHANGELOG.md`](CHANGELOG.md); порядок выпуска и чек-лист перед пушем — в [`docs/RELEASING.md`](docs/RELEASING.md).
 
+## Что нового (2026-06-11)
+
+- **Обновление баз из любой сети (route-doctor, ADR-0007).** Контейнер
+  `route-doctor` зондирует изнутри docker-сети, какой egress жив прямо сейчас
+  (сайдкары tinyproxy/xray, локальный прокси хоста через
+  `host.docker.internal:<порт>`, прямой выход), и пишет план
+  `artifacts/route-plan.{json,env}`. Апдейтеры применяют его автоматически —
+  корп-прокси, v2rayN, VPN или прямой выход больше не требуют ручной настройки
+  `HTTP_PROXY`/`ALL_PROXY`. cve-bin-tool всегда получает HTTP-мост (его клиент
+  не умеет SOCKS). Отключение: `EL_SCA_AUTO_ROUTE=0` или `--no-auto-route`.
+  Подробности — [docs/proxy.md](docs/proxy.md), раздел «Автовыбор маршрута».
+- **Базы обновляются по отдельности или все сразу, без скана.**
+  `./scripts/update-db.sh [all|trivy|grype|cve-bin-tool]`, `make update`
+  (всё) / `make update TOOL=grype` (один инструмент); через MCP —
+  `update_db(tool="all")` с одним сетевым зондированием на весь прогон;
+  в GUI — кнопки «Обновить ВСЁ» / per-tool / per-source, теперь тоже с
+  авто-маршрутом, плюс индикатор «🛰 Маршрут» в шапке.
+- **Фиксы compose:** профиль `proxy` снова поднимается (`tinyproxy` ждал
+  healthy от `proxy-xray`, у которого healthcheck отключён); `route-doctor`
+  не входит в профили `update`/`scan` и не обрывает долгие апдейтеры.
+
 ## Что нового (2026-06-06)
 
 - **GUI с drag-and-drop.** Перетащите артефакт в веб-интерфейс — анализ
@@ -669,6 +690,23 @@ Windows PowerShell:
 ```
 
 Настройка прокси — см. [docs/proxy.md](docs/proxy.md).
+
+Обновить базы без скана (авто-маршрут через route-doctor; работает за
+корп-прокси, локальным v2rayN/xray, VPN или напрямую):
+
+```sh
+./scripts/update-db.sh            # все базы (trivy + grype + cve-bin-tool)
+./scripts/update-db.sh cve-bin-tool   # одна база
+make update                       # то же, что update-db.sh all
+make update TOOL=grype            # один инструмент
+```
+
+Посмотреть, какой egress живой прямо сейчас (карта маршрутов per-tool):
+
+```sh
+docker compose --profile route run --rm route-doctor
+python -m resilient_updates.cli update-doctor    # зондирование с хоста
+```
 
 
 

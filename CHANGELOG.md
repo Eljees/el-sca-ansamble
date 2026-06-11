@@ -6,6 +6,39 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Route-doctor — обновление БД из любой сети (ADR-0007 P2).** Сервис
+  `route-doctor` (профиль `route`) зондирует egress изнутри `scanner-net`
+  (сайдкары tinyproxy/proxy-xray, локальный прокси хоста через
+  `host.docker.internal`, direct) и пишет `artifacts/route-plan.{json,env}`;
+  `resilient_updates/route_plan.py` + CLI `route-plan` (`--write-xray`
+  перенацеливает upstream xray-сайдкара на живой хост-прокси:
+  `configs/xray/config.gen.json` + override `docker-compose.route-doctor.yml`).
+  cve-bin-tool всегда получает HTTP-мост (его клиент не умеет SOCKS).
+- **Авто-маршрут везде, по умолчанию (откат на direct):** `run-scan.sh
+  --update-db`, веб-кнопки обновления (orchestrator), MCP `update_db` —
+  применяют план route-doctor, если `HTTP_PROXY`/`ALL_PROXY` не заданы явно.
+  Отключение: `EL_SCA_AUTO_ROUTE=0` / `--no-auto-route` / `auto_route=False`.
+- **Обновление баз по отдельности или всех сразу, без скана:**
+  `scripts/update-db.sh [all|tool]`, `make update` / `make update TOOL=x`
+  (легаси-вариант — `make update-compose`); MCP `update_db(tool="all")`
+  обновляет все три базы за один вызов с одним сетевым зондированием (план
+  кэшируется 5 минут); новый MCP-тул `route_plan(force)`.
+- **Дашборд:** `GET/POST /api/route-plan` + индикатор «🛰 Маршрут» в шапке
+  с кнопкой перепроверки сети.
+
+### Fixed
+
+- Профиль `proxy` не поднимался: `tinyproxy` ждал `service_healthy` от
+  `proxy-xray`, у которого healthcheck отключён → `service_started`.
+- `make update` (`up --abort-on-container-exit`) мог обрываться быстро
+  выходящими one-shot сервисами: `route-doctor` оставлен только в профиле
+  `route`.
+- run-scan.sh/update-db.sh применяют только свежий (≤10 мин) route-plan.env —
+  устаревший план от упавшего доктора не уводит апдейтеры на мёртвый прокси;
+  частичный план (exit 2) применяется для маршрутизируемых инструментов.
+
 ## [0.1.1] - 2026-06-11
 
 ### Added
