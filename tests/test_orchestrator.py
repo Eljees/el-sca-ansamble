@@ -482,3 +482,61 @@ def test_auto_route_ignores_stale_plan(tmp_path):
     env: dict[str, str] = {}
     reg._apply_auto_route(_route_job(), env)
     assert "HTTP_PROXY" not in env
+
+
+# ---------------------------------------------------------------------------
+# start_update: sequential `run --rm` steps (no --abort-on-container-exit)
+# ---------------------------------------------------------------------------
+
+
+def _seq_registry(tmp_path):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    reg._normalise_volumes = lambda job, env: None  # type: ignore[assignment]
+    reg._apply_auto_route = lambda job, env: None  # type: ignore[assignment]
+    reg._render_trivy_flags = lambda: "--skip-flags"  # type: ignore[assignment]
+    return reg
+
+
+def _wait_done(job, timeout=5.0):
+    deadline = time.time() + timeout
+    while job.status == "running" and time.time() < deadline:
+        time.sleep(0.01)
+    return job
+
+
+def test_update_all_runs_sequential_run_rm(tmp_path):
+    """'all' must run each updater as its own `compose run --rm` step (the old
+    `up --abort-on-container-exit` SIGKILLed long updaters when any one-shot
+    exited), and one failed tool must not cancel the others."""
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+
+    def fake_stream(job, cmd, env):
+        assert "run" in cmd and "--rm" in cmd
+        assert "--abort-on-container-exit" not in cmd
+        svc = cmd[-1]
+        calls.append(svc)
+        return 1 if svc == "grype-updater" else 0  # grype fails
+
+    reg._run_stream = fake_stream  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("all"))
+    assert calls == ["trivy-updater", "grype-updater", "cve-bin-tool-updater"]  # importer skipped
+    assert job.status == "error"  # grype failed -> overall error, but cbt still ran
+
+
+def test_update_all_success_runs_importer_after_updater(tmp_path):
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+    reg._run_stream = lambda job, cmd, env: calls.append(cmd[-1]) or 0  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("all"))
+    assert calls == ["trivy-updater", "grype-updater", "grype-db-importer", "cve-bin-tool-updater"]
+    assert job.status == "done"
+
+
+def test_update_single_grype_is_sequential(tmp_path):
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+    reg._run_stream = lambda job, cmd, env: calls.append(cmd[-1]) or 0  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("grype"))
+    assert calls == ["grype-updater", "grype-db-importer"]
+    assert job.status == "done"

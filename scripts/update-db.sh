@@ -97,6 +97,12 @@ elif [[ $AUTO_ROUTE -eq 1 ]]; then
   echo "[route] HTTP_PROXY/ALL_PROXY already set; skipping auto-route."
 fi
 
+# Normalise named-volume / artifacts ownership to uid 1001 so the appuser
+# updaters can write (Docker creates volumes root-owned). Idempotent; best-effort.
+echo "[volinit] normalising volume ownership..."
+docker compose --profile volinit run --rm volume-init || \
+  echo "[volinit] WARN: volume-init failed (continuing; updates may hit permission errors)"
+
 FAILED=()
 
 update_trivy() {

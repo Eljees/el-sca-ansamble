@@ -508,7 +508,6 @@ class JobRegistry:
             env["TRIVY_RENDERED_FLAGS"] = self._render_trivy_flags()
 
         compose = self.compose
-        up = [*compose, "--profile", "update", "up", "--abort-on-container-exit", "--force-recreate"]
         tgt = (target or "all").strip()
         job.target = tgt
 
@@ -521,14 +520,24 @@ class JobRegistry:
         job.attach_log(log_path, header=self._update_log_header(tgt, env))
         job.feed_line(f"# лог пишется в {log_path}")
 
-        if tgt == "all":
-            cmd = build_update_command(compose)
-        elif tgt == "trivy":
-            cmd = [*up, "trivy-updater"]
+        # Each updater runs as its own SEQUENTIAL `compose run --rm` step.
+        # NOT `up --abort-on-container-exit` of the whole profile: that aborts
+        # everything the moment ANY container exits — a fast one-shot
+        # (stack-info/db-admin) or one failed updater used to SIGKILL the
+        # long-running cve-bin-tool mid-download (exit 137).  Sequential steps
+        # also remove the grype-updater↔grype-db-importer start race, and one
+        # tool failing no longer cancels the others.
+        run = [*compose, "--profile", "update", "run", "--rm"]
+        if tgt == "trivy":
+            steps = [("trivy", [*run, "trivy-updater"], None)]
         elif tgt == "grype":
-            cmd = [*up, "grype-updater", "grype-db-importer"]
+            steps = [
+                ("grype", [*run, "grype-updater"], None),
+                # importer only makes sense after a successful updater step
+                ("grype-import", [*run, "grype-db-importer"], "grype"),
+            ]
         elif tgt == "cve-bin-tool":
-            cmd = [*up, "cve-bin-tool-updater"]
+            steps = [("cve-bin-tool", [*run, "cve-bin-tool-updater"], None)]
         elif tgt.startswith("cve-bin-tool:"):
             src = tgt.split(":", 1)[1].strip().upper()
             env["CVE_BIN_TOOL_DISABLE_SOURCES"] = " ".join(s for s in self.CVEBT_SOURCES if s != src)
@@ -538,10 +547,15 @@ class JobRegistry:
                 # enrichment for GAD/EPSS/RedHat/PURL2CPE.
                 env["CVE_BIN_TOOL_FEED_ENRICH"] = "0"
             job.feed_line(f"cve-bin-tool: обновление только источника {src}")
-            cmd = [*up, "cve-bin-tool-updater"]
-        else:
-            cmd = build_update_command(compose)
-        self._spawn_update(job, cmd, env)
+            steps = [("cve-bin-tool", [*run, "cve-bin-tool-updater"], None)]
+        else:  # "all" and anything unrecognised
+            steps = [
+                ("trivy", [*run, "trivy-updater"], None),
+                ("grype", [*run, "grype-updater"], None),
+                ("grype-import", [*run, "grype-db-importer"], "grype"),
+                ("cve-bin-tool", [*run, "cve-bin-tool-updater"], None),
+            ]
+        self._spawn_update(job, steps, env)
         return job
 
     _AUTO_ROUTE_OFF = frozenset({"0", "false", "no", "off"})
@@ -587,12 +601,54 @@ class JobRegistry:
                     applied.append(f"{key}={val}")
         job.feed_line("# route: применён план — " + ("; ".join(applied) or "direct (без прокси)"))
 
-    def _spawn_update(self, job: Job, cmd: list[str], env: dict[str, str]) -> None:
-        """Like _spawn, but discovers/applies a working egress first."""
+    def _normalise_volumes(self, job: Job, env: dict[str, str]) -> None:
+        """Run the volume-init one-shot so updaters (appuser) can write.
+
+        Docker creates named volumes root-owned; without this the appuser
+        grype-updater dies with EACCES on `/var/lib/resilient-db/grype/tmp` and
+        report-collector cannot overwrite a root-owned `artifacts/summary.json`.
+        Run as a discrete `run --rm` step (NOT part of the `up`, whose
+        `--abort-on-container-exit` would trip on this fast one-shot exiting).
+        Best-effort: a failure is logged but the update still proceeds.
+        """
+        job.feed_line("# volinit: нормализую владельца томов (uid 1001)…")
+        rc = self._run_stream(
+            job, [*self.compose, "--profile", "volinit", "run", "--rm", "volume-init"], env
+        )
+        if rc != 0:
+            job.feed_line(f"# volinit: WARN rc={rc} — возможны ошибки прав при обновлении")
+
+    def _spawn_update(
+        self, job: Job, steps: list[tuple[str, list[str], str | None]], env: dict[str, str]
+    ) -> None:
+        """Run update *steps* sequentially in a worker thread.
+
+        Each step is ``(name, argv, requires)`` where ``requires`` names an
+        earlier step that must have succeeded (e.g. grype-import needs grype).
+        Before the steps: volume permissions are normalised and a working
+        egress is discovered/applied (ADR-0007).  A failed step does NOT stop
+        the remaining tools — the job fails at the end if anything failed.
+        """
 
         def run() -> None:
+            self._normalise_volumes(job, env)
             self._apply_auto_route(job, env)
-            job.finish(self._run_stream(job, cmd, env))
+            results: dict[str, int] = {}
+            for name, cmd, requires in steps:
+                if requires is not None and results.get(requires, 1) != 0:
+                    job.feed_line(f"# {name}: пропущен — шаг '{requires}' не выполнился")
+                    results[name] = 1
+                    continue
+                job.feed_line(f"# ── обновление: {name} ──")
+                results[name] = self._run_stream(job, cmd, env)
+                if results[name] != 0:
+                    job.feed_line(f"# {name}: ОШИБКА rc={results[name]} — остальные шаги продолжаются")
+            failed = [n for n, rc in results.items() if rc != 0]
+            if failed:
+                job.feed_line("# итог: не обновились — " + ", ".join(failed))
+            else:
+                job.feed_line("# итог: все запрошенные базы обновлены")
+            job.finish(1 if failed else 0)
 
         threading.Thread(target=run, name=f"job-{job.id}", daemon=True).start()
 

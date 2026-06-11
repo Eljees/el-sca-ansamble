@@ -737,3 +737,71 @@ def test_main_continues_after_feed_download_failure(tmp_path, monkeypatch):
     rc = MOD.main()
     # All feeds failed → 0 entries < min-cves=1 → return 2
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# _local_feeds_present + network fallback when local feeds are absent
+# ---------------------------------------------------------------------------
+
+
+def test_local_feeds_present_true_when_file_exists(tmp_path):
+    (tmp_path / "nvdcve-2.0-2024.json.gz").write_bytes(b"x")
+    assert MOD._local_feeds_present(f"file://{tmp_path}", ["nvdcve-2.0-2024"]) is True
+
+
+def test_local_feeds_present_false_when_empty(tmp_path):
+    assert MOD._local_feeds_present(f"file://{tmp_path}", ["nvdcve-2.0-2024"]) is False
+
+
+def test_local_feeds_present_false_for_remote():
+    assert MOD._local_feeds_present("https://nvd.nist.gov/feeds/json/cve/2.0", ["nvdcve-2.0-2024"]) is False
+
+
+def test_feed_falls_back_to_network_when_local_empty(tmp_path, monkeypatch, capsys):
+    """modes=feed + empty file:// dir + egress available → switch to DEFAULT_FEED_BASE."""
+    _patch_cve_bin_tool(monkeypatch, tmp_path / "db")
+    # Egress present (proxy set): force the fallback branch.
+    monkeypatch.setenv("ALL_PROXY", "socks5h://proxy-xray:1080")
+    # Make every download fail fast so we exit right after the fallback decision.
+    monkeypatch.setattr(MOD, "download", lambda *a, **k: (_ for _ in ()).throw(OSError("no net")))
+
+    empty = tmp_path / "nvd-feeds"
+    empty.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvd_feed_import", "--db-root", str(tmp_path / "db"),
+            "--start-year", "2024", "--end-year", "2024", "--no-modified",
+            "--feed-base", f"file://{empty}", "--min-cves", "1",
+        ],
+    )
+    MOD.main()
+    out = capsys.readouterr().out
+    assert "falling back to network feed-base" in out
+    assert MOD.DEFAULT_FEED_BASE in out
+
+
+def test_feed_no_fallback_without_egress(tmp_path, monkeypatch, capsys):
+    """Empty local feeds + no egress → warn, do NOT switch to network."""
+    _patch_cve_bin_tool(monkeypatch, tmp_path / "db")
+    for var in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    # No curl and no proxy → has_egress False.
+    monkeypatch.setattr(MOD.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(MOD, "download", lambda *a, **k: (_ for _ in ()).throw(OSError("no net")))
+    empty = tmp_path / "nvd-feeds"
+    empty.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nvd_feed_import", "--db-root", str(tmp_path / "db"),
+            "--start-year", "2024", "--end-year", "2024", "--no-modified",
+            "--feed-base", f"file://{empty}", "--min-cves", "1",
+        ],
+    )
+    MOD.main()
+    out = capsys.readouterr().out
+    assert "no egress to fall back to" in out
+    assert "falling back to network" not in out

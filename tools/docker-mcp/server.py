@@ -127,6 +127,19 @@ def _route_plan_path() -> Path:
     return PROJECT_DIR / "artifacts" / "route-plan.json"
 
 
+def _run_volume_init() -> dict[str, Any]:
+    """Normalise named-volume / artifacts ownership to uid 1001 before updaters.
+
+    Docker creates named volumes root-owned; the appuser updaters (grype, the
+    report-collector) then fail with EACCES.  This root one-shot (compose
+    profile ``volinit``) chowns them; idempotent and best-effort.
+    """
+    return _run(
+        ["docker", "compose", "--profile", "volinit", "run", "--rm", "volume-init"],
+        timeout=180,
+    )
+
+
 def _run_route_doctor() -> dict[str, Any]:
     """Run the in-network route-doctor; it writes artifacts/route-plan.{json,env}.
 
@@ -343,6 +356,10 @@ def update_db(
     if only_source is not None and tool != "cve-bin-tool":
         return {"ok": False, "error": "only_source is supported for cve-bin-tool only"}
 
+    # Fix volume/artifacts ownership once before any updater runs (root-owned
+    # named volumes otherwise break the appuser grype-updater / report-collector).
+    volinit = _run_volume_init()
+
     use_auto = proxy is None and auto_route and _auto_route_enabled()
     plan = _ensure_route_plan() if use_auto else None
 
@@ -358,6 +375,7 @@ def update_db(
         out: dict[str, Any] = {
             "ok": all(bool(r.get("ok")) for r in results.values()),
             "results": results,
+            "volume_init_ok": bool(volinit.get("ok")),
         }
         if routes:
             out["route"] = routes
@@ -387,8 +405,10 @@ def update_db(
         ]
 
     result = _update_one(tool, proxy, extra_env)
-    if route_info is not None and isinstance(result, dict):
-        result["route"] = route_info
+    if isinstance(result, dict):
+        result["volume_init_ok"] = bool(volinit.get("ok"))
+        if route_info is not None:
+            result["route"] = route_info
     return result
 
 

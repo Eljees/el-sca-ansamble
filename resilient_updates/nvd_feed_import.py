@@ -91,6 +91,22 @@ def _local_source(url: str) -> str | None:
     return None
 
 
+def _local_feeds_present(feed_base: str, names: list[str]) -> bool:
+    """True if a local feed-base directory actually holds at least one feed file.
+
+    ``modes=feed`` with ``--feed-base file://<dir>`` is an *offline* import: the
+    host is expected to have pre-downloaded the ``*.json.gz`` feeds (see
+    ``scripts/fetch_nvd_feeds.ps1``).  When that dir is empty/absent the import
+    can only ever produce 0 CVEs and abort — so the caller treats "local but
+    empty" as a signal to fall back to the network feed-base.
+    """
+    local = _local_source(f"{feed_base}/x")
+    if local is None:
+        return False
+    base_dir = os.path.dirname(local)
+    return any(os.path.isfile(os.path.join(base_dir, f"{name}.json.gz")) for name in names)
+
+
 def download(url: str, timeout: int, dest: str) -> None:
     """Fetch ``url`` to ``dest``.
 
@@ -302,6 +318,31 @@ def main() -> int:
         f"{' + modified' if not args.no_modified else ''} from {args.feed_base}"
     )
     base_is_local = _local_source(f"{args.feed_base}/x") is not None
+    # "Update from any network": if the operator asked for a local feed-base
+    # (modes=feed + file://) but never pre-downloaded the feeds, the import is
+    # guaranteed to fail with 0 CVEs.  When an egress is available (curl honours
+    # ALL_PROXY/SOCKS, or an HTTP proxy is set) transparently fall back to the
+    # public NVD feeds so the DB still updates instead of aborting.
+    if base_is_local and not _local_feeds_present(args.feed_base, names):
+        has_egress = bool(
+            shutil.which("curl")
+            or os.environ.get("ALL_PROXY")
+            or os.environ.get("all_proxy")  # noqa: SIM112
+            or os.environ.get("HTTP_PROXY")
+            or os.environ.get("http_proxy")  # noqa: SIM112
+        )
+        if has_egress:
+            log(
+                f"[feed] local feeds absent under {args.feed_base}; "
+                f"falling back to network feed-base {DEFAULT_FEED_BASE}"
+            )
+            args.feed_base = DEFAULT_FEED_BASE
+            base_is_local = False
+        else:
+            log(
+                f"[feed] WARN: local feeds absent under {args.feed_base} and no egress "
+                "to fall back to — run scripts/fetch_nvd_feeds.ps1 on the host first."
+            )
     if base_is_local:
         log(f"[feed] downloader: local files from {args.feed_base} (no network)")
     elif shutil.which("curl"):

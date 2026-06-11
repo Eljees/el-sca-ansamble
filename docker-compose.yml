@@ -298,6 +298,46 @@ services:
         read_only: true
     networks: [scanner-net]
 
+  # ── Volume permission fix (profile "volinit") ────────────────────────────
+  #
+  # Docker creates named volumes owned by root; our updater/scanner containers
+  # run as appuser (uid 1001, CIS 4.1) and cannot write to them — grype-updater
+  # then dies with "Permission denied: /var/lib/resilient-db/grype/tmp/...", and
+  # report-collector cannot overwrite a root-owned artifacts/summary.json.
+  #
+  # This root one-shot chowns each volume (and ./artifacts) to 1001 — idempotent
+  # (skips volumes already correct).  It is in its OWN profile `volinit` so it
+  # NEVER joins a normal `up`: `up --abort-on-container-exit` aborts on the first
+  # container to exit, and a fast one-shot would tear the stack down.  Instead it
+  # is run explicitly as a prep step (`--profile volinit run --rm volume-init`)
+  # by update-db.sh, the MCP update_db and the dashboard orchestrator before any
+  # updater starts.  Cross-platform: works on Windows Docker Desktop too.
+  volume-init:
+    image: alpine:3.20
+    profiles: ["volinit"]
+    user: "0"
+    volumes:
+      - grype-db:/vol/grype-db
+      - grype-cache:/vol/grype-cache
+      - trivy-cache:/vol/trivy-cache
+      - cve-bin-tool-cache:/vol/cve-bin-tool-cache
+      - internal-mirror-data:/vol/internal-mirror-data
+      - ./artifacts:/vol/artifacts
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for d in /vol/grype-db /vol/grype-cache /vol/trivy-cache \
+                 /vol/cve-bin-tool-cache /vol/internal-mirror-data /vol/artifacts; do
+          owner=$$(stat -c '%u' "$$d" 2>/dev/null || echo 0)
+          if [ "$$owner" != "1001" ]; then
+            echo "[volume-init] chown 1001:1001 $$d"
+            chown -R 1001:1001 "$$d"
+          else
+            echo "[volume-init] ok (already 1001): $$d"
+          fi
+        done
+    networks: [scanner-net]
+
   db-admin:
     image: elariaphd/el-sca-resilient-updater:0.1.1
     build:

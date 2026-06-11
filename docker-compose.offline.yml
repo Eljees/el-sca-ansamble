@@ -28,6 +28,7 @@ services:
   cve-bin-tool-scanner: { pull_policy: never }
   db-admin:             { pull_policy: never }
   route-doctor:         { pull_policy: never }
+  volume-init:          { pull_policy: never }
   report-collector:     { pull_policy: never }
   stack-info:           { pull_policy: never }
   dashboard:            { pull_policy: never }
