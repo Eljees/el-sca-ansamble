@@ -63,6 +63,8 @@ class ExtractionStats:
     errored_members: int = 0
     skipped_examples: list[dict[str, Any]] = field(default_factory=list)
     unsafe_members: list[dict[str, Any]] = field(default_factory=list)
+    files_written: int = 0
+    bytes_written: int = 0
 
     def note_skipped(self, member: str, reason: str, size: int | None) -> None:
         # Keep the manifest small but useful: log first 20 skipped paths only.
@@ -86,6 +88,35 @@ class ExtractionStats:
 
 class ExtractionLimitError(RuntimeError):
     pass
+
+
+def _note_written_file(path: Path, limits: ExtractLimits, stats: ExtractionStats) -> None:
+    size = path.stat().st_size
+    stats.files_written += 1
+    stats.bytes_written += size
+    if stats.files_written > limits.max_files:
+        raise ExtractionLimitError(f"extracted file count exceeds max_files={limits.max_files}")
+    if stats.bytes_written > limits.max_bytes:
+        raise ExtractionLimitError(f"extracted size exceeds max_bytes={limits.max_bytes}")
+
+
+def _scan_tree_usage(root: Path) -> tuple[int, int]:
+    file_count = 0
+    total_size = 0
+    for item in root.rglob("*"):
+        if not item.is_file():
+            continue
+        file_count += 1
+        total_size += item.stat().st_size
+    return file_count, total_size
+
+
+def _recount_tree_usage(root: Path, limits: ExtractLimits, stats: ExtractionStats) -> None:
+    stats.files_written, stats.bytes_written = _scan_tree_usage(root)
+    if stats.files_written > limits.max_files:
+        raise ExtractionLimitError(f"extracted file count exceeds max_files={limits.max_files}")
+    if stats.bytes_written > limits.max_bytes:
+        raise ExtractionLimitError(f"extracted size exceeds max_bytes={limits.max_bytes}")
 
 
 def _should_skip_member(
@@ -203,20 +234,6 @@ def _ensure_safe_member(target_dir: Path, member_name: str, _root: Path | None =
     return target
 
 
-def _enforce_limits(output_root: Path, limits: ExtractLimits) -> None:
-    file_count = 0
-    total_size = 0
-    for item in output_root.rglob("*"):
-        if not item.is_file():
-            continue
-        file_count += 1
-        total_size += item.stat().st_size
-        if file_count > limits.max_files:
-            raise ExtractionLimitError(f"extracted file count exceeds max_files={limits.max_files}")
-        if total_size > limits.max_bytes:
-            raise ExtractionLimitError(f"extracted size exceeds max_bytes={limits.max_bytes}")
-
-
 def _extract_zip(
     path: Path,
     target_dir: Path,
@@ -242,6 +259,7 @@ def _extract_zip(
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(member) as source, target.open("wb") as destination:
                     shutil.copyfileobj(source, destination)
+                _note_written_file(target, limits, stats)
             except ValueError as exc:
                 stats.note_unsafe_member(
                     member.filename, f"zip member: {exc}", getattr(member, "file_size", None)
@@ -290,6 +308,7 @@ def _extract_tar(
                     continue
                 with source, target.open("wb") as destination:
                     shutil.copyfileobj(source, destination)
+                _note_written_file(target, limits, stats)
             except ValueError as exc:
                 stats.note_unsafe_member(member.name, f"tar member: {exc}", getattr(member, "size", None))
                 continue
@@ -358,9 +377,12 @@ def _extract_one(
     path: Path,
     target_dir: Path,
     kind: str,
+    output_root: Path,
     limits: ExtractLimits | None = None,
     stats: ExtractionStats | None = None,
 ) -> str:
+    limits = limits or ExtractLimits()
+    stats = stats or ExtractionStats()
     target_dir.mkdir(parents=True, exist_ok=True)
     if kind == "zip":
         _extract_zip(path, target_dir, limits=limits, stats=stats)
@@ -368,10 +390,12 @@ def _extract_one(
         _extract_tar(path, target_dir, limits=limits, stats=stats)
     elif kind == "gz":
         _extract_gzip(path, target_dir)
+        _note_written_file(target_dir / _safe_name(_strip_archive_suffix(path.name)), limits, stats)
     elif kind in {"7z", "rar", "zst", "tar-zst", "rpm", "deb"}:
         # External tools (7z/zstd/rpm2cpio/dpkg-deb) extract the full archive
         # in one shot; per-member skipping isn't wired through here yet.
         _extract_external(path, target_dir, kind)
+        _recount_tree_usage(output_root, limits, stats)
     else:
         raise RuntimeError(f"unsupported archive kind: {kind}")
     return str(target_dir)
@@ -458,6 +482,7 @@ def extract_artifacts(
     }
     queue: list[tuple[Path, int]] = [(item, 0) for item in _find_archives(source_root)]
     seen: set[Path] = set()
+    processed_archives = 0
 
     while queue:
         archive_path, depth = queue.pop(0)
@@ -492,8 +517,14 @@ def extract_artifacts(
             "status": "pending",
         }
         try:
-            _extract_one(archive_path, target_dir, kind, limits=limits, stats=stats)
-            _enforce_limits(destination_root, limits)
+            _extract_one(
+                archive_path,
+                target_dir,
+                kind,
+                destination_root,
+                limits=limits,
+                stats=stats,
+            )
             item["status"] = "extracted"
             if depth < max_depth:
                 nested = [
@@ -507,6 +538,13 @@ def extract_artifacts(
             item["error"] = str(exc)
             manifest["failures"].append({"archive": str(archive_path), "error": str(exc)})
         manifest["items"].append(item)
+        processed_archives += 1
+        if processed_archives == 1 or processed_archives % 100 == 0:
+            print(
+                f"[extract] processed={processed_archives} queue={len(queue)} "
+                f"files={stats.files_written} bytes={stats.bytes_written}",
+                flush=True,
+            )
 
     extracted_count = sum(1 for item in manifest["items"] if item["status"] == "extracted")
     for unsafe in stats.unsafe_members:

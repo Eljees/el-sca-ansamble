@@ -63,6 +63,16 @@ function Import-LocalEnv {
   }
 }
 
+function Enable-WindowsComposeOverlay {
+  $repoRoot = (Get-Location).Path
+  $baseCompose = Join-Path $repoRoot "docker-compose.yml"
+  $windowsOverlay = Join-Path $repoRoot "docker-compose.windows.override.yml"
+  if (-not (Test-Path $baseCompose) -or -not (Test-Path $windowsOverlay)) { return }
+  if ($env:COMPOSE_FILE) { return }
+  $env:COMPOSE_FILE = "docker-compose.yml;docker-compose.windows.override.yml"
+  Write-Host "[compose] Windows overlay enabled: docker-compose.windows.override.yml" -ForegroundColor DarkCyan
+}
+
 function Invoke-ComposeChecked {
   param(
     [Parameter(Mandatory=$true)][string[]]$Args,
@@ -185,6 +195,7 @@ function Show-DbFreshnessBanner {
 docker --version     | Out-Null
 docker compose version | Out-Null
 Import-LocalEnv
+Enable-WindowsComposeOverlay
 
 if (-not (Test-Path $Target)) {
   throw "Target does not exist: $Target"
