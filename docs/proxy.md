@@ -220,4 +220,69 @@ docker run --rm \
            └─ cve-bin-tool-updater ── HTTP_PROXY ──► [прокси] ──► NVD / OSV
 ```
 
+---
+
+## Автовыбор маршрута: `route-doctor` (ADR-0007 P2)
+
+«Обновляться из любой точки» означает: не нужно вручную прописывать
+`HTTP_PROXY`/`ALL_PROXY` под каждую сеть (корп-прокси, домашний прямой выход,
+v2rayN на хосте, VPN, цензурируемый канал). За это отвечает сервис
+**`route-doctor`** — он запускается **внутри** `scanner-net`, выясняет, какой
+egress жив именно отсюда, и пишет план, который апдейтеры подхватывают сами.
+
+### Что он делает
+
+1. Зондирует **изнутри docker-сети** все кандидатные маршруты:
+   - сайдкары `tinyproxy:8888` (HTTP) и `proxy-xray:1080` (SOCKS), если подняты
+     (профиль `proxy`);
+   - локальный прокси хоста через `host.docker.internal:<порт>` (типовые порты
+     v2rayN/xray/sing-box/Tor: 10808, 1080, 8118, 7890, …);
+   - прямой выход (`direct`).
+2. Для **каждого инструмента** выбирает рабочий маршрут. Жёсткое ограничение:
+   **cve-bin-tool не умеет SOCKS** (его Python-клиент понимает только
+   `HTTP_PROXY`/`HTTPS_PROXY`), поэтому ему всегда отдаётся `http://`-мост
+   (tinyproxy или HTTP-прокси хоста), а не голый `socks5://`. Trivy/Grype (Go +
+   `ALL_PROXY`) могут идти по SOCKS.
+3. Пишет два артефакта:
+   - `artifacts/route-plan.json` — полное решение + матрица достижимости;
+   - `artifacts/route-plan.env` — `HTTP_PROXY` / `ALL_PROXY` /
+     `CVE_BIN_TOOL_ENRICH_PROXY`, которые апдейтеры берут как окружение.
+
+### Как пользоваться
+
+Чаще всего — никак: автовыбор **включён по умолчанию**.
+
+- В пайплайне: `./scripts/run-scan.sh -t <target> --update-db` сам запустит
+  `route-doctor` перед апдейтерами и подхватит план. Отключить —
+  `--no-auto-route` или `EL_SCA_AUTO_ROUTE=0`. Если вы уже задали
+  `HTTP_PROXY`/`ALL_PROXY` в окружении — авто-выбор уважает ваш выбор и не лезет.
+- Через MCP: `update_db(tool=...)` без аргумента `proxy` сам прогонит
+  `route-doctor` и применит маршрут для нужного инструмента; явный `proxy=...`
+  всё переопределяет; `auto_route=False` отключает. Отдельный read-only тул
+  `route_plan()` просто покажет выбранный маршрут per-tool.
+- Вручную: `python -m resilient_updates.cli route-plan` (добавьте `--json` для
+  машинного вывода). Если ничего не найдено — план пуст, апдейт идёт `direct`,
+  как раньше (поведение аддитивно, ничего не ломается).
+
+### Перенастройка egress самого xray
+
+Сайдкар `proxy-xray` — единственное место в docker-сети, где задаётся внешняя
+цепочка. Его committed-конфиг жёстко указывает upstream на
+`host.docker.internal:10808`. Если ваш локальный прокси слушает другой порт (или
+его нет), этот upstream мёртв. Флаг `route-plan --write-xray` (или override
+`docker-compose.route-doctor.yml`) перегенерирует
+`configs/xray/config.gen.json`, нацелив `upstream` на живой порт хоста (или на
+`freedom`/direct, если хостового прокси нет):
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.route-doctor.yml \
+  --profile route --profile proxy run --rm route-doctor
+docker compose -f docker-compose.yml -f docker-compose.route-doctor.yml \
+  --profile proxy up -d --force-recreate proxy-xray
+```
+
+Так все средства доставки (trivy/grype/cve-bin-tool) ходят через единый,
+автоматически настроенный egress — независимо от конфигурации туннелей, прокси и
+VPN на хосте.
+
 Прокси живёт на `127.0.0.1:PORT` (хост-машина) → Docker видит его как `host.docker.internal:PORT`.

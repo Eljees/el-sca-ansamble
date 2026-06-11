@@ -1,7 +1,7 @@
 # ADR-0007: обновление БД сканеров из любой точки
 
-- Status: Proposed
-- Date: 2026-06-02
+- Status: Accepted (P1 + автовыбор маршрута реализованы)
+- Date: 2026-06-02 (обновлено 2026-06-11)
 - Decision owners: SCA-pipeline team
 - Связанные документы: [docs/network-design.md](../network-design.md),
   [docs/airgap.md](../airgap.md), [docs/proxy.md](../proxy.md),
@@ -82,7 +82,8 @@ provenance + SHA-хешами в один каталог/архив → пере
 
 | Фаза | Объём | Риск | Acceptance |
 |---|---|---|---|
-| P1 | `cli update-doctor` — зондирование (tool×layer×chain) + матрица + рекомендация; тесты с инъекцией probe | низкий (read-only) | `update-doctor` печатает матрицу и per-tool маршрут на фикстуре без сети |
+| P1 ✅ | `cli update-doctor` — зондирование (tool×layer×chain) + матрица + рекомендация; тесты с инъекцией probe | низкий (read-only) | `update-doctor` печатает матрицу и per-tool маршрут на фикстуре без сети |
+| P1.5 ✅ | `cli route-plan` + сервис `route-doctor` (зондирует ИЗНУТРИ scanner-net: сайдкары tinyproxy/xray, `host.docker.internal:<порт>`, direct) → пишет `route-plan.{json,env}`; per-tool выбор с HTTP-only для cve-bin-tool; авто-применение в `update_db`/`run_scan.sh` по умолчанию (откат на direct); `--write-xray` перенацеливает upstream xray на живой хост-прокси | низкий-средний (аддитивно, opt-out) | `route-plan` на фикстуре без сети выдаёт корректный per-tool план; cve-bin-tool никогда не получает SOCKS; round-trip json/env |
 | P2 | транспорт: conditional GET (ETag), Range-resume, OCI registry-rewrite; тесты на моках | средний | повторный апдейт с актуальным ETag не качает; обрыв докачивается; ghcr→mirror переписывается |
 | P3 | DoH/hosts-резолвер + per-source эскалация прокси + `cli bundle export/import` + xray-шаблон/доки | средний | bundle round-trip (export→import) с integrity-проверкой; эскалация запоминает рабочую пару |
 
