@@ -13,6 +13,7 @@ import pytest
 from resilient_updates.config import (
     load_config,
     parse_duration_hours,
+    runtime_override_path,
     validate_config_data,
     validate_proxy_config,
 )
@@ -158,3 +159,43 @@ def test_proxy_absent_section_is_valid():
     config = _good()
     config.pop("proxy", None)
     assert validate_proxy_config(config) == []
+
+
+# ---------------------------------------------------------------------------
+# runtime override (configs/feed_sources.runtime.yaml, D-NEW-2)
+# ---------------------------------------------------------------------------
+
+
+def _write_cfg_pair(tmp_path, static: str, runtime: str | None):
+    cfg = tmp_path / "feed_sources.yaml"
+    cfg.write_text(static, encoding="utf-8")
+    if runtime is not None:
+        (tmp_path / "feed_sources.runtime.yaml").write_text(runtime, encoding="utf-8")
+    return cfg
+
+
+_STATIC = "proxy:\n  default_chain: corp\n  chains:\n    direct: []\n    corp: []\n    via-vpn: []\n"
+
+
+def test_runtime_override_path_naming(tmp_path):
+    assert runtime_override_path("configs/feed_sources.yaml").name == "feed_sources.runtime.yaml"
+
+
+def test_load_config_applies_runtime_override(tmp_path):
+    cfg = _write_cfg_pair(tmp_path, _STATIC, "default_chain: via-vpn\n")
+    assert load_config(cfg)["proxy"]["default_chain"] == "via-vpn"
+
+
+def test_load_config_without_runtime_file_keeps_static(tmp_path):
+    cfg = _write_cfg_pair(tmp_path, _STATIC, None)
+    assert load_config(cfg)["proxy"]["default_chain"] == "corp"
+
+
+def test_load_config_ignores_undeclared_runtime_chain(tmp_path):
+    cfg = _write_cfg_pair(tmp_path, _STATIC, "default_chain: evil\n")
+    assert load_config(cfg)["proxy"]["default_chain"] == "corp"
+
+
+def test_load_config_ignores_malformed_runtime_file(tmp_path):
+    cfg = _write_cfg_pair(tmp_path, _STATIC, "{not yaml: [")
+    assert load_config(cfg)["proxy"]["default_chain"] == "corp"

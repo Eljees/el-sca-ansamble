@@ -466,7 +466,7 @@ _GUI_HTML = """<!doctype html>
 <header>
   <h1>el-sca-ansamble</h1>
   <span class="badge" id="upd-badge">обновление баз отключено по умолчанию</span>
-  <div class="proxy-ctl" title="Переключить цепочку прокси в configs/feed_sources.yaml">
+  <div class="proxy-ctl" title="Переключить цепочку прокси (configs/feed_sources.runtime.yaml)">
     <span>🌐 Прокси</span>
     <button class="proxy-btn" id="btn-proxy" onclick="cycleProxy()">…</button>
   </div>
@@ -850,29 +850,42 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         return StreamingResponse(sse_stream(job), media_type="text/event-stream")
 
     # ── Proxy chain API ───────────────────────────────────────────────────────
+    # Static defaults live in configs/feed_sources.yaml (tracked by git).
+    # The selection made via this API is persisted to a separate gitignored
+    # runtime file so toggling a chain never dirties the git work tree.
     _VALID_CHAINS = {"direct", "corp", "via-vpn"}
     _CHAIN_RE = re.compile(r"^(\s*default_chain:\s*)\S+", re.MULTILINE)
 
+    def _chain_paths() -> tuple[Path, Path]:
+        configs = rroot / "configs"
+        return configs / "feed_sources.runtime.yaml", configs / "feed_sources.yaml"
+
     @app.get("/api/proxy-chain")
     def get_proxy_chain() -> dict[str, str]:
-        """Return current default_chain from configs/feed_sources.yaml."""
-        cfg = rroot / "configs" / "feed_sources.yaml"
-        try:
-            m = _CHAIN_RE.search(cfg.read_text(encoding="utf-8"))
-            return {"chain": m.group(0).split(":")[-1].strip() if m else "unknown"}
-        except FileNotFoundError:
-            return {"chain": "unknown"}
+        """Return the active default_chain (runtime override first, then static config)."""
+        for cfg in _chain_paths():
+            try:
+                m = _CHAIN_RE.search(cfg.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            if m:
+                return {"chain": m.group(0).split(":")[-1].strip()}
+        return {"chain": "unknown"}
 
     @app.post("/api/proxy-chain")
     def set_proxy_chain(chain: str = "direct") -> dict[str, str]:
-        """Set default_chain in configs/feed_sources.yaml (direct | corp | via-vpn)."""
+        """Persist default_chain (direct | corp | via-vpn) to the runtime override file."""
         if chain not in _VALID_CHAINS:
             raise HTTPException(status_code=400, detail=f"chain must be one of {_VALID_CHAINS}")
-        cfg = rroot / "configs" / "feed_sources.yaml"
+        runtime_cfg, _static_cfg = _chain_paths()
         try:
-            old = cfg.read_text(encoding="utf-8")
-            new = _CHAIN_RE.sub(lambda m: m.group(1) + chain, old)
-            cfg.write_text(new, encoding="utf-8")
+            runtime_cfg.parent.mkdir(parents=True, exist_ok=True)
+            runtime_cfg.write_text(
+                "# Runtime override written by the dashboard. Gitignored.\n"
+                "# Delete this file to fall back to configs/feed_sources.yaml.\n"
+                f"default_chain: {chain}\n",
+                encoding="utf-8",
+            )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"chain": chain}

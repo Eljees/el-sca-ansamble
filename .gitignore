@@ -44,6 +44,10 @@ docker-auth.json
 credentials/
 secrets/
 
+# Runtime proxy-chain override written by the dashboard toggle.
+# Static defaults live in configs/feed_sources.yaml (tracked).
+configs/feed_sources.runtime.yaml
+
 # WireGuard configuration — actual wg0.conf is host-specific and contains
 # private keys.  Keep the example template, ignore the real config.
 configs/wireguard/wg0.conf

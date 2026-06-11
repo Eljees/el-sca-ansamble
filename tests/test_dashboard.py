@@ -404,14 +404,28 @@ def test_get_proxy_chain_unknown_when_file_missing(tmp_path: Path):
 
 
 def test_post_proxy_chain_updates_yaml(tmp_path: Path):
-    """POST /api/proxy-chain rewrites default_chain and returns the new value."""
+    """POST /api/proxy-chain writes the runtime override and returns the new value."""
     client = _client_with_cfg(tmp_path, default_chain="direct")
     resp = client.post("/api/proxy-chain?chain=via-vpn")
     assert resp.status_code == 200
     assert resp.json() == {"chain": "via-vpn"}
-    # Verify the YAML was actually rewritten.
+    # Runtime override file is created…
+    runtime_text = (tmp_path / "configs" / "feed_sources.runtime.yaml").read_text(encoding="utf-8")
+    assert "default_chain: via-vpn" in runtime_text
+    # …and the git-tracked static config stays untouched (D-NEW-2).
     cfg_text = (tmp_path / "configs" / "feed_sources.yaml").read_text(encoding="utf-8")
-    assert "default_chain: via-vpn" in cfg_text
+    assert "default_chain: direct" in cfg_text
+
+
+def test_get_proxy_chain_prefers_runtime_override(tmp_path: Path):
+    """GET /api/proxy-chain returns the runtime override over the static default."""
+    client = _client_with_cfg(tmp_path, default_chain="corp")
+    (tmp_path / "configs" / "feed_sources.runtime.yaml").write_text(
+        "default_chain: via-vpn\n", encoding="utf-8"
+    )
+    resp = client.get("/api/proxy-chain")
+    assert resp.status_code == 200
+    assert resp.json() == {"chain": "via-vpn"}
 
 
 def test_post_proxy_chain_roundtrip_all_values(tmp_path: Path):

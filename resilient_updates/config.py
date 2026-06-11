@@ -24,9 +24,41 @@ KNOWN_CVE_DATA_SOURCES = {"NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2C
 KNOWN_CVE_DB_POLICIES = {"strict", "degraded-ok", "lkg-ok"}
 
 
+def runtime_override_path(path: str | Path = DEFAULT_CONFIG_PATH) -> Path:
+    """Gitignored sibling file with runtime overrides (currently proxy.default_chain).
+
+    Written by the dashboard proxy toggle; ``configs/feed_sources.yaml`` stays
+    a static, git-tracked source of truth.
+    """
+    p = Path(path)
+    return p.with_name(f"{p.stem}.runtime{p.suffix}")
+
+
+def _apply_runtime_override(config: dict[str, Any], runtime_path: Path) -> None:
+    """Overlay ``proxy.default_chain`` from the runtime override file, if any.
+
+    Silently ignored when the file is absent, unreadable, malformed, or names
+    a chain that is not declared in ``proxy.chains`` — a stale override must
+    never break updates.
+    """
+    try:
+        with runtime_path.open("r", encoding="utf-8") as handle:
+            runtime = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError):
+        return
+    chain = runtime.get("default_chain") if isinstance(runtime, dict) else None
+    proxy = config.get("proxy")
+    if not chain or not isinstance(proxy, dict):
+        return
+    if chain in (proxy.get("chains") or {}):
+        proxy["default_chain"] = chain
+
+
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
+        config = yaml.safe_load(handle) or {}
+    _apply_runtime_override(config, runtime_override_path(path))
+    return config
 
 
 def parse_duration_hours(value: str) -> int:
