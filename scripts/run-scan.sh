@@ -17,7 +17,7 @@
 #       --format FORMAT     Target format: auto|apk|win (default: auto)
 #   -u, --update-db         Pull fresh CVE databases before scanning
 #   -e, --extract           Unpack archive before scanning (auto-detected for archives)
-#       --extract-max-depth N  Max recursion depth for extraction (default: 4)
+#       --extract-max-depth N  Max recursion depth for extraction (default: 0)
 #   -c, --clean             Remove previous artifacts before this run
 #       --sbom-scan         Feed Syft SBOM to cve-bin-tool instead of binary scan (experimental)
 #       --timeout N         cve-bin-tool scan timeout in seconds (default: 1800)
@@ -33,7 +33,7 @@ TOOL="all"
 FORMAT="auto"
 UPDATE_DB=0
 EXTRACT=0
-EXTRACT_MAX_DEPTH=4
+EXTRACT_MAX_DEPTH=0
 CLEAN=0
 SBOM_SCAN=0
 CBT_TIMEOUT=1800

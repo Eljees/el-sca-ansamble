@@ -26,7 +26,7 @@
 
   # Unpack archive before scanning
   [switch]$Extract,
-  [int]$ExtractMaxDepth = 4,
+  [int]$ExtractMaxDepth = 0,
 
   # Clean artifacts/ before this run (recommended between scans)
   [switch]$Clean,

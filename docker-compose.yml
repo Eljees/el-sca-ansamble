@@ -162,6 +162,7 @@ services:
     working_dir: /workspace
     environment:
       <<: *proxy-env
+      SYFT_CHECK_FOR_APP_UPDATE: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:
@@ -191,6 +192,8 @@ services:
       dockerfile: Dockerfile.extractor
     profiles: ["default", "extract", "scan", "offline", "airgap"]
     working_dir: /workspace
+    environment:
+      PYTHONPATH: /workspace:/opt/app
     command:
       [
         "--input",
@@ -198,7 +201,7 @@ services:
         "--output",
         "${EXTRACT_OUTPUT:-/workspace/artifacts/extracted/current}",
         "--max-depth",
-        "${EXTRACT_MAX_DEPTH:-4}",
+        "${EXTRACT_MAX_DEPTH:-0}",
         "--max-files",
         "${EXTRACT_MAX_FILES:-20000}",
         "--max-bytes",
