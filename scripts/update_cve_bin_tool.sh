@@ -49,7 +49,9 @@ _disable_sources_to_args() {
       _ds_csv="${_ds_csv},$source"
     fi
   done
-  [ -n "$_ds_csv" ] && printf -- '--disable-data-source %s' "$_ds_csv"
+  if [ -n "$_ds_csv" ]; then
+    printf -- '--disable-data-source %s' "$_ds_csv"
+  fi
 }
 
 BASE_DISABLE_ARGS="$(_disable_sources_to_args "$CVE_DISABLE_SOURCES")"

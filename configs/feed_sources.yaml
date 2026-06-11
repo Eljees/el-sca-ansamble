@@ -29,7 +29,7 @@ proxy:
 
   # Default chain when nothing else dictates a choice.  Override per-source
   # below in proxy.per_source[*].chain.
-  default_chain: corp
+  default_chain: via-vpn
 
   chains:
     direct:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -452,11 +453,23 @@ _GUI_HTML = """<!doctype html>
   .mini .barrel-pct { font-size:9px; top:2px; }
   .mini .bsub { font-size:10px; }
   .mini button { padding:2px 4px; font-size:10px; width:100%; }
+  /* proxy toggle */
+  .proxy-ctl { display:flex; align-items:center; gap:8px; background:#10161d;
+               border:1px solid var(--line); border-radius:9px; padding:5px 12px; }
+  .proxy-ctl span { font-size:12px; color:var(--muted); }
+  .proxy-btn { padding:3px 10px; font-size:12px; border-radius:6px; min-width:90px; transition:.15s; }
+  .proxy-btn.direct  { border-color:#22c55e; color:#22c55e; }
+  .proxy-btn.corp    { border-color:#eab308; color:#eab308; }
+  .proxy-btn.via-vpn { border-color:#a855f7; color:#a855f7; }
 </style></head>
 <body>
 <header>
   <h1>el-sca-ansamble</h1>
   <span class="badge" id="upd-badge">обновление баз отключено по умолчанию</span>
+  <div class="proxy-ctl" title="Переключить цепочку прокси в configs/feed_sources.yaml">
+    <span>🌐 Прокси</span>
+    <button class="proxy-btn" id="btn-proxy" onclick="cycleProxy()">…</button>
+  </div>
   <span class="muted" style="margin-left:auto" id="conn"></span>
 </header>
 <main class="grid">
@@ -693,6 +706,35 @@ $("#btn-go").addEventListener("click", () => { if(pendingFile) startScan(pending
 $("#btn-update").addEventListener("click", () => updateTarget("all"));
 $("#btn-refresh").addEventListener("click", loadTools);
 loadTools();
+
+// ── Proxy chain toggle ────────────────────────────────────────────────────────
+const CHAIN_LABELS = { direct: "🟢 Direct", corp: "🟡 Corp (proxy)", "via-vpn": "🟣 VPN" };
+const CHAIN_CYCLE  = ["direct", "corp", "via-vpn"];
+let currentChain = null;
+
+function applyChain(chain){
+  currentChain = chain;
+  const btn = $("#btn-proxy");
+  btn.textContent = CHAIN_LABELS[chain] || chain;
+  btn.className = "proxy-btn " + chain;
+}
+async function loadProxyChain(){
+  try {
+    const r = await fetch("/api/proxy-chain");
+    if(r.ok) applyChain((await r.json()).chain);
+  } catch(e) { /* non-fatal */ }
+}
+async function cycleProxy(){
+  const idx = CHAIN_CYCLE.indexOf(currentChain);
+  const next = CHAIN_CYCLE[(idx + 1) % CHAIN_CYCLE.length];
+  const btn = $("#btn-proxy"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/proxy-chain?chain=" + encodeURIComponent(next), { method:"POST" });
+    if(r.ok) applyChain((await r.json()).chain);
+    else btn.textContent = "ошибка " + r.status;
+  } finally { btn.disabled = false; }
+}
+loadProxyChain();
 </script>
 </body></html>
 """
@@ -806,5 +848,33 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if job is None:
             raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
         return StreamingResponse(sse_stream(job), media_type="text/event-stream")
+
+    # ── Proxy chain API ───────────────────────────────────────────────────────
+    _VALID_CHAINS = {"direct", "corp", "via-vpn"}
+    _CHAIN_RE = re.compile(r"^(\s*default_chain:\s*)\S+", re.MULTILINE)
+
+    @app.get("/api/proxy-chain")
+    def get_proxy_chain() -> dict[str, str]:
+        """Return current default_chain from configs/feed_sources.yaml."""
+        cfg = rroot / "configs" / "feed_sources.yaml"
+        try:
+            m = _CHAIN_RE.search(cfg.read_text(encoding="utf-8"))
+            return {"chain": m.group(0).split(":")[-1].strip() if m else "unknown"}
+        except FileNotFoundError:
+            return {"chain": "unknown"}
+
+    @app.post("/api/proxy-chain")
+    def set_proxy_chain(chain: str = "direct") -> dict[str, str]:
+        """Set default_chain in configs/feed_sources.yaml (direct | corp | via-vpn)."""
+        if chain not in _VALID_CHAINS:
+            raise HTTPException(status_code=400, detail=f"chain must be one of {_VALID_CHAINS}")
+        cfg = rroot / "configs" / "feed_sources.yaml"
+        try:
+            old = cfg.read_text(encoding="utf-8")
+            new = _CHAIN_RE.sub(lambda m: m.group(1) + chain, old)
+            cfg.write_text(new, encoding="utf-8")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"chain": chain}
 
     return app
