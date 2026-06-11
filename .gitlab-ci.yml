@@ -200,7 +200,7 @@ pytest:
     # Coverage gate only on 3.12 (the primary target).
     - |
       if echo "$PYTHON_IMAGE" | grep -q "3.12"; then
-        GATE="--cov-fail-under=75"
+        GATE="--cov-fail-under=85"
       else
         GATE=""
       fi

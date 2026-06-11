@@ -1,3 +1,8 @@
+> [!WARNING]
+> Snapshot of 2026-05-25 and is OUTDATED as a defect register: D1-D18 are closed (except D13),
+> the suite has grown to ~673 tests. For current state see the latest NNN-analysis/NNN-fixups
+> in docs/audit/ (now: 270-analysis-2026-06-11.md).
+
 # Audit 2026-05-25 — Тесты и покрытие
 
 ## 1. Инвентаризация

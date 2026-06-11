@@ -6,6 +6,45 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Proxy-chain toggle in the dashboard** — `GET/POST /api/proxy-chain` + UI
+  button cycling `direct | corp | via-vpn`. Runtime selection is persisted to
+  gitignored `configs/feed_sources.runtime.yaml`; `load_config()` overlays it
+  over the static `configs/feed_sources.yaml` (which stays clean in git).
+- **Linux volume-init overlay** (`docker-compose.linux.override.yml`) — fixes
+  named-volume UID ownership on Linux hosts.
+- **Run history, policy gate, diff** — runs archived to `artifacts/runs/`
+  (retention 20), `configs/policy.json` severity gate, "Diff с предыдущим
+  прогоном" section in reports; async MCP scan (`run_scan_async`/`scan_status`).
+- **Docs:** Ubuntu-from-GitHub deploy guide, remote SCA runbook + wrapper,
+  minimal system requirements and per-OS install paths in README/START_HERE.
+
+### Changed
+
+- Extractor: incremental limits; default extraction depth is now unlimited
+  (`EXTRACT_MAX_DEPTH=0`); `PYTHONPATH` fixed in the extractor container.
+- Syft: update self-check disabled (`SYFT_CHECK_FOR_APP_UPDATE=false`).
+- tinyproxy: PID file moved to `/tmp`, image pinned to `latest`.
+
+### Fixed
+
+- **cve-bin-tool source isolation** — `--disable-data-source` flags collapsed
+  into a single CSV argument (cve-bin-tool kept only the last flag, so
+  "EPSS-only" runs silently pulled all sources for 3+ hours).
+- proxy-xray healthcheck disabled (used `sh`, absent in the distroless image;
+  FailingStreak grew unbounded).
+- Python 3.10 compatibility: `datetime.UTC` shims in `nvd_feed_import`/`vex`
+  (bare import broke test collection on the 3.10 CI matrix).
+- `artifacts/nvd-feeds/*.gz` (~190 MB) untracked from git; README chat-noise
+  tail removed; compose override files gitignored.
+
+### Tests
+
+- 426 → 673 tests; coverage expansion for cli, extractor, nvd_feed_import,
+  cve_db_audit, proxy_chain, manifest, scanner_diff, run_summary, enrichment,
+  orchestrator, dashboard (proxy-chain + runtime-override suites).
+
 ## [0.1.0] - 2026-06-06
 
 First versioned cut. Consolidates the resilient SCA stack (Trivy/Grype/Syft/
