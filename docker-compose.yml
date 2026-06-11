@@ -258,6 +258,11 @@ services:
       CVE_BIN_TOOL_FEED_ENRICH: ${CVE_BIN_TOOL_FEED_ENRICH:-}
       CVE_BIN_TOOL_ENRICH_PROXY: ${CVE_BIN_TOOL_ENRICH_PROXY:-}
       CVE_BIN_TOOL_ENRICH_DISABLE: ${CVE_BIN_TOOL_ENRICH_DISABLE:-}
+      # GitHub PAT for the GAD (GitHub Advisory Database) source.  Set the value
+      # in your gitignored .env (NEVER commit a real token — GitHub auto-revokes
+      # any PAT pushed to a repo).  Empty = GAD skipped, all other sources still
+      # update.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
