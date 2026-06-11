@@ -1,0 +1,34 @@
+# docker-compose.route-doctor.yml — opt-in override (ADR-0007 P2).
+#
+# Layer this on top of the base stack to let route-doctor also REWRITE the xray
+# sidecar's upstream outbound at the live host proxy (or direct when none is up),
+# then have xray run the generated config:
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.route-doctor.yml \
+#     --profile route --profile proxy run --rm route-doctor
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.route-doctor.yml \
+#     --profile proxy up -d --force-recreate proxy-xray
+#
+# route-doctor writes configs/xray/config.gen.json; the xray service below mounts
+# it over the committed config.json and runs it.  Everything stays opt-in: the
+# base docker-compose.yml is untouched by this file when it is not passed with -f.
+services:
+  route-doctor:
+    command:
+      - "route-plan"
+      - "--json"
+      - "--write-xray"
+      - "--artifacts-dir"
+      - "/workspace/artifacts"
+
+  proxy-xray:
+    # Run the route-doctor-generated config instead of the static one.  Falls
+    # back to the committed config.json on first boot (before route-doctor has
+    # run) only if you pre-seed config.gen.json; otherwise run route-doctor first.
+    volumes:
+      - ./configs/xray:/etc/xray:ro
+    command: ["run", "-c", "/etc/xray/config.gen.json"]

@@ -60,6 +60,7 @@ KNOWN_SERVICES = {
     "cve-bin-tool-updater",
     "cve-bin-tool-scanner",
     "db-admin",
+    "route-doctor",
     "dashboard",
     "report-collector",
     "osv-scanner",
@@ -82,6 +83,7 @@ KNOWN_PROFILES = {
     "osv",
     "proxy",
     "vpn",
+    "route",
 }
 
 mcp = FastMCP("el-sca-docker")
@@ -103,6 +105,61 @@ def _proxy_env(proxy: str | None) -> dict[str, str]:
 
 def _tail(text: str | None, n: int = 60) -> str:
     return "\n".join((text or "").splitlines()[-n:])
+
+
+# Map the MCP-facing tool name to the route-plan.json key.
+_ROUTE_PLAN_KEY = {"trivy": "trivy", "grype": "grype", "cve-bin-tool": "cve_bin_tool"}
+
+
+def _auto_route_enabled() -> bool:
+    """Auto-routing is on by default; EL_SCA_AUTO_ROUTE=0/false disables it."""
+    return os.environ.get("EL_SCA_AUTO_ROUTE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _run_route_doctor() -> dict[str, Any]:
+    """Run the in-network route-doctor; it writes artifacts/route-plan.{json,env}."""
+    return _run(
+        ["docker", "compose", "--profile", "route", "run", "--rm", "route-doctor"],
+        timeout=300,
+    )
+
+
+def _load_route_plan() -> dict[str, Any] | None:
+    path = PROJECT_DIR / "artifacts" / "route-plan.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _auto_route_for(tool: str) -> tuple[str | None, list[str], dict[str, Any]]:
+    """Discover the live egress for *tool* and return (proxy_url, extra_env, info).
+
+    Runs route-doctor, reads the plan, and selects the per-tool proxy URL.  For
+    cve-bin-tool it additionally returns ``-e CVE_BIN_TOOL_ENRICH_PROXY=<http>``
+    so the updater's enrichment bridge uses the same route (its NVD client can't
+    speak SOCKS, so the plan already guarantees an HTTP URL for it).  On any
+    failure it returns ``(None, [], {...})`` → caller behaves exactly as before
+    (direct / .env-configured).
+    """
+    doctor = _run_route_doctor()
+    plan = _load_route_plan()
+    if not plan:
+        return None, [], {"auto_route": "skipped", "reason": "route-doctor produced no plan", "doctor": doctor}
+    sel = (plan.get("plan") or {}).get(_ROUTE_PLAN_KEY.get(tool, tool)) or {}
+    proxy_url = sel.get("proxy_url")
+    extra_env: list[str] = []
+    if tool == "cve-bin-tool" and proxy_url:
+        extra_env = ["-e", f"CVE_BIN_TOOL_ENRICH_PROXY={proxy_url}"]
+    info = {
+        "auto_route": "applied" if proxy_url else "direct",
+        "transport": sel.get("transport"),
+        "proxy_url": proxy_url,
+        "reason": sel.get("reason"),
+    }
+    return proxy_url, extra_env, info
 
 
 def _run(
@@ -173,25 +230,55 @@ def compose_logs(service: str, tail: int = 80) -> dict:
 
 
 @mcp.tool()
-def update_db(tool: str, proxy: str | None = None, only_source: str | None = None) -> dict:
+def route_plan() -> dict:
+    """Run the in-network route-doctor and return the chosen egress per tool.
+
+    Probes the in-network sidecars (tinyproxy/proxy-xray), the host's local proxy
+    and a direct route from *inside* the stack, then writes
+    artifacts/route-plan.{json,env} and returns the per-tool plan. READ-ONLY.
+    This is what ``update_db``/``run_scan`` call automatically when no explicit
+    proxy is given (unless EL_SCA_AUTO_ROUTE=0).
+    """
+    doctor = _run_route_doctor()
+    plan = _load_route_plan()
+    if not plan:
+        return {"ok": False, "error": "route-doctor produced no plan", "doctor": doctor}
+    return {"ok": doctor.get("ok", False), "plan": plan.get("plan"), "transports": plan.get("transports")}
+
+
+@mcp.tool()
+def update_db(
+    tool: str, proxy: str | None = None, only_source: str | None = None, auto_route: bool = True
+) -> dict:
     """Update a scanner DB by running its updater container (profile ``update``).
 
     For grype, also runs grype-db-importer.  Pass ``proxy`` (e.g.
     ``http://127.0.0.1:10808``) to route the container through the host's local
     proxy — it is auto-translated to ``host.docker.internal`` for the container.
 
+    When ``proxy`` is omitted and ``auto_route`` is true (the default), the
+    in-network route-doctor is run first to pick a live egress for this tool
+    automatically (works under any tunnel/proxy/VPN setup); if nothing is found
+    the update proceeds direct, exactly as before.  Set ``auto_route=False`` or
+    the env ``EL_SCA_AUTO_ROUTE=0`` to disable.
+
     Args:
         tool: one of trivy | grype | cve-bin-tool.
-        proxy: optional proxy URL for the DB fetch.
+        proxy: optional explicit proxy URL for the DB fetch (overrides auto-route).
         only_source: cve-bin-tool only — update just this single data source
             (NVD|OSV|GAD|REDHAT|CURL|EPSS|PURL2CPE|RSD).  Implemented by passing
             ``-e CVE_BIN_TOOL_DISABLE_SOURCES=<all the others>`` to the updater
             container, so only the requested source is fetched.
+        auto_route: discover and apply a working egress when no proxy is given.
     """
     if tool not in SCANNER_TOOLS:
         return {"ok": False, "error": f"tool must be one of {sorted(SCANNER_TOOLS)}"}
 
     extra_env: list[str] = []
+    route_info: dict[str, Any] | None = None
+    if proxy is None and auto_route and _auto_route_enabled():
+        proxy, route_extra_env, route_info = _auto_route_for(tool)
+        extra_env += route_extra_env
     if only_source is not None:
         if tool != "cve-bin-tool":
             return {"ok": False, "error": "only_source is supported for cve-bin-tool only"}
@@ -204,7 +291,8 @@ def update_db(tool: str, proxy: str | None = None, only_source: str | None = Non
         disabled = sorted(CVE_BIN_TOOL_SOURCES - {src})
         # Disable every other source for the base run, and clear the retry-disable
         # default (OSV) so a single-source run is not silently skipped on retry.
-        extra_env = [
+        # Append (don't overwrite) so any auto-route -e flags above are kept.
+        extra_env += [
             "-e",
             "CVE_BIN_TOOL_DISABLE_SOURCES=" + " ".join(disabled),
             "-e",
@@ -225,6 +313,9 @@ def update_db(tool: str, proxy: str | None = None, only_source: str | None = Non
                 proxy=proxy,
             ),
         }
+    if route_info is not None:
+        if isinstance(result, dict):
+            result["route"] = route_info
     return result
 
 
@@ -393,5 +484,5 @@ def compose_down() -> dict:
     return _run(["docker", "compose", "down"], timeout=300)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     mcp.run()

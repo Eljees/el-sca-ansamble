@@ -39,6 +39,11 @@ artifacts/*.json
 !artifacts/extracted/.gitkeep
 !artifacts/**/.gitkeep
 
+# route-doctor output (ADR-0007 P2): per-host egress plan + generated xray
+# upstream config. Runtime, host-specific — never commit.
+artifacts/route-plan.env
+configs/xray/config.gen.json
+
 docker-auth.json
 .docker/
 credentials/

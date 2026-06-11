@@ -20,6 +20,8 @@
 #       --extract-max-depth N  Max recursion depth for extraction (default: 0)
 #   -c, --clean             Remove previous artifacts before this run
 #       --sbom-scan         Feed Syft SBOM to cve-bin-tool instead of binary scan (experimental)
+#       --auto-route        Before --update-db, run route-doctor to pick a live egress (default on)
+#       --no-auto-route     Disable egress auto-discovery (use .env/direct as-is)
 #       --timeout N         cve-bin-tool scan timeout in seconds (default: 1800)
 #
 # Requires: docker, docker compose, bash >= 4
@@ -38,6 +40,11 @@ CLEAN=0
 SBOM_SCAN=0
 CBT_TIMEOUT=1800
 CBT_CHECKERS=""
+# Auto-route: when updating DBs, run route-doctor first to pick a live egress
+# (any tunnel/proxy/VPN) and source its plan before the updaters. On by default
+# for --update-db runs; disable with --no-auto-route or EL_SCA_AUTO_ROUTE=0.
+AUTO_ROUTE=1
+[[ "${EL_SCA_AUTO_ROUTE:-1}" =~ ^(0|false|no|off)$ ]] && AUTO_ROUTE=0
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -52,6 +59,8 @@ while [[ $# -gt 0 ]]; do
     --extract-max-depth)   EXTRACT_MAX_DEPTH="$2"; shift 2 ;;
     -c|--clean)            CLEAN=1; shift ;;
     --sbom-scan)           SBOM_SCAN=1; shift ;;
+    --auto-route)          AUTO_ROUTE=1; shift ;;
+    --no-auto-route)       AUTO_ROUTE=0; shift ;;
     --timeout)             CBT_TIMEOUT="$2"; shift 2 ;;
     --checkers)            CBT_CHECKERS="$2"; shift 2 ;;
     -h|--help)
@@ -114,6 +123,37 @@ db_status() {
   # scan-only runs (no updater → no provenance). Best-effort; never fatal.
   mkdir -p "$ARTIFACTS_DIR/db_status"
   printf '%s\n' "$out" | sed -n '/^{/,/^}/p' > "$ARTIFACTS_DIR/db_status/$tool.json" 2>/dev/null || true
+}
+
+# Run the in-network route-doctor and source its plan so the updater containers
+# inherit HTTP_PROXY / ALL_PROXY / CVE_BIN_TOOL_ENRICH_PROXY for the chosen
+# egress. Best-effort: any failure leaves the environment untouched (direct /
+# .env-configured), exactly as before. Idempotent; runs at most once per run.
+ROUTE_PLAN_DONE=0
+auto_route_once() {
+  [[ $AUTO_ROUTE -eq 1 ]] || return 0
+  [[ $ROUTE_PLAN_DONE -eq 1 ]] && return 0
+  ROUTE_PLAN_DONE=1
+  # If the operator already pinned a proxy explicitly, don't override it.
+  if [[ -n "${HTTP_PROXY:-}${ALL_PROXY:-}" ]]; then
+    echo "[route] HTTP_PROXY/ALL_PROXY already set in env; skipping auto-route."
+    return 0
+  fi
+  echo "[route] discovering a live egress via route-doctor..."
+  local rc=0
+  docker compose --profile route run --rm route-doctor >/dev/null 2>&1 || rc=$?
+  local plan_env="$ARTIFACTS_DIR/route-plan.env"
+  if [[ $rc -ne 0 || ! -f "$plan_env" ]]; then
+    echo "[route] route-doctor produced no plan (rc=$rc); proceeding direct."
+    return 0
+  fi
+  # shellcheck disable=SC1090
+  while IFS= read -r line; do
+    [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+    [[ "$line" == *"="* ]] || continue
+    export "${line?}"
+  done < "$plan_env"
+  echo "[route] applied plan: HTTP_PROXY=${HTTP_PROXY:-<none>} ALL_PROXY=${ALL_PROXY:-<none>} CVE_BIN_TOOL_ENRICH_PROXY=${CVE_BIN_TOOL_ENRICH_PROXY:-<none>}"
 }
 
 import_local_env() {
@@ -195,6 +235,9 @@ fi
 for f in syft.json cyclonedx.json spdx.json; do
   rm -f "$ARTIFACTS_DIR/sbom/$f"
 done
+
+# Pick a live egress before any updater runs (only when refreshing DBs).
+[[ $UPDATE_DB -eq 1 ]] && auto_route_once
 
 # ── Render Trivy flags (standard pipeline only) ───────────────────────────────
 TRIVY_FLAGS=""

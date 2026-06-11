@@ -626,6 +626,34 @@ def main() -> int:
         action="store_true",
         help="with --suggest-proxy: translate 127.0.0.1/localhost -> host.docker.internal",
     )
+    route_parser = subparsers.add_parser(
+        "route-plan",
+        help="from inside the stack, pick a working egress per tool and write "
+        "artifacts/route-plan.{json,env} for the updaters to source (ADR-0007 P2)",
+    )
+    route_parser.add_argument("--timeout", type=float, default=6.0)
+    route_parser.add_argument("--json", action="store_true")
+    route_parser.add_argument(
+        "--artifacts-dir",
+        default="artifacts",
+        help="where to write route-plan.json / route-plan.env (default: artifacts)",
+    )
+    route_parser.add_argument(
+        "--no-write",
+        action="store_true",
+        help="probe and print the plan but do not write the artefacts",
+    )
+    route_parser.add_argument(
+        "--no-sidecars",
+        action="store_true",
+        help="skip probing the in-network tinyproxy/proxy-xray sidecars",
+    )
+    route_parser.add_argument(
+        "--write-xray",
+        action="store_true",
+        help="also regenerate configs/xray/config.gen.json, pointing xray's "
+        "upstream at the live host proxy (or direct if none)",
+    )
     write_summary = subparsers.add_parser(
         "write-run-summary",
         help="Derive summary.json / status.json / run_manifest.json / db_snapshot.json from existing artefacts",
@@ -851,6 +879,23 @@ def main() -> int:
             print(format_matrix(matrix))
         unreachable = [tool for tool, chain in matrix["recommended"].items() if chain is None]
         return EXIT_ALL_SOURCES_FAILED if unreachable else EXIT_SUCCESS
+    if args.command == "route-plan":
+        from .route_plan import build_plan, format_plan, write_plan, write_xray_config
+
+        plan = build_plan(config, timeout=args.timeout, sidecars=not args.no_sidecars)
+        if args.write_xray:
+            xray = write_xray_config(plan)
+            if xray is not None:
+                plan["xray_upstream"] = xray
+        if not args.no_write:
+            written = write_plan(plan, artifacts_dir=args.artifacts_dir)
+            plan["written"] = {k: str(v) for k, v in written.items()}
+        if args.json:
+            print(json.dumps(plan, indent=2, ensure_ascii=False))
+        else:
+            print(format_plan(plan))
+        unrouted = [t for t, sel in plan["plan"].items() if sel.get("transport") is None]
+        return EXIT_ALL_SOURCES_FAILED if unrouted else EXIT_SUCCESS
     if args.command == "update":
         if args.tool == "vex":
             from .vex import fetch_vex
