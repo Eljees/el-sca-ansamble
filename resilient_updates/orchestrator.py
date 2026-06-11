@@ -541,8 +541,60 @@ class JobRegistry:
             cmd = [*up, "cve-bin-tool-updater"]
         else:
             cmd = build_update_command(compose)
-        self._spawn(job, cmd, env)
+        self._spawn_update(job, cmd, env)
         return job
+
+    _AUTO_ROUTE_OFF = frozenset({"0", "false", "no", "off"})
+
+    def _apply_auto_route(self, job: Job, env: dict[str, str]) -> None:
+        """Discover a live egress (route-doctor) and merge its plan into *env*.
+
+        Best-effort and additive (ADR-0007 P2): if the operator already pinned
+        HTTP_PROXY/ALL_PROXY, or EL_SCA_AUTO_ROUTE=0, or the doctor yields no
+        fresh plan — the environment is left untouched and the update proceeds
+        exactly as before.  The doctor's output streams into the job log, so
+        the dashboard shows WHY a route was (not) chosen.
+        """
+        if env.get("EL_SCA_AUTO_ROUTE", "1").strip().lower() in self._AUTO_ROUTE_OFF:
+            return
+        if env.get("HTTP_PROXY") or env.get("ALL_PROXY"):
+            job.feed_line("# route: HTTP_PROXY/ALL_PROXY уже заданы — авто-маршрут пропущен")
+            return
+        job.feed_line("# route: ищу живой egress изнутри docker-сети (route-doctor)…")
+        rc = self._run_stream(
+            job, [*self.compose, "--profile", "route", "run", "--rm", "route-doctor"], env
+        )
+        plan_env = self.repo_root / "artifacts" / "route-plan.env"
+        try:
+            fresh = (time.time() - plan_env.stat().st_mtime) < 600
+        except OSError:
+            fresh = False
+        if not fresh:
+            # rc=2 with a fresh file = partial plan (still applied above); a
+            # missing/stale file means nothing usable was discovered.
+            job.feed_line(f"# route: свежего плана нет (rc={rc}) — обновление пойдёт напрямую/по .env")
+            return
+        applied: list[str] = []
+        for raw in plan_env.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip()
+            if val:
+                env[key] = val
+                if key in ("HTTP_PROXY", "ALL_PROXY", "CVE_BIN_TOOL_ENRICH_PROXY"):
+                    applied.append(f"{key}={val}")
+        job.feed_line("# route: применён план — " + ("; ".join(applied) or "direct (без прокси)"))
+
+    def _spawn_update(self, job: Job, cmd: list[str], env: dict[str, str]) -> None:
+        """Like _spawn, but discovers/applies a working egress first."""
+
+        def run() -> None:
+            self._apply_auto_route(job, env)
+            job.finish(self._run_stream(job, cmd, env))
+
+        threading.Thread(target=run, name=f"job-{job.id}", daemon=True).start()
 
     @staticmethod
     def _update_log_header(target: str, env: dict[str, str]) -> list[str]:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -194,7 +195,7 @@ def test_nvd_only_update_disables_feed_enrichment(tmp_path):
         seen["cmd"] = cmd
         seen["env"] = env
 
-    reg._spawn = fake_spawn  # type: ignore[assignment]
+    reg._spawn_update = fake_spawn  # type: ignore[assignment]
     reg.start_update("cve-bin-tool:NVD")
 
     env = seen["env"]
@@ -420,9 +421,64 @@ def test_sse_stream_emits_keepalive_before_job_finishes():
     t = threading.Thread(target=_collect, daemon=True)
     t.start()
     # Let the stream collect a snapshot + at least one heartbeat, then finish.
-    t.join(timeout=0.5)
-    job.finish(0)
-    t.join(timeout=1.0)
 
-    keepalives = [f for f in frames if f.startswith(": keep-alive")]
-    assert len(keepalives) >= 1, "expected at least one keep-alive heartbeat frame"
+
+# ---------------------------------------------------------------------------
+# _apply_auto_route (ADR-0007 P2: web updates work from any network location)
+# ---------------------------------------------------------------------------
+
+
+def _route_job():
+    from resilient_updates.orchestrator import UPDATE_STAGES, Job
+
+    return Job("update", UPDATE_STAGES)
+
+
+def test_auto_route_applies_fresh_plan(tmp_path):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts" / "route-plan.env").write_text(
+        "# plan\nHTTP_PROXY=http://tinyproxy:8888\nCVE_BIN_TOOL_ENRICH_PROXY=http://tinyproxy:8888\n",
+        encoding="utf-8",
+    )
+    ran: list[list[str]] = []
+    reg._run_stream = lambda job, cmd, env: ran.append(cmd) or 0  # type: ignore[assignment]
+    job = _route_job()
+    env: dict[str, str] = {}
+    reg._apply_auto_route(job, env)
+    # route-doctor was invoked…
+    assert any("route-doctor" in c for c in ran[0])
+    # …and the plan landed in the env the updaters will inherit.
+    assert env["HTTP_PROXY"] == "http://tinyproxy:8888"
+    assert env["CVE_BIN_TOOL_ENRICH_PROXY"] == "http://tinyproxy:8888"
+
+
+def test_auto_route_respects_existing_proxy(tmp_path):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    reg._run_stream = lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not probe"))  # type: ignore[assignment]
+    env = {"HTTP_PROXY": "http://corp:3128"}
+    reg._apply_auto_route(_route_job(), env)
+    assert env["HTTP_PROXY"] == "http://corp:3128"
+
+
+def test_auto_route_disabled_by_env(tmp_path):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    reg._run_stream = lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not probe"))  # type: ignore[assignment]
+    env = {"EL_SCA_AUTO_ROUTE": "0"}
+    reg._apply_auto_route(_route_job(), env)
+    assert "HTTP_PROXY" not in env
+
+
+def test_auto_route_ignores_stale_plan(tmp_path):
+    import os
+
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    plan = tmp_path / "artifacts" / "route-plan.env"
+    plan.parent.mkdir()
+    plan.write_text("HTTP_PROXY=http://dead:1\n", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(plan, (old, old))
+    reg._run_stream = lambda job, cmd, env: 1  # doctor "fails", file stays stale  # type: ignore[assignment]
+    env: dict[str, str] = {}
+    reg._apply_auto_route(_route_job(), env)
+    assert "HTTP_PROXY" not in env

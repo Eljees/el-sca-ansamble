@@ -490,6 +490,11 @@ _GUI_HTML = """<!doctype html>
     <span>🌐 Прокси</span>
     <button class="proxy-btn" id="btn-proxy" onclick="cycleProxy()">…</button>
   </div>
+  <div class="proxy-ctl" title="Авто-маршрут обновлений: route-doctor зондирует egress изнутри docker-сети и выбирает рабочий путь для каждого инструмента">
+    <span>🛰 Маршрут</span>
+    <span id="route-info" class="muted" style="font-size:12px">—</span>
+    <button class="proxy-btn" id="btn-route" onclick="refreshRoute()" title="Перепроверить сеть">🔄</button>
+  </div>
   <span class="muted" style="margin-left:auto" id="conn"></span>
 </header>
 <main class="grid">
@@ -759,6 +764,30 @@ async function cycleProxy(){
   } finally { btn.disabled = false; }
 }
 loadProxyChain();
+
+// ── Route plan (авто-маршрут обновлений) ─────────────────────────────────────
+const ROUTE_SHORT = { cve_bin_tool: "cbt", trivy: "trivy", grype: "grype" };
+function fmtRoute(plan){
+  const parts = Object.entries(plan || {}).map(([tool, sel]) =>
+    `${ROUTE_SHORT[tool] || tool}: ${sel && sel.transport ? sel.transport : "—"}`);
+  return parts.length ? parts.join(" · ") : "ещё не зондировался";
+}
+async function loadRoute(){
+  try {
+    const r = await fetch("/api/route-plan");
+    if(r.ok) $("#route-info").textContent = fmtRoute((await r.json()).plan);
+  } catch(e) { /* non-fatal */ }
+}
+async function refreshRoute(){
+  const b = $("#btn-route"); b.disabled = true;
+  $("#route-info").textContent = "зондирую сеть…";
+  try {
+    const r = await fetch("/api/route-plan", { method:"POST" });
+    if(r.ok) $("#route-info").textContent = fmtRoute((await r.json()).plan);
+    else $("#route-info").textContent = "ошибка " + r.status;
+  } finally { b.disabled = false; }
+}
+loadRoute();
 </script>
 </body></html>
 """
@@ -886,6 +915,37 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if job is None:
             raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
         return StreamingResponse(sse_stream(job), media_type="text/event-stream")
+
+    # ── Route plan API (ADR-0007 P2) ─────────────────────────────────────────
+    # route-doctor probes the live egress from INSIDE the docker network and
+    # writes artifacts/route-plan.{json,env}; updates apply it automatically.
+    @app.get("/api/route-plan")
+    def get_route_plan() -> dict[str, Any]:
+        """Current per-tool egress plan (empty if route-doctor never ran)."""
+        data = _safe_read_json(root / "route-plan.json") or {}
+        return {
+            "generated_utc": data.get("generated_utc"),
+            "plan": data.get("plan") or {},
+            "transports": data.get("transports") or [],
+        }
+
+    @app.post("/api/route-plan")
+    def refresh_route_plan() -> dict[str, Any]:
+        """Re-probe the network (run route-doctor) and return the fresh plan."""
+        if not active_enabled:
+            raise HTTPException(status_code=403, detail="active mode is disabled for this dashboard")
+        import subprocess
+
+        try:
+            subprocess.run(  # fixed argv, no shell
+                [*registry.compose, "--profile", "route", "run", "--rm", "route-doctor"],
+                cwd=str(rroot),
+                capture_output=True,
+                timeout=240,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"route-doctor failed: {exc}") from exc
+        return get_route_plan()
 
     # ── Proxy chain API ───────────────────────────────────────────────────────
     # Static defaults live in configs/feed_sources.yaml (tracked by git).

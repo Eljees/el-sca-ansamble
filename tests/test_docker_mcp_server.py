@@ -157,3 +157,73 @@ def test_expected_tools_are_registered(server):
         "stop_dashboard",
         "compose_down",
     } <= registered
+
+def test_route_plan_tool_registered(server):
+    assert "route_plan" in server.mcp.tools
+
+
+def test_update_db_all_shares_one_route_probe(server, monkeypatch):
+    """update_db('all') must run every updater with its own per-tool route,
+    probing the network exactly once (one _ensure_route_plan call)."""
+    calls = {"plan": 0}
+    plan = {
+        "plan": {
+            "trivy": {"proxy_url": "socks5h://host.docker.internal:10808", "transport": "host-socks:10808"},
+            "grype": {"proxy_url": "socks5h://host.docker.internal:10808", "transport": "host-socks:10808"},
+            "cve_bin_tool": {"proxy_url": "http://tinyproxy:8888", "transport": "sidecar-http"},
+        }
+    }
+
+    def fake_ensure(**kw):
+        calls["plan"] += 1
+        return plan
+
+    ran: list[tuple[str, str | None]] = []
+
+    def fake_update_one(tool, proxy, extra_env):
+        ran.append((tool, proxy))
+        return {"ok": True, "extra_env": list(extra_env)}
+
+    monkeypatch.setattr(server, "_ensure_route_plan", fake_ensure)
+    monkeypatch.setattr(server, "_update_one", fake_update_one)
+    monkeypatch.delenv("EL_SCA_AUTO_ROUTE", raising=False)
+
+    out = server.update_db("all")
+    assert out["ok"] is True
+    assert calls["plan"] == 1
+    assert [t for t, _ in ran] == ["trivy", "grype", "cve-bin-tool"]
+    by_tool = dict(ran)
+    assert by_tool["trivy"] == "socks5h://host.docker.internal:10808"
+    assert by_tool["cve-bin-tool"] == "http://tinyproxy:8888"
+    # cve-bin-tool's enrichment bridge follows the same HTTP route.
+    assert out["results"]["cve-bin-tool"]["extra_env"] == [
+        "-e",
+        "CVE_BIN_TOOL_ENRICH_PROXY=http://tinyproxy:8888",
+    ]
+    assert out["route"]["cve-bin-tool"]["proxy_url"] == "http://tinyproxy:8888"
+
+
+def test_update_db_explicit_proxy_skips_probe(server, monkeypatch):
+    probed = {"n": 0}
+    monkeypatch.setattr(server, "_ensure_route_plan", lambda **kw: probed.__setitem__("n", probed["n"] + 1))
+    monkeypatch.setattr(server, "_update_one", lambda tool, proxy, extra: {"ok": True, "proxy": proxy})
+    out = server.update_db("trivy", proxy="http://127.0.0.1:3128")
+    assert probed["n"] == 0
+    assert out["proxy"] == "http://127.0.0.1:3128"
+
+
+def test_update_db_auto_route_off_via_env(server, monkeypatch):
+    monkeypatch.setenv("EL_SCA_AUTO_ROUTE", "0")
+    monkeypatch.setattr(
+        server, "_ensure_route_plan", lambda **kw: (_ for _ in ()).throw(AssertionError("must not probe"))
+    )
+    monkeypatch.setattr(server, "_update_one", lambda tool, proxy, extra: {"ok": True, "proxy": proxy})
+    out = server.update_db("grype")
+    assert out["ok"] is True
+    assert out["proxy"] is None
+
+
+def test_update_db_only_source_rejected_for_all(server):
+    out = server.update_db("all", only_source="NVD")
+    assert out["ok"] is False
+    assert "cve-bin-tool only" in out["error"]

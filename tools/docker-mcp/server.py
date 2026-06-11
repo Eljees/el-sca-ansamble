@@ -28,6 +28,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 
 try:
     from datetime import UTC  # py3.11+
@@ -44,6 +45,8 @@ from mcp.server.fastmcp import FastMCP
 PROJECT_DIR = Path(os.environ.get("EL_SCA_DIR", "/mnt/d/dev/el-sca-ansamble"))
 
 SCANNER_TOOLS = {"trivy", "grype", "cve-bin-tool"}
+# Stable execution order for update_db(tool="all").
+ALL_UPDATE_ORDER = ("trivy", "grype", "cve-bin-tool")
 ALL_SCAN_TOOLS = {"all", "syft", "trivy", "grype", "cve-bin-tool"}
 # cve-bin-tool aggregate data sources (configs/feed_sources.yaml: cve_bin_tool.data_sources).
 # Used by update_db(only_source=...) to update a single source by disabling the rest.
@@ -109,6 +112,10 @@ def _tail(text: str | None, n: int = 60) -> str:
 
 # Map the MCP-facing tool name to the route-plan.json key.
 _ROUTE_PLAN_KEY = {"trivy": "trivy", "grype": "grype", "cve-bin-tool": "cve_bin_tool"}
+# A plan younger than this is reused instead of re-running route-doctor, so
+# update_db("all") (or three back-to-back single-tool calls) probes the network
+# once, not three times.
+ROUTE_PLAN_MAX_AGE_SECONDS = 300
 
 
 def _auto_route_enabled() -> bool:
@@ -116,8 +123,17 @@ def _auto_route_enabled() -> bool:
     return os.environ.get("EL_SCA_AUTO_ROUTE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _route_plan_path() -> Path:
+    return PROJECT_DIR / "artifacts" / "route-plan.json"
+
+
 def _run_route_doctor() -> dict[str, Any]:
-    """Run the in-network route-doctor; it writes artifacts/route-plan.{json,env}."""
+    """Run the in-network route-doctor; it writes artifacts/route-plan.{json,env}.
+
+    NOTE: route-doctor exits 2 when SOME tool has no reachable route — the plan
+    file is still written and is still valid for the tools that do have one, so
+    callers must not gate on ``ok`` alone.
+    """
     return _run(
         ["docker", "compose", "--profile", "route", "run", "--rm", "route-doctor"],
         timeout=300,
@@ -125,7 +141,7 @@ def _run_route_doctor() -> dict[str, Any]:
 
 
 def _load_route_plan() -> dict[str, Any] | None:
-    path = PROJECT_DIR / "artifacts" / "route-plan.json"
+    path = _route_plan_path()
     if not path.is_file():
         return None
     try:
@@ -134,24 +150,35 @@ def _load_route_plan() -> dict[str, Any] | None:
         return None
 
 
-def _auto_route_for(tool: str) -> tuple[str | None, list[str], dict[str, Any]]:
-    """Discover the live egress for *tool* and return (proxy_url, extra_env, info).
+def _ensure_route_plan(*, max_age_seconds: int = ROUTE_PLAN_MAX_AGE_SECONDS) -> dict[str, Any] | None:
+    """Return a fresh route plan, re-running route-doctor only when stale.
 
-    Runs route-doctor, reads the plan, and selects the per-tool proxy URL.  For
-    cve-bin-tool it additionally returns ``-e CVE_BIN_TOOL_ENRICH_PROXY=<http>``
-    so the updater's enrichment bridge uses the same route (its NVD client can't
-    speak SOCKS, so the plan already guarantees an HTTP URL for it).  On any
-    failure it returns ``(None, [], {...})`` → caller behaves exactly as before
-    (direct / .env-configured).
+    Freshness is judged by the plan file's mtime, so one route-doctor probe
+    serves a whole "update everything" burst.
     """
-    doctor = _run_route_doctor()
-    plan = _load_route_plan()
+    path = _route_plan_path()
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        age = None
+    if age is not None and 0 <= age < max_age_seconds:
+        plan = _load_route_plan()
+        if plan:
+            return plan
+    _run_route_doctor()
+    return _load_route_plan()
+
+
+def _route_for_tool(plan: dict[str, Any] | None, tool: str) -> tuple[str | None, list[str], dict[str, Any]]:
+    """Select (proxy_url, extra -e flags, info) for *tool* from a route plan.
+
+    For cve-bin-tool additionally returns ``-e CVE_BIN_TOOL_ENRICH_PROXY=<http>``
+    so the updater's enrichment bridge uses the same route (its NVD client can't
+    speak SOCKS; the plan already guarantees an HTTP URL for it).  With no plan
+    the caller behaves exactly as before (direct / .env-configured).
+    """
     if not plan:
-        return (
-            None,
-            [],
-            {"auto_route": "skipped", "reason": "route-doctor produced no plan", "doctor": doctor},
-        )
+        return None, [], {"auto_route": "skipped", "reason": "route-doctor produced no plan"}
     sel = (plan.get("plan") or {}).get(_ROUTE_PLAN_KEY.get(tool, tool)) or {}
     proxy_url = sel.get("proxy_url")
     extra_env: list[str] = []
@@ -164,6 +191,11 @@ def _auto_route_for(tool: str) -> tuple[str | None, list[str], dict[str, Any]]:
         "reason": sel.get("reason"),
     }
     return proxy_url, extra_env, info
+
+
+def _auto_route_for(tool: str) -> tuple[str | None, list[str], dict[str, Any]]:
+    """Discover the live egress for *tool* (cached plan or a fresh probe)."""
+    return _route_for_tool(_ensure_route_plan(), tool)
 
 
 def _run(
@@ -234,7 +266,7 @@ def compose_logs(service: str, tail: int = 80) -> dict:
 
 
 @mcp.tool()
-def route_plan() -> dict:
+def route_plan(force: bool = False) -> dict:
     """Run the in-network route-doctor and return the chosen egress per tool.
 
     Probes the in-network sidecars (tinyproxy/proxy-xray), the host's local proxy
@@ -242,32 +274,63 @@ def route_plan() -> dict:
     artifacts/route-plan.{json,env} and returns the per-tool plan. READ-ONLY.
     This is what ``update_db``/``run_scan`` call automatically when no explicit
     proxy is given (unless EL_SCA_AUTO_ROUTE=0).
+
+    Args:
+        force: re-probe even if a recent plan (younger than 5 min) exists.
     """
-    doctor = _run_route_doctor()
-    plan = _load_route_plan()
+    plan = _ensure_route_plan(max_age_seconds=0 if force else ROUTE_PLAN_MAX_AGE_SECONDS)
     if not plan:
-        return {"ok": False, "error": "route-doctor produced no plan", "doctor": doctor}
-    return {"ok": doctor.get("ok", False), "plan": plan.get("plan"), "transports": plan.get("transports")}
+        return {"ok": False, "error": "route-doctor produced no plan"}
+    return {
+        "ok": True,
+        "generated_utc": plan.get("generated_utc"),
+        "plan": plan.get("plan"),
+        "transports": plan.get("transports"),
+    }
+
+
+def _update_one(tool: str, proxy: str | None, extra_env: list[str]) -> dict[str, Any]:
+    """Run one tool's updater container (plus grype's importer)."""
+    result = _run(
+        ["docker", "compose", "--profile", "update", "run", "--rm", *extra_env, f"{tool}-updater"],
+        timeout=2400,
+        proxy=proxy,
+    )
+    if tool == "grype" and result.get("ok"):
+        result = {
+            "ok": result.get("ok", False),
+            "updater": result,
+            "importer": _run(
+                ["docker", "compose", "--profile", "update", "run", "--rm", "grype-db-importer"],
+                timeout=600,
+                proxy=proxy,
+            ),
+        }
+        result["ok"] = bool(result["updater"].get("ok")) and bool(result["importer"].get("ok"))
+    return result
 
 
 @mcp.tool()
 def update_db(
     tool: str, proxy: str | None = None, only_source: str | None = None, auto_route: bool = True
 ) -> dict:
-    """Update a scanner DB by running its updater container (profile ``update``).
+    """Update scanner DBs — one tool or all of them (profile ``update``).
 
-    For grype, also runs grype-db-importer.  Pass ``proxy`` (e.g.
-    ``http://127.0.0.1:10808``) to route the container through the host's local
-    proxy — it is auto-translated to ``host.docker.internal`` for the container.
+    ``tool="all"`` updates trivy, grype (with importer) and cve-bin-tool in one
+    call, sharing a SINGLE route-doctor probe: each tool gets its own egress
+    from the same plan (cve-bin-tool always an HTTP bridge; trivy/grype may go
+    via SOCKS).  Pass ``proxy`` (e.g. ``http://127.0.0.1:10808``) to force one
+    proxy for everything — it is auto-translated to ``host.docker.internal``
+    for the containers.
 
     When ``proxy`` is omitted and ``auto_route`` is true (the default), the
-    in-network route-doctor is run first to pick a live egress for this tool
-    automatically (works under any tunnel/proxy/VPN setup); if nothing is found
-    the update proceeds direct, exactly as before.  Set ``auto_route=False`` or
-    the env ``EL_SCA_AUTO_ROUTE=0`` to disable.
+    in-network route-doctor picks a live egress automatically (works under any
+    tunnel/proxy/VPN setup); a plan younger than 5 minutes is reused.  If
+    nothing is found the update proceeds direct, exactly as before.  Set
+    ``auto_route=False`` or the env ``EL_SCA_AUTO_ROUTE=0`` to disable.
 
     Args:
-        tool: one of trivy | grype | cve-bin-tool.
+        tool: all | trivy | grype | cve-bin-tool.
         proxy: optional explicit proxy URL for the DB fetch (overrides auto-route).
         only_source: cve-bin-tool only — update just this single data source
             (NVD|OSV|GAD|REDHAT|CURL|EPSS|PURL2CPE|RSD).  Implemented by passing
@@ -275,17 +338,37 @@ def update_db(
             container, so only the requested source is fetched.
         auto_route: discover and apply a working egress when no proxy is given.
     """
-    if tool not in SCANNER_TOOLS:
-        return {"ok": False, "error": f"tool must be one of {sorted(SCANNER_TOOLS)}"}
+    if tool != "all" and tool not in SCANNER_TOOLS:
+        return {"ok": False, "error": f"tool must be one of ['all', *{sorted(SCANNER_TOOLS)}]"}
+    if only_source is not None and tool != "cve-bin-tool":
+        return {"ok": False, "error": "only_source is supported for cve-bin-tool only"}
 
-    extra_env: list[str] = []
+    use_auto = proxy is None and auto_route and _auto_route_enabled()
+    plan = _ensure_route_plan() if use_auto else None
+
+    # ── all tools, one probe ─────────────────────────────────────────────
+    if tool == "all":
+        results: dict[str, Any] = {}
+        routes: dict[str, Any] = {}
+        for t in ALL_UPDATE_ORDER:
+            t_proxy, t_extra, t_info = (proxy, [], None) if not use_auto else _route_for_tool(plan, t)
+            results[t] = _update_one(t, t_proxy, t_extra)
+            if t_info is not None:
+                routes[t] = t_info
+        out: dict[str, Any] = {
+            "ok": all(bool(r.get("ok")) for r in results.values()),
+            "results": results,
+        }
+        if routes:
+            out["route"] = routes
+        return out
+
+    # ── single tool ──────────────────────────────────────────────────────
     route_info: dict[str, Any] | None = None
-    if proxy is None and auto_route and _auto_route_enabled():
-        proxy, route_extra_env, route_info = _auto_route_for(tool)
-        extra_env += route_extra_env
+    extra_env: list[str] = []
+    if use_auto:
+        proxy, extra_env, route_info = _route_for_tool(plan, tool)
     if only_source is not None:
-        if tool != "cve-bin-tool":
-            return {"ok": False, "error": "only_source is supported for cve-bin-tool only"}
         src = only_source.strip().upper()
         if src not in CVE_BIN_TOOL_SOURCES:
             return {
@@ -303,20 +386,7 @@ def update_db(
             "CVE_BIN_TOOL_DISABLE_SOURCES_ON_RETRY=",
         ]
 
-    result = _run(
-        ["docker", "compose", "--profile", "update", "run", "--rm", *extra_env, f"{tool}-updater"],
-        timeout=2400,
-        proxy=proxy,
-    )
-    if tool == "grype" and result.get("ok"):
-        result = {
-            "updater": result,
-            "importer": _run(
-                ["docker", "compose", "--profile", "update", "run", "--rm", "grype-db-importer"],
-                timeout=600,
-                proxy=proxy,
-            ),
-        }
+    result = _update_one(tool, proxy, extra_env)
     if route_info is not None and isinstance(result, dict):
         result["route"] = route_info
     return result

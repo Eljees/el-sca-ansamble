@@ -27,6 +27,7 @@ x-proxy-env: &proxy-env
 
 services:
   stack-info:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -82,6 +83,7 @@ services:
     networks: [scanner-net]
 
   grype-updater:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -187,6 +189,7 @@ services:
     networks: [scanner-net]
 
   artifact-extractor:
+    image: elariaphd/el-sca-extractor:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.extractor
@@ -223,6 +226,7 @@ services:
     networks: [scanner-net]
 
   cve-bin-tool-updater:
+    image: elariaphd/el-sca-cve-bin-tool:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.cve-bin-tool
@@ -264,6 +268,7 @@ services:
     networks: [scanner-net]
 
   cve-bin-tool-scanner:
+    image: elariaphd/el-sca-cve-bin-tool:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.cve-bin-tool
@@ -294,6 +299,7 @@ services:
     networks: [scanner-net]
 
   db-admin:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -326,10 +332,15 @@ services:
   # Add the docker-compose.route-doctor.yml override to also retarget the xray
   # sidecar's upstream at the live host proxy (--write-xray).
   route-doctor:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
-    profiles: ["route", "update", "scan"]
+    # ONLY the "route" profile: it must never be part of "update"/"scan" —
+    # `make update` runs `up --abort-on-container-exit`, and a quickly-exiting
+    # route-doctor would tear the long-running updaters down mid-pull.  It is
+    # always invoked explicitly via `compose --profile route run --rm`.
+    profiles: ["route"]
     working_dir: /workspace
     command: ["route-plan", "--json", "--artifacts-dir", "/workspace/artifacts"]
     environment:
@@ -347,6 +358,7 @@ services:
   #   python -m resilient_updates.cli dashboard --repo-root . --port 8080
   # Published on loopback only.
   dashboard:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -362,6 +374,7 @@ services:
     networks: [scanner-net]
 
   mock-feed-server:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -374,6 +387,7 @@ services:
     networks: [scanner-net]
 
   report-collector:
+    image: elariaphd/el-sca-resilient-updater:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -399,6 +413,7 @@ services:
   # ── Specialized format analyzers ──────────────────────────────────────────
 
   apk-analyzer:
+    image: elariaphd/el-sca-apk-analyzer:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.apk-analyzer
@@ -421,6 +436,7 @@ services:
     networks: [scanner-net]
 
   win-analyzer:
+    image: elariaphd/el-sca-win-analyzer:0.1.1
     build:
       context: .
       dockerfile: Dockerfile.win-analyzer
@@ -516,7 +532,10 @@ services:
     restart: unless-stopped
     depends_on:
       proxy-xray:
-        condition: service_healthy
+        # NOT service_healthy: proxy-xray's healthcheck is disabled (distroless
+        # image, no shell to probe with), so a health condition can never be
+        # met and `--profile proxy up` would hang/fail on the dependency.
+        condition: service_started
     volumes:
       - ./configs/tinyproxy/tinyproxy.conf:/etc/tinyproxy/tinyproxy.conf:ro
     networks: [scanner-net]

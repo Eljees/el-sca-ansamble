@@ -146,10 +146,15 @@ auto_route_once() {
   local rc=0
   docker compose --profile route run --rm route-doctor >/dev/null 2>&1 || rc=$?
   local plan_env="$ARTIFACTS_DIR/route-plan.env"
-  if [[ $rc -ne 0 || ! -f "$plan_env" ]]; then
-    echo "[route] route-doctor produced no plan (rc=$rc); proceeding direct."
+  # rc=2 means SOME tool had no reachable route — the plan file is still
+  # written and still valid for the tools that do have one. Only a missing
+  # (or stale — left over from an earlier run while THIS doctor crashed)
+  # plan file means "nothing to apply".
+  if [[ ! -f "$plan_env" ]] || ! find "$plan_env" -newermt '-10 minutes' | grep -q .; then
+    echo "[route] route-doctor produced no fresh plan (rc=$rc); proceeding direct."
     return 0
   fi
+  [[ $rc -ne 0 ]] && echo "[route] route-doctor exit $rc (partial routes); applying what was found."
   # shellcheck disable=SC1090
   while IFS= read -r line; do
     [[ -z "$line" || "${line:0:1}" == "#" ]] && continue

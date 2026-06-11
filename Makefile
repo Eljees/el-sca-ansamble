@@ -72,8 +72,11 @@ preflight:  ## Validate env + render compose with strict guards.
 # ─────────────────────────────────────────────────────────────────────────
 # Pipeline shortcuts (Linux/macOS).  TARGET= must be set or compose fails.
 # ─────────────────────────────────────────────────────────────────────────
-.PHONY: update scan report full
-update:  ## Pull fresh CVE databases.
+.PHONY: update update-compose scan report full
+update:  ## Pull fresh CVE databases (all tools, auto-routed). TOOL=trivy|grype|cve-bin-tool for one.
+	./scripts/update-db.sh $(or $(TOOL),all)
+
+update-compose:  ## Legacy: raw compose-up of every updater (no auto-route, no trivy flag render).
 	COMPOSE_PROFILES=update SCAN_TARGET_HOST="$(TARGET)" $(COMPOSE) up --abort-on-container-exit
 
 scan:  ## Run the scan stage (Syft → Grype → Trivy → cve-bin-tool).
