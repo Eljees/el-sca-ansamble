@@ -584,8 +584,6 @@ def test_job_maybe_periodic_checkpoint_noop_without_run_dir():
 
 def test_job_maybe_periodic_checkpoint_writes_when_interval_elapsed(tmp_path):
     """With run_dir + elapsed interval → writes checkpoint.json."""
-    from resilient_updates.orchestrator import write_checkpoint
-
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     job = Job("scan", SCAN_STAGES, artifacts_dir=tmp_path, run_dir=run_dir)
