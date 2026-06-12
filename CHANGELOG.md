@@ -6,6 +6,8 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-12
+
 ### Added
 
 - **Route-doctor — обновление БД из любой сети (ADR-0007 P2).** Сервис
@@ -78,6 +80,30 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `export_db_image.sh`, `import_db_image.sh`, `reproduce-cybersec-11531.sh`.
 - `tests/test_orchestrator.py` — зафиксированы 10 ранее не закоммиченных тестов.
 - Audit-баннеры в `docs/audit/00–30-*.md` — счётчик тестов обновлён до 722.
+- `tests/test_orchestrator.py` — ещё 10 целевых тестов для непокрытых ветвей
+  (`start_update` single-step, `current_stage_key`, `maybe_periodic_checkpoint`,
+  `feed_line` progress в auto-detect режиме, `_resolve_stage` / `begin_stage` /
+  `end_stage` no-op пути); покрытие `orchestrator.py` 86 % → 91 %.
+- `tests/test_dashboard.py` — 18 новых целевых тестов для вспомогательных функций
+  (`_provenance_status`, `_deep_find`, `_read_env_versions`) и endpoint-ветвей
+  (403 при `EL_SCA_DASHBOARD_ACTIVE=0`, `/api/route-plan` GET/POST, 500 на ошибку
+  записи); покрытие `dashboard.py` 86 % → 99 %.
+- `tests/test_nvd_feed_import.py` — исправлен нестабильный тест
+  `test_main_continues_after_feed_download_failure`: добавлены `monkeypatch.delenv`
+  для всех proxy-переменных окружения и mock `shutil.which`, блокирующий
+  Windows-специфичный egress через `curl.exe`.
+- Coverage gate: поднят с 85 % до 88 % в `.github/workflows/ci.yml`,
+  `.gitlab-ci.yml` и `Makefile`; суммарное покрытие: **93 %** (740 тестов).
+- `requirements.txt` — полностью закреплён через `pip-compile --generate-hashes`
+  (pip-tools 7.5.3, Python 3.12): все 26 прямых и транзитивных зависимостей
+  несут `--hash=sha256:...` для воспроизводимых и tamper-evident Docker-сборок.
+- `pytest.ini` — добавлено подавление `ResourceWarning` (httpx/starlette оставляют
+  незакрытые сокеты в Python 3.12+), `DeprecationWarning` от starlette/fastapi,
+  маркер `integration` (Docker/compose/сеть; по умолчанию исключается в CI).
+- `docs/adr/0003-vex-feed.md`, `docs/adr/0005-unified-cli-scan.md` — статус
+  изменён с `proposed` на `accepted`; `docs/adr/README.md` обновлён.
+- `.gitignore` — добавлены паттерны для `route-doctor.out` и `Dockerfile.*.fc`
+  (editor backup), артефакты отладочной сессии (`*.done`, `_local_*.txt` и др.).
 
 ## [0.1.1] - 2026-06-11
 
@@ -587,7 +613,8 @@ Internal release (see `docs/status-and-roadmap.md` Phase 1):
 - Initial proxy support (flat env / yaml form).
 - cve-bin-tool scan timeout wrapper.
 
-[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Eljees/el-sca-ansamble/releases/tag/v0.1.0
 [3.0.0]: https://github.com/Eljees/el-sca-ansamble/releases/tag/v3.0.0
