@@ -198,7 +198,7 @@ jobs:
 
   # Unit + integration tests.
   # Coverage gate keeps regressions visible.  Tune --cov-fail-under as
-  # purpose-built tests grow.  See docs/audit/30-tests.md section 4.
+  # purpose-built tests grow.  See docs/audit/ for current test strategy.
   # ─────────────────────────────────────────────────────────────────────
   pytest:
     runs-on: ubuntu-latest

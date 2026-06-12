@@ -63,6 +63,10 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   синхронизации с upstream при апгрейде cve-bin-tool > 3.4.
 - `pytest.ini` — обновлена ссылка на актуальный аудит-документ.
 - `ruff format` — ликвидирован drift в 3 файлах после сессий с FUSE-mount.
+- `docker-compose.yml` `volume-init` — добавлен `mkdir -p` для 7 поддиректорий
+  `artifacts/` перед `chmod -R 0777`, чтобы root-owned родительские директории не
+  блокировали запись uid-1001 контейнерами (grype-updater, report-collector, cve-bin-tool).
+- `pyproject.toml` — версия синхронизирована с `versions.env` и CHANGELOG: `0.1.0 → 0.1.1`.
 
 ## [0.1.1] - 2026-06-11
 
@@ -572,6 +576,8 @@ Internal release (see `docs/status-and-roadmap.md` Phase 1):
 - Initial proxy support (flat env / yaml form).
 - cve-bin-tool scan timeout wrapper.
 
-[Unreleased]: https://example.invalid/el-sca-ansamble/compare/v3.0.0...HEAD
-[3.0.0]: https://example.invalid/el-sca-ansamble/releases/tag/v3.0.0
-[2.0.0]: https://example.invalid/el-sca-ansamble/releases/tag/v2.0.0
+[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/Eljees/el-sca-ansamble/releases/tag/v0.1.0
+[3.0.0]: https://github.com/Eljees/el-sca-ansamble/releases/tag/v3.0.0
+[2.0.0]: https://github.com/Eljees/el-sca-ansamble/releases/tag/v2.0.0

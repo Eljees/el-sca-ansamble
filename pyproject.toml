@@ -1,6 +1,6 @@
 [project]
 name = "el-sca-ansamble"
-version = "0.1.0"
+version = "0.1.1"
 description = "Resilient SCA orchestration wrapper for Trivy, Grype, Syft, cve-bin-tool"
 readme = "README.md"
 requires-python = ">=3.10"
