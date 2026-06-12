@@ -389,7 +389,7 @@ def test_checkpoint_snapshots_report_to_run_dir(tmp_path: Path):
 def test_start_scan_registers_run_dir_and_log(tmp_path: Path, monkeypatch):
     reg = JobRegistry(tmp_path, compose=["docker", "compose"])
 
-    def fake_run_scan(job, target_host, tools=None):
+    def fake_run_scan(job, target_host, tools=None, *, resume=False):
         job.finish(0)
 
     monkeypatch.setattr(reg, "_run_scan", fake_run_scan)

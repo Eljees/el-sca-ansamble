@@ -517,6 +517,16 @@ _GUI_HTML = """<!doctype html>
       <button id="btn-go">▶ Тулз ок, погнали</button>
       <span class="muted">— выбери инструменты выше и запускай</span>
     </div>
+    <div class="row" id="resume-row" style="display:none; margin-top:12px">
+      <button id="btn-resume">⏯ Продолжить с чекпоинта</button>
+      <span class="muted" id="resume-info"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Монитор · контейнеры и прогресс</h2>
+    <div id="mon-pipeline" class="muted">загрузка…</div>
+    <div id="mon-containers" style="margin-top:10px"></div>
   </section>
 
   <section class="panel">
@@ -736,6 +746,76 @@ $("#btn-update").addEventListener("click", () => updateTarget("all"));
 $("#btn-refresh").addEventListener("click", loadTools);
 loadTools();
 
+// ── Resume from checkpoint ───────────────────────────────────────────────────
+async function resumeScan(){
+  const btn = $("#btn-resume"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/scan/resume", { method:"POST" });
+    if(!r.ok){
+      let msg = "ошибка " + r.status;
+      try { msg = (await r.json()).detail || msg; } catch(e){}
+      $("#resume-info").textContent = msg;
+      return;
+    }
+    follow((await r.json()).job_id, "scan");
+  } finally { btn.disabled = false; }
+}
+$("#btn-resume").addEventListener("click", resumeScan);
+
+// ── Монитор: контейнеры + прогресс пайплайна (обновление каждые 5 c) ────────
+const MON_STAGE_ICON = { done:"✓", active:"▶", error:"✗", pending:"·" };
+function esc(s){ const d=document.createElement("span"); d.textContent=String(s??""); return d.innerHTML; }
+async function loadMonitor(){
+  let m;
+  try { const r = await fetch("/api/monitor"); if(!r.ok) return; m = await r.json(); }
+  catch(e){ return; }
+  const p = m.pipeline || {};
+  let html = "";
+  if(!p.present){
+    html = "<span class='muted'>нет активного/последнего прогона</span>";
+  } else {
+    const head = [];
+    head.push("<b>" + esc(p.status||"?") + "</b>");
+    if(p.current_stage) head.push("этап: <b>" + esc(p.current_stage) + "</b>");
+    if(p.elapsed_s != null) head.push(Math.round(p.elapsed_s) + "s");
+    if(p.resumed) head.push("(продолжен с чекпоинта)");
+    html = head.join(" · ");
+    if(p.target) html += "<div class='muted' style='font-size:12px'>" + esc(p.target) + "</div>";
+    html += "<div style='margin-top:6px'>" + (p.stages||[]).map(s => {
+      const ic = MON_STAGE_ICON[s.status]||"?";
+      let t = "";
+      if(s.duration_s != null) t = " " + Math.round(s.duration_s) + "s";
+      else if(s.elapsed_s != null) t = " …" + Math.round(s.elapsed_s) + "s";
+      const skip = s.skipped_via_resume ? " (skip)" : "";
+      return "<span class='pill' style='margin-right:6px'>" + ic + " " + esc(s.stage) + t + skip + "</span>";
+    }).join("") + "</div>";
+    // показать кнопку resume для прерванного/упавшего прогона
+    const resumable = p.status === "error" || p.status === "aborted" ||
+      (p.status === "running" && p.updated_utc && (Date.now() - new Date(p.updated_utc).getTime()) > 15*60*1000);
+    $("#resume-row").style.display = resumable ? "" : "none";
+    if(resumable) $("#resume-info").textContent =
+      "прерванный прогон: " + (p.target||"") + " — продолжить с последнего завершённого этапа";
+  }
+  $("#mon-pipeline").innerHTML = html;
+  const c = m.containers || {};
+  let chtml = "";
+  if(!c.ok){
+    chtml = "<span class='muted'>docker недоступен: " + esc(c.error||"?") + "</span>";
+  } else if(!(c.containers||[]).length){
+    chtml = "<span class='muted'>контейнеры стека не запущены</span>";
+  } else {
+    chtml = c.containers.map(x => {
+      const st = String(x.state||"").toLowerCase();
+      const cls = st === "running" ? "ok" : (st === "exited" ? "" : "failed");
+      return "<span class='pill " + cls + "' style='margin:0 6px 6px 0; display:inline-block'>" +
+        esc(x.service||x.name) + ": " + esc(x.status||x.state||"?") + "</span>";
+    }).join("");
+  }
+  $("#mon-containers").innerHTML = chtml;
+}
+loadMonitor();
+setInterval(loadMonitor, 5000);
+
 // ── Proxy chain toggle ────────────────────────────────────────────────────────
 const CHAIN_LABELS = { direct: "🟢 Direct", corp: "🟡 Corp (proxy)", "via-vpn": "🟣 VPN" };
 const CHAIN_CYCLE  = ["direct", "corp", "via-vpn"];
@@ -883,6 +963,36 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
             "run_dir": str(job.run_dir) if job.run_dir else "",
             "log": str(job.log_path) if job.log_path else "",
         }
+
+    @app.post("/api/scan/resume")
+    def scan_resume() -> dict[str, str]:
+        """Resume the last interrupted scan from its checkpoint (pipeline_state.json)."""
+        if not active_enabled:
+            raise HTTPException(status_code=403, detail="active scan is disabled for this dashboard")
+        from .pipeline_state import load_state
+
+        state = load_state(root)
+        target = (state or {}).get("target") or ""
+        if not state or not target:
+            raise HTTPException(status_code=409, detail="нет сохранённого чекпоинта (pipeline_state.json)")
+        if not Path(target).exists():
+            raise HTTPException(status_code=409, detail=f"цель чекпоинта недоступна: {target}")
+        tool_key = str(state.get("tool") or "all")
+        tools_set = None if tool_key in ("", "all") else {t for t in tool_key.split(",") if t}
+        job = registry.start_scan(target, tools=tools_set, resume=True)
+        return {
+            "job_id": job.id,
+            "target": target,
+            "run_dir": str(job.run_dir) if job.run_dir else "",
+            "log": str(job.log_path) if job.log_path else "",
+        }
+
+    @app.get("/api/monitor")
+    def monitor_endpoint() -> dict[str, Any]:
+        """Container status + current pipeline progress (the «Монитор» panel)."""
+        from .monitor import gather_status
+
+        return gather_status(root, repo_root=rroot)
 
     @app.get("/api/report/{path:path}")
     def report_file(path: str):

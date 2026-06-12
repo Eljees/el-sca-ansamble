@@ -34,6 +34,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, ClassVar
 
+from . import pipeline_state
 from .run_layout import resolve_run_dir, snapshot_artifacts, write_checkpoint
 
 # ── Stage pipelines ─────────────────────────────────────────────────────────
@@ -460,9 +461,11 @@ class JobRegistry:
         with self._lock:
             self._jobs[job.id] = job
 
-    def start_scan(self, target_host: str, tools: set[str] | None = None) -> Job:
+    def start_scan(self, target_host: str, tools: set[str] | None = None, *, resume: bool = False) -> Job:
         # tools = which analysers to run (subset of syft/grype/trivy/cve-bin-tool).
         # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
+        # resume = skip stages already completed for the SAME target+tools
+        # (artifacts/pipeline_state.json — written by every previous run).
         mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "artifacts")
         run_dir = resolve_run_dir(
             artifacts_dir=self.artifacts_dir,
@@ -491,6 +494,7 @@ class JobRegistry:
         threading.Thread(
             target=self._run_scan,
             args=(job, target_host, tools),
+            kwargs={"resume": resume},
             name=f"job-{job.id}",
             daemon=True,
         ).start()
@@ -705,6 +709,35 @@ class JobRegistry:
             job.feed_line(f"ERROR: cannot launch {cmd[0]}: {exc}")
             return 127
         job.feed_line(f"$ {' '.join(cmd)}")
+        # Liveness heartbeat: long stages (extraction of huge archives, the
+        # cve-bin-tool pass) can be silent for many minutes.  If no output
+        # arrived for EL_SCA_HEARTBEAT_SECONDS, emit a status line with the
+        # elapsed time so the GUI/CLI never LOOK hung.  0 disables.
+        try:
+            heartbeat = int(os.environ.get("EL_SCA_HEARTBEAT_SECONDS", "30") or "30")
+        except ValueError:
+            heartbeat = 30
+        started = time.time()
+        last_output = [started]
+        stop_hb = threading.Event()
+
+        def _heartbeat() -> None:
+            while not stop_hb.wait(timeout=max(1.0, min(heartbeat, 10.0))):
+                quiet = time.time() - last_output[0]
+                if quiet < heartbeat:
+                    continue
+                stage = job.current_stage_key() or job.kind
+                elapsed = time.time() - started
+                job.feed_line(
+                    f"# … {stage}: ещё выполняется, прошло {elapsed:.0f}s "
+                    f"(нет вывода {quiet:.0f}s — это нормально для длинных этапов)"
+                )
+                last_output[0] = time.time()
+
+        hb_thread: threading.Thread | None = None
+        if heartbeat > 0:
+            hb_thread = threading.Thread(target=_heartbeat, name=f"hb-{job.id}", daemon=True)
+            hb_thread.start()
         try:
             assert proc.stdout is not None
             # Split on BOTH \r and \n: download progress bars redraw the same
@@ -717,6 +750,7 @@ class JobRegistry:
                 chunk = proc.stdout.read(2048)
                 if not chunk:
                     break
+                last_output[0] = time.time()
                 buf += chunk
                 parts = re.split(r"[\r\n]", buf)
                 buf = parts.pop()  # keep the last, possibly-incomplete segment
@@ -734,6 +768,10 @@ class JobRegistry:
             with contextlib.suppress(Exception):
                 proc.kill()
             return 1
+        finally:
+            stop_hb.set()
+            if hb_thread is not None:
+                hb_thread.join(timeout=2)
 
     def _spawn(self, job: Job, cmd: list[str], env: dict[str, str]) -> None:
         """Run a single command in a thread and finish the job with its code."""
@@ -774,7 +812,9 @@ class JobRegistry:
             pass
         return ""
 
-    def _run_scan(self, job: Job, target_host: str, tools: set[str] | None = None) -> None:
+    def _run_scan(
+        self, job: Job, target_host: str, tools: set[str] | None = None, *, resume: bool = False
+    ) -> None:
         """Extract → re-point the target to artifacts/extracted/current → run
         each scanner stage sequentially → aggregate the report.
 
@@ -782,11 +822,29 @@ class JobRegistry:
         the scanners are pointed at the EXTRACTED contents.  Without this, the
         scanners look at the raw archive, Syft catalogs 0 components, and every
         tool reports nothing.
+
+        With ``resume=True`` stages already completed for the same target+tools
+        (pipeline_state.json) are skipped, so a hung/interrupted scan restarts
+        from its last checkpoint instead of from zero.
         """
         compose = self.compose
         extracted_host = str((self.repo_root / "artifacts" / "extracted" / "current").resolve())
         self._copy_input_to_run(job, target_host)
         self._checkpoint(job, "start", "running")
+
+        # Shared checkpoint state (same file the CLI runner uses) — powers
+        # --resume and the monitor for dashboard-launched scans too.
+        tool_key = ",".join(sorted(tools)) if tools else "all"
+        state = pipeline_state.begin_run(
+            self.artifacts_dir,
+            target=target_host,
+            tool=tool_key,
+            case_id=os.environ.get("CASE_ID"),
+            resume=resume,
+        )
+        skip_done = pipeline_state.completed_stages(state) if resume and state.get("resumed") else set()
+        if skip_done:
+            job.feed_line("# resume: пропускаю завершённые этапы — " + ", ".join(sorted(skip_done)))
 
         # Pre-create REPORT dirs on the host so a root-running scanner can't
         # leave a dir the (uid 1001) report-collector then can't write to.
@@ -802,32 +860,42 @@ class JobRegistry:
         import shutil
 
         _cur = self.repo_root / "artifacts" / "extracted" / "current"
-        if _cur.exists():
+        # On resume the already-extracted tree IS the checkpoint — keep it
+        # (only when its manifest is still in place, otherwise re-extract).
+        resume_extract = "extract" in skip_done and self._extract_produced_output()
+        if _cur.exists() and not resume_extract:
             shutil.rmtree(_cur, ignore_errors=True)
         # Trivy's image has no python -> render its flags on the host (run-scan.sh).
         trivy_flags = self._render_trivy_flags()
 
         # Stage 1 — extract.
         job.begin_stage("extract")
-        ex_env = dict(os.environ)
-        ex_env["SCAN_TARGET_HOST"] = target_host  # satisfies the :? guard
-        ex_env["EXTRACT_INPUT_HOST"] = target_host
-        ex_env["EXTRACT_OUTPUT"] = "/workspace/artifacts/extracted/current"
-        rc = self._run_stream(
-            job,
-            # -u 0: run as root so the extractor can always write into the
-            # bind-mounted artifacts/ (and overwrite any stale root-owned file).
-            [*compose, "--profile", "extract", "run", "--rm", "-u", "0", "artifact-extractor"],
-            ex_env,
-        )
-        # The extractor can exit non-zero on a single unreadable member while
-        # still unpacking everything useful; treat it as OK if the manifest says
-        # so, otherwise the whole scan would go red over one skipped file.
-        extract_ok = rc == 0 or self._extract_produced_output()
-        if extract_ok and rc != 0:
-            job.feed_line("extract: предупреждения, но содержимое распаковано — продолжаем")
-        job.end_stage("extract", extract_ok)
-        self._checkpoint(job, "extract", "done" if extract_ok else "error")
+        if resume_extract:
+            job.feed_line("extract: пропущен — распакованное дерево уже на месте (чекпоинт)")
+            pipeline_state.stage_skip(self.artifacts_dir, "extract")
+            job.end_stage("extract", True)
+        else:
+            pipeline_state.stage_start(self.artifacts_dir, "extract")
+            ex_env = dict(os.environ)
+            ex_env["SCAN_TARGET_HOST"] = target_host  # satisfies the :? guard
+            ex_env["EXTRACT_INPUT_HOST"] = target_host
+            ex_env["EXTRACT_OUTPUT"] = "/workspace/artifacts/extracted/current"
+            rc = self._run_stream(
+                job,
+                # -u 0: run as root so the extractor can always write into the
+                # bind-mounted artifacts/ (and overwrite any stale root-owned file).
+                [*compose, "--profile", "extract", "run", "--rm", "-u", "0", "artifact-extractor"],
+                ex_env,
+            )
+            # The extractor can exit non-zero on a single unreadable member while
+            # still unpacking everything useful; treat it as OK if the manifest says
+            # so, otherwise the whole scan would go red over one skipped file.
+            extract_ok = rc == 0 or self._extract_produced_output()
+            if extract_ok and rc != 0:
+                job.feed_line("extract: предупреждения, но содержимое распаковано — продолжаем")
+            job.end_stage("extract", extract_ok)
+            pipeline_state.stage_end(self.artifacts_dir, "extract", ok=extract_ok, rc=rc)
+            self._checkpoint(job, "extract", "done" if extract_ok else "error")
 
         # Re-point every scanner at the extracted directory.
         sc_env = dict(os.environ)
@@ -864,6 +932,14 @@ class JobRegistry:
                 job.feed_line(f"{key}: пропущен (инструмент отключён)")
                 job.end_stage(key, True)
                 continue
+            # report is never skipped on resume: it is cheap and re-aggregates
+            # whatever the (partially skipped) scanners left in artifacts/.
+            if key in skip_done and key != "report":
+                job.feed_line(f"{key}: пропущен — уже выполнен (чекпоинт, resume)")
+                pipeline_state.stage_skip(self.artifacts_dir, key)
+                job.end_stage(key, True)
+                continue
+            pipeline_state.stage_start(self.artifacts_dir, key)
             run_cmd = [*compose, "--profile", "scan", "run", "--rm"]
             if service == "trivy-scanner":
                 run_cmd += ["-e", f"TRIVY_RENDERED_FLAGS={trivy_flags}"]
@@ -874,12 +950,14 @@ class JobRegistry:
             run_cmd.append(service)
             rc = self._run_stream(job, run_cmd, sc_env)
             job.end_stage(key, rc in ok_codes)
+            pipeline_state.stage_end(self.artifacts_dir, key, ok=rc in ok_codes, rc=rc)
             self._checkpoint(job, key, "done" if rc in ok_codes else "error")
 
         self._checkpoint(job, "final", "done")
         # Stop the lingering grype-static dependency container (best effort).
         self._run_stream(job, [*compose, "--profile", "scan", "down", "--remove-orphans"], sc_env)
         job.finalize()
+        pipeline_state.finish_run(self.artifacts_dir, status=job.status)
 
     def _copy_input_to_run(self, job: Job, target_host: str) -> None:
         if not job.run_dir:

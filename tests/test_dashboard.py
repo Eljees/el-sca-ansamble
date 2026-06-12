@@ -459,6 +459,70 @@ def test_post_proxy_chain_rejects_invalid_chain(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/monitor and POST /api/scan/resume — monitor + checkpoint resume
+# ---------------------------------------------------------------------------
+
+
+def test_api_monitor_shape(tmp_path: Path, monkeypatch):
+    """Monitor returns pipeline + containers + db_status without touching docker."""
+    from resilient_updates import pipeline_state as ps
+
+    ps.begin_run(tmp_path, target="/data/app.tar.gz", tool="all")
+    ps.stage_start(tmp_path, "extract")
+    monkeypatch.setattr(
+        "resilient_updates.monitor.list_containers",
+        lambda root: {"ok": True, "containers": []},
+    )
+    resp = _client(tmp_path).get("/api/monitor")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pipeline"]["present"] is True
+    assert body["pipeline"]["current_stage"] == "extract"
+    assert body["containers"]["ok"] is True
+
+
+def test_api_scan_resume_no_checkpoint_is_409(tmp_path: Path):
+    resp = _client(tmp_path).post("/api/scan/resume")
+    assert resp.status_code == 409
+
+
+def test_api_scan_resume_missing_target_is_409(tmp_path: Path):
+    from resilient_updates import pipeline_state as ps
+
+    ps.begin_run(tmp_path, target=str(tmp_path / "gone.tar.gz"), tool="all")
+    resp = _client(tmp_path).post("/api/scan/resume")
+    assert resp.status_code == 409
+
+
+def test_api_scan_resume_starts_job_with_resume_flag(tmp_path: Path, monkeypatch):
+    pytest.importorskip("fastapi")
+    from resilient_updates import pipeline_state as ps
+    from resilient_updates.orchestrator import SCAN_STAGES, Job, JobRegistry
+
+    target = tmp_path / "app.tar.gz"
+    target.write_bytes(b"data")
+    ps.begin_run(tmp_path, target=str(target), tool="syft,grype")
+
+    captured: list = []
+
+    def fake_start_scan(self, target_host, tools=None, *, resume=False):
+        captured.append((target_host, tools, resume))
+        job = Job("scan", SCAN_STAGES, target=target_host)
+        with self._lock:
+            self._jobs[job.id] = job
+        return job
+
+    monkeypatch.setattr(JobRegistry, "start_scan", fake_start_scan)
+    resp = _client(tmp_path).post("/api/scan/resume")
+    assert resp.status_code == 200
+    assert "job_id" in resp.json()
+    (target_host, tools, resume) = captured[0]
+    assert target_host == str(target)
+    assert tools == {"syft", "grype"}
+    assert resume is True
+
+
+# ---------------------------------------------------------------------------
 # Private helper coverage: _provenance_status, _deep_find, _read_env_versions
 # ---------------------------------------------------------------------------
 

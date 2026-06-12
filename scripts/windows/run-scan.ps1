@@ -31,6 +31,10 @@
   # Clean artifacts/ before this run (recommended between scans)
   [switch]$Clean,
 
+  # Resume from the last checkpoint: stages already completed for the SAME
+  # target+tool are skipped (artifacts/pipeline_state.json). Incompatible with -Clean.
+  [switch]$Resume,
+
   # Feed Syft-generated SBOM to cve-bin-tool instead of full binary scan.
   # Much faster (~30s vs 10+ min) but requires correct syft-format support in
   # cve-bin-tool v3.4. Disabled by default until verified working.
@@ -92,6 +96,69 @@ function Invoke-CveBinToolScannerChecked {
   param([Parameter(Mandatory=$true)][string[]]$Args)
   # cve-bin-tool exits with 1 when CVEs are found (success state), 0 when none found.
   Invoke-ComposeChecked -Args $Args -SuccessExitCodes @(0, 1)
+}
+
+# ── Stage runner: checkpoints (pipeline_state.json) + per-stage timings ──────
+# Каждый переход этапа фиксируется в artifacts/pipeline_state.json, поэтому
+# прерванный прогон можно продолжить с последнего завершённого этапа (-Resume),
+# а `python -m resilient_updates.cli monitor --watch 5` (в соседнем окне)
+# показывает живой статус контейнеров и этапов.
+$script:StateOk  = $false
+$script:RunExtra = ""
+
+function Invoke-RunStateCli {
+  param([Parameter(Mandatory=$true)][string[]]$StateArgs)
+  try {
+    python -m resilient_updates.cli run-state @StateArgs --artifacts-dir $ArtifactsDir *> $null
+    return ($LASTEXITCODE -eq 0)
+  } catch { return $false }
+}
+
+function Initialize-RunState {
+  $beginArgs = @("begin","--target",$TargetResolved,"--tool",$Tool,"--case-id",$CaseId,"--extra",$script:RunExtra)
+  if ($Resume) { $beginArgs += "--resume" }
+  $script:StateOk = Invoke-RunStateCli -StateArgs $beginArgs
+  if (-not $script:StateOk) {
+    Write-Host "[state] WARN: checkpoint state unavailable (python?); -Resume/monitor degraded" -ForegroundColor DarkYellow
+  } elseif ($Resume) {
+    Write-Host "[state] resume: завершённые этапы будут пропущены (pipeline_state.json)" -ForegroundColor DarkCyan
+  }
+}
+
+function Test-StageSkip {
+  param([Parameter(Mandatory=$true)][string]$Stage)
+  if (-not ($Resume -and $script:StateOk)) { return $false }
+  return (Invoke-RunStateCli -StateArgs @(
+    "should-skip","--stage",$Stage,"--target",$TargetResolved,"--tool",$Tool,"--extra",$script:RunExtra))
+}
+
+function Invoke-Stage {
+  param(
+    [Parameter(Mandatory=$true)][string]$Stage,
+    [Parameter(Mandatory=$true)][string[]]$ComposeArgs,
+    [int[]]$SuccessExitCodes = @(0)
+  )
+  if (Test-StageSkip -Stage $Stage) {
+    Write-Host "[stage] $Stage ✓ пропущен — уже выполнен (чекпоинт, -Resume)" -ForegroundColor DarkCyan
+    Invoke-RunStateCli -StateArgs @("stage-skip","--stage",$Stage) | Out-Null
+    return
+  }
+  Invoke-RunStateCli -StateArgs @("stage-start","--stage",$Stage) | Out-Null
+  $t0 = Get-Date
+  Write-Host "[stage] $Stage — старт $(Get-Date -Format HH:mm:ss)  (живой статус: python -m resilient_updates.cli monitor --watch 5)" -ForegroundColor Cyan
+  try {
+    Invoke-ComposeChecked -Args $ComposeArgs -SuccessExitCodes $SuccessExitCodes
+  } catch {
+    $elapsed = [int]((Get-Date) - $t0).TotalSeconds
+    Write-Host "[stage] $Stage ✗ ошибка (${elapsed}s)" -ForegroundColor Red
+    Invoke-RunStateCli -StateArgs @("stage-end","--stage",$Stage,"--ok","false") | Out-Null
+    Invoke-RunStateCli -StateArgs @("finish","--status","error") | Out-Null
+    Write-Host "[stage] перезапуск с этого места: повторите команду с -Resume" -ForegroundColor Yellow
+    throw
+  }
+  $elapsed = [int]((Get-Date) - $t0).TotalSeconds
+  Write-Host "[stage] $Stage ✓ завершён за ${elapsed}s" -ForegroundColor Green
+  Invoke-RunStateCli -StateArgs @("stage-end","--stage",$Stage,"--ok","true") | Out-Null
 }
 
 function Invoke-DbStatus {
@@ -204,6 +271,9 @@ Enable-WindowsComposeOverlay
 if (-not (Test-Path $Target)) {
   throw "Target does not exist: $Target"
 }
+if ($Clean -and $Resume) {
+  throw "-Clean and -Resume are mutually exclusive (clean wipes the checkpoint)"
+}
 
 # ── Derive output paths from target filename ──────────────────────────────────
 
@@ -245,6 +315,10 @@ $ArtifactsDir = Join-Path (Get-Location).Path "artifacts"
 # Compose renders the whole file even for db-admin helper calls. Seed harmless
 # placeholders early so the pre-scan DB freshness banner can render reliably.
 Initialize-ComposePlaceholders -PlaceholderPath $TargetResolved
+
+# Run-key salt for checkpoints: captured from the CLI values BEFORE the format
+# auto-detection mutates $Format, so the original and resumed invocation match.
+$script:RunExtra = "fmt=$($Format.ToLower());sbom=$([int][bool]$SbomScan)"
 
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
@@ -317,13 +391,19 @@ if ($Clean) {
   Write-Host ""
 }
 
-# Always remove stale SBOM files so Syft writes fresh ones.
+# Initialise the checkpoint state (fresh run, or load completed stages on -Resume).
+Initialize-RunState
+
+# Always remove stale SBOM files so Syft writes fresh ones — unless we resume
+# past an already-completed sbom stage (those files ARE the checkpoint then).
 # Windows bind-mounts can leave the file handle open between container runs,
 # preventing overwrite. Explicit delete before the run avoids stale data.
-$SbomDir = Join-Path $ArtifactsDir "sbom"
-foreach ($sbomFile in @("syft.json","cyclonedx.json","spdx.json")) {
-  $p = Join-Path $SbomDir $sbomFile
-  if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
+if (-not (Test-StageSkip -Stage "sbom")) {
+  $SbomDir = Join-Path $ArtifactsDir "sbom"
+  foreach ($sbomFile in @("syft.json","cyclonedx.json","spdx.json")) {
+    $p = Join-Path $SbomDir $sbomFile
+    if (Test-Path $p) { Remove-Item $p -Force -ErrorAction SilentlyContinue }
+  }
 }
 
 # ── Render Trivy flags (only needed for auto/standard pipeline) ───────────────
@@ -417,7 +497,15 @@ if ($Extract) {
   $env:EXTRACT_OUTPUT     = "/workspace/$($extractRel -replace '\\','/')"
   $env:EXTRACT_MAX_DEPTH  = [string]$ExtractMaxDepth
 
-  Invoke-ComposeChecked -Args @("--profile","extract","run","--rm","artifact-extractor")
+  # On -Resume an already-extracted tree is reused only when its manifest is
+  # still in place (the extractor purges current/ itself on a real re-run).
+  $extractManifest = Join-Path $extractHost "extraction_manifest.json"
+  if ((Test-StageSkip -Stage "extract") -and (Test-Path $extractManifest)) {
+    Write-Host "[stage] extract ✓ пропущен — распакованное дерево уже на месте (чекпоинт, -Resume)" -ForegroundColor DarkCyan
+    Invoke-RunStateCli -StateArgs @("stage-skip","--stage","extract") | Out-Null
+  } else {
+    Invoke-Stage -Stage "extract" -ComposeArgs @("--profile","extract","run","--rm","artifact-extractor")
+  }
 
   $env:SCAN_TARGET_HOST    = (Resolve-Path $extractHost).Path
   $env:SCAN_TARGET_DISPLAY = "$TargetResolved -> $env:SCAN_TARGET_HOST"
@@ -429,7 +517,7 @@ if ($Extract) {
 
 if ($Format -eq "apk") {
   Write-Host "[apk] Running APK analyzer…" -ForegroundColor Cyan
-  Invoke-ComposeChecked -Args @("--profile","apk","run","--rm","apk-analyzer")
+  Invoke-Stage -Stage "apk-analyzer" -ComposeArgs @("--profile","apk","run","--rm","apk-analyzer")
 
   # After APK analysis, run grype on the generated SBOM + cve-bin-tool on native libs
   Write-Host "[apk] Running grype on generated SBOM…" -ForegroundColor Cyan
@@ -441,7 +529,7 @@ if ($Format -eq "apk") {
     Invoke-ComposeChecked -Args @("--profile","update","run","--rm","grype-db-importer")
   }
   Invoke-DbStatus -DbTool "grype" -DbPath "/var/lib/resilient-db/grype/active"
-  Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
+  Invoke-Stage -Stage "grype" -ComposeArgs @("--profile",$Profile,"run","--rm","grype-scanner")
 
   # cve-bin-tool on extracted native libs (if any)
   $nativeDir = Join-Path $ArtifactsDir "extracted\apk-native"
@@ -452,13 +540,13 @@ if ($Format -eq "apk") {
       $env:CVE_BIN_TOOL_TARGET = "/workspace/artifacts/extracted/apk-native"
       $env:SCAN_TARGET_HOST    = (Resolve-Path $nativeDir).Path
       Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
-      Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+      Invoke-Stage -Stage "cve-bin-tool" -SuccessExitCodes @(0,1) -ComposeArgs @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
     }
   }
 
 } elseif ($Format -eq "win") {
   Write-Host "[win] Running Windows installer analyzer…" -ForegroundColor Cyan
-  Invoke-ComposeChecked -Args @("--profile","win","run","--rm","win-analyzer")
+  Invoke-Stage -Stage "win-analyzer" -ComposeArgs @("--profile","win","run","--rm","win-analyzer")
 
   # Run grype on generated SBOM (PE version info → CPE matching)
   Write-Host "[win] Running grype on generated SBOM…" -ForegroundColor Cyan
@@ -472,7 +560,7 @@ if ($Format -eq "apk") {
   }
   Invoke-DbStatus -DbTool "grype"        -DbPath "/var/lib/resilient-db/grype/active"
   Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
-  Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
+  Invoke-Stage -Stage "grype" -ComposeArgs @("--profile",$Profile,"run","--rm","grype-scanner")
 
   # cve-bin-tool binary scan on extracted files
   $winExtractDir = Join-Path $ArtifactsDir "extracted\win-installer"
@@ -499,7 +587,7 @@ if ($Format -eq "apk") {
     }
     $env:CVE_BIN_TOOL_TARGET = $cveScanContainer
     $env:SCAN_TARGET_HOST    = $cveScanHost
-    Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-Stage -Stage "cve-bin-tool" -SuccessExitCodes @(0,1) -ComposeArgs @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 
 } else {
@@ -517,13 +605,13 @@ switch ($Tool) {
     Invoke-DbStatus -DbTool "trivy"        -DbPath "/var/lib/resilient-db/trivy"
     Invoke-DbStatus -DbTool "grype"        -DbPath "/var/lib/resilient-db/grype/active"
     Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
-    Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-Stage -Stage "sbom"  -ComposeArgs @("--profile",$Profile,"run","--rm","syft-sbom")
+    Invoke-Stage -Stage "trivy" -ComposeArgs @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
+    Invoke-Stage -Stage "grype" -ComposeArgs @("--profile",$Profile,"run","--rm","grype-scanner")
+    Invoke-Stage -Stage "cve-bin-tool" -SuccessExitCodes @(0,1) -ComposeArgs @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
   "syft" {
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
+    Invoke-Stage -Stage "sbom" -ComposeArgs @("--profile",$Profile,"run","--rm","syft-sbom")
   }
   "grype" {
     if ($UpdateDb) {
@@ -531,22 +619,22 @@ switch ($Tool) {
       Invoke-ComposeChecked -Args @("--profile","update","run","--rm","grype-db-importer")
     }
     Invoke-DbStatus -DbTool "grype" -DbPath "/var/lib/resilient-db/grype/active"
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","syft-sbom")
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","grype-scanner")
+    Invoke-Stage -Stage "sbom"  -ComposeArgs @("--profile",$Profile,"run","--rm","syft-sbom")
+    Invoke-Stage -Stage "grype" -ComposeArgs @("--profile",$Profile,"run","--rm","grype-scanner")
   }
   "trivy" {
     if ($UpdateDb) {
       Invoke-ComposeChecked -Args @("--profile","update","run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-updater")
     }
     Invoke-DbStatus -DbTool "trivy" -DbPath "/var/lib/resilient-db/trivy"
-    Invoke-ComposeChecked -Args @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
+    Invoke-Stage -Stage "trivy" -ComposeArgs @("--profile",$Profile,"run","--rm","-e","TRIVY_RENDERED_FLAGS=$trivyFlags","trivy-scanner")
   }
   "cve-bin-tool" {
     if ($UpdateDb) {
       Invoke-ComposeChecked -Args @("--profile","update","run","--rm","cve-bin-tool-updater")
     }
     Invoke-DbStatus -DbTool "cve-bin-tool" -DbPath "/home/appuser/.cache/cve-bin-tool"
-    Invoke-CveBinToolScannerChecked -Args @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
+    Invoke-Stage -Stage "cve-bin-tool" -SuccessExitCodes @(0,1) -ComposeArgs @("--profile",$Profile,"run","--rm","cve-bin-tool-scanner")
   }
 }
 
@@ -555,7 +643,7 @@ switch ($Tool) {
 # ── Collect reports ───────────────────────────────────────────────────────────
 
 $env:CASE_ID = $CaseId
-Invoke-ComposeChecked -Args @("--profile","report","run","--rm","report-collector")
+Invoke-Stage -Stage "report" -ComposeArgs @("--profile","report","run","--rm","report-collector")
 
 # Generate Markdown report next to source file
 python -m resilient_updates.cli collect-report `
@@ -595,6 +683,9 @@ try {
 } catch {
   Write-Warning "archive-run failed: $($_.Exception.Message)"
 }
+
+# Mark the checkpoint state as finished.
+Invoke-RunStateCli -StateArgs @("finish","--status","done") | Out-Null
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 

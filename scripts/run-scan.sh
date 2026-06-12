@@ -19,6 +19,10 @@
 #   -e, --extract           Unpack archive before scanning (auto-detected for archives)
 #       --extract-max-depth N  Max recursion depth for extraction (default: 0)
 #   -c, --clean             Remove previous artifacts before this run
+#   -r, --resume            Resume from the last checkpoint: skip stages already
+#                           completed for the SAME target+tool (pipeline_state.json)
+#       --heartbeat N       Print a liveness line every N seconds during long
+#                           stages (default: 30; 0 disables)
 #       --sbom-scan         Feed Syft SBOM to cve-bin-tool instead of binary scan (experimental)
 #       --auto-route        Before --update-db, run route-doctor to pick a live egress (default on)
 #       --no-auto-route     Disable egress auto-discovery (use .env/direct as-is)
@@ -38,6 +42,8 @@ UPDATE_DB=0
 EXTRACT=0
 EXTRACT_MAX_DEPTH=0
 CLEAN=0
+RESUME=0
+HEARTBEAT="${EL_SCA_HEARTBEAT_SECONDS:-30}"
 SBOM_SCAN=0
 CBT_TIMEOUT=1800
 CBT_CHECKERS=""
@@ -60,6 +66,8 @@ while [[ $# -gt 0 ]]; do
     -e|--extract)          EXTRACT=1; shift ;;
     --extract-max-depth)   EXTRACT_MAX_DEPTH="$2"; shift 2 ;;
     -c|--clean)            CLEAN=1; shift ;;
+    -r|--resume)           RESUME=1; shift ;;
+    --heartbeat)           HEARTBEAT="$2"; shift 2 ;;
     --sbom-scan)           SBOM_SCAN=1; shift ;;
     --auto-route)          AUTO_ROUTE=1; shift ;;
     --no-auto-route)       AUTO_ROUTE=0; shift ;;
@@ -81,6 +89,14 @@ if [[ ! -e "$TARGET" ]]; then
   echo "ERROR: Target does not exist: $TARGET" >&2
   exit 2
 fi
+if [[ $CLEAN -eq 1 && $RESUME -eq 1 ]]; then
+  echo "ERROR: --clean and --resume are mutually exclusive (clean wipes the checkpoint)" >&2
+  exit 2
+fi
+# Run-key salt: inputs that change WHAT the stages produce (format/sbom mode).
+# Captured from the CLI values BEFORE auto-detection mutates FORMAT, so the
+# original and the resumed invocation derive the same key.
+RUN_EXTRA="fmt=${FORMAT};sbom=${SBOM_SCAN}"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -98,24 +114,95 @@ if [[ -z "$PYTHON_BIN" ]]; then
 fi
 [[ -n "$PYTHON_BIN" ]] || PYTHON_BIN="python3"
 
-compose_checked() {
-  # `|| rc=$?` keeps the non-zero exit from tripping `set -e` so we reach the
-  # explicit check below (a bare `docker compose` line would abort the script).
-  local rc=0
-  docker compose "$@" || rc=$?
-  if [[ $rc -ne 0 ]]; then
-    die "docker compose failed (exit $rc): $*"
+# ── Stage runner: heartbeat + checkpoints (pipeline_state.json) ──────────────
+# Long stages (extraction, cve-bin-tool) can be silent for many minutes; the
+# heartbeat prints a liveness line with elapsed time so the run never LOOKS
+# hung.  Every stage transition is checkpointed to artifacts/pipeline_state.json
+# so an interrupted run restarts from the last completed stage via --resume.
+STATE_OK=0
+LAST_STEP_RC=0
+
+state_cli() {
+  # Best-effort: checkpoint bookkeeping must never fail the pipeline itself.
+  "$PYTHON_BIN" -m resilient_updates.cli run-state "$@" --artifacts-dir "$ARTIFACTS_DIR" \
+    >/dev/null 2>&1 || true
+}
+
+state_begin() {
+  local resume_flag=()
+  [[ $RESUME -eq 1 ]] && resume_flag=(--resume)
+  if "$PYTHON_BIN" -m resilient_updates.cli run-state begin \
+       --artifacts-dir "$ARTIFACTS_DIR" --target "$TARGET_RESOLVED" \
+       --tool "$TOOL" --case-id "$CASE_ID" --extra "$RUN_EXTRA" \
+       "${resume_flag[@]}" >/dev/null 2>&1; then
+    STATE_OK=1
+    [[ $RESUME -eq 1 ]] && echo "[state] resume: завершённые этапы будут пропущены (pipeline_state.json)"
+  else
+    echo "[state] WARN: checkpoint state unavailable (host python?); --resume/monitor degraded"
   fi
 }
 
-compose_cve_bin_tool_checked() {
-  # cve-bin-tool exits 1 when CVEs are found (a success state) and 0 when none.
-  # Capture via `|| rc=$?` so `set -e` does not abort before we whitelist exit 1.
-  local rc=0
-  docker compose "$@" || rc=$?
-  if [[ $rc -ne 0 && $rc -ne 1 ]]; then
-    die "cve-bin-tool failed (exit $rc): $*"
+stage_should_skip() {
+  [[ $RESUME -eq 1 && $STATE_OK -eq 1 ]] || return 1
+  "$PYTHON_BIN" -m resilient_updates.cli run-state should-skip \
+    --artifacts-dir "$ARTIFACTS_DIR" --target "$TARGET_RESOLVED" \
+    --tool "$TOOL" --extra "$RUN_EXTRA" --stage "$1" >/dev/null 2>&1
+}
+
+# run_step <label> <ok_codes> <cmd...> — run a command with a liveness
+# heartbeat and elapsed-time reporting.  Exit codes in <ok_codes> (space-
+# separated) count as success; sets LAST_STEP_RC; returns 1 on failure.
+run_step() {
+  local label="$1" ok_codes="$2"; shift 2
+  local t0 rc=0 hb_pid="" cmd_pid elapsed code ok=0
+  t0=$(date +%s)
+  echo "[stage] $label — старт $(date +%H:%M:%S)"
+  "$@" &
+  cmd_pid=$!
+  if [[ "${HEARTBEAT:-0}" =~ ^[0-9]+$ ]] && [[ "${HEARTBEAT:-0}" -gt 0 ]]; then
+    (
+      while sleep "$HEARTBEAT"; do
+        kill -0 "$cmd_pid" 2>/dev/null || break
+        echo "[stage] $label … выполняется, прошло $(( $(date +%s) - t0 ))s"
+      done
+    ) &
+    hb_pid=$!
   fi
+  wait "$cmd_pid" || rc=$?
+  if [[ -n "$hb_pid" ]]; then
+    kill "$hb_pid" 2>/dev/null || true
+    wait "$hb_pid" 2>/dev/null || true
+  fi
+  elapsed=$(( $(date +%s) - t0 ))
+  LAST_STEP_RC=$rc
+  for code in $ok_codes; do [[ $rc -eq $code ]] && ok=1; done
+  if [[ $ok -eq 1 ]]; then
+    echo "[stage] $label ✓ завершён за ${elapsed}s (rc=$rc)"
+    return 0
+  fi
+  echo "[stage] $label ✗ ошибка rc=$rc (${elapsed}s)"
+  return 1
+}
+
+# run_stage <stage-key> <ok_codes> <cmd...> — checkpointed run_step: on
+# --resume a stage already completed for the same target+tool is skipped; a
+# failure is recorded in the checkpoint before the pipeline dies, so the next
+# --resume restarts exactly at the failed stage.
+run_stage() {
+  local stage="$1" ok_codes="$2"; shift 2
+  if stage_should_skip "$stage"; then
+    echo "[stage] $stage ✓ пропущен — уже выполнен (чекпоинт, --resume)"
+    state_cli stage-skip --stage "$stage"
+    return 0
+  fi
+  state_cli stage-start --stage "$stage"
+  if run_step "$stage" "$ok_codes" "$@"; then
+    state_cli stage-end --stage "$stage" --ok true --rc "$LAST_STEP_RC"
+    return 0
+  fi
+  state_cli stage-end --stage "$stage" --ok false --rc "$LAST_STEP_RC"
+  state_cli finish --status error
+  die "stage $stage failed (exit $LAST_STEP_RC); перезапуск с этого места: --resume"
 }
 
 db_status() {
@@ -252,10 +339,16 @@ if [[ $CLEAN -eq 1 ]]; then
   echo ""
 fi
 
-# Always remove stale SBOM files so Syft writes fresh ones
-for f in syft.json cyclonedx.json spdx.json; do
-  rm -f "$ARTIFACTS_DIR/sbom/$f"
-done
+# Initialise the checkpoint state (fresh run, or load completed stages on --resume).
+state_begin
+
+# Always remove stale SBOM files so Syft writes fresh ones — unless we are
+# resuming past an already-completed sbom stage (they ARE the checkpoint then).
+if ! stage_should_skip sbom; then
+  for f in syft.json cyclonedx.json spdx.json; do
+    rm -f "$ARTIFACTS_DIR/sbom/$f"
+  done
+fi
 
 # Pick a live egress before any updater runs (only when refreshing DBs).
 # Ensure volumes/artifacts are writable by the appuser containers first.
@@ -349,7 +442,14 @@ if [[ $EXTRACT -eq 1 ]]; then
   export EXTRACT_INPUT_HOST="$SCAN_TARGET_HOST"
   export EXTRACT_OUTPUT="/workspace/$EXTRACT_REL"
   export EXTRACT_MAX_DEPTH="$EXTRACT_MAX_DEPTH"
-  compose_checked --profile extract run --rm artifact-extractor
+  # On --resume an already-extracted tree is reused only when its manifest is
+  # still in place (the extractor purges current/ itself on a real re-run).
+  if stage_should_skip extract && [[ -f "$EXTRACT_HOST/extraction_manifest.json" ]]; then
+    echo "[stage] extract ✓ пропущен — распакованное дерево уже на месте (чекпоинт, --resume)"
+    state_cli stage-skip --stage extract
+  else
+    run_stage extract 0 docker compose --profile extract run --rm artifact-extractor
+  fi
   export SCAN_TARGET_HOST="$(realpath "$EXTRACT_HOST")"
   export SCAN_TARGET_DISPLAY="$TARGET_RESOLVED -> $SCAN_TARGET_HOST"
   export SYFT_TARGET="/scan-target"
@@ -359,14 +459,17 @@ fi
 # ── Specialized format pipelines ─────────────────────────────────────────────
 if [[ "$FORMAT" == "apk" ]]; then
   echo "[apk] Running APK analyzer..."
-  compose_checked --profile apk run --rm apk-analyzer
+  run_stage apk-analyzer 0 docker compose --profile apk run --rm apk-analyzer
 
   echo "[apk] Running grype on generated SBOM..."
   export SYFT_TARGET="/workspace/artifacts/sbom/syft.json"
   export SYFT_FROM="sbom"
-  [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm grype-updater && compose_checked --profile update run --rm grype-db-importer
+  if [[ $UPDATE_DB -eq 1 ]]; then
+    run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
+    run_step "update:grype-import" 0 docker compose --profile update run --rm grype-db-importer || die "grype-db-importer failed (exit $LAST_STEP_RC)"
+  fi
   db_status grype /var/lib/resilient-db/grype/active
-  compose_checked --profile "$PROFILE" run --rm grype-scanner
+  run_stage grype 0 docker compose --profile "$PROFILE" run --rm grype-scanner
 
   NATIVE_DIR="$ARTIFACTS_DIR/extracted/apk-native"
   if [[ -d "$NATIVE_DIR" ]] && [[ -n "$(find "$NATIVE_DIR" -name '*.so' 2>/dev/null)" ]]; then
@@ -374,24 +477,24 @@ if [[ "$FORMAT" == "apk" ]]; then
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/apk-native"
     export SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
     db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
-    compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+    run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
 elif [[ "$FORMAT" == "win" ]]; then
   echo "[win] Running Windows installer analyzer..."
-  compose_checked --profile win run --rm win-analyzer
+  run_stage win-analyzer 0 docker compose --profile win run --rm win-analyzer
 
   echo "[win] Running grype on generated SBOM..."
   export SYFT_TARGET="/workspace/artifacts/sbom/syft.json"
   export SYFT_FROM="sbom"
   if [[ $UPDATE_DB -eq 1 ]]; then
-    compose_checked --profile update run --rm grype-updater
-    compose_checked --profile update run --rm grype-db-importer
-    compose_checked --profile update run --rm cve-bin-tool-updater
+    run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
+    run_step "update:grype-import" 0 docker compose --profile update run --rm grype-db-importer || die "grype-db-importer failed (exit $LAST_STEP_RC)"
+    run_step "update:cve-bin-tool" 0 docker compose --profile update run --rm cve-bin-tool-updater || die "cve-bin-tool-updater failed (exit $LAST_STEP_RC)"
   fi
   db_status grype /var/lib/resilient-db/grype/active
   db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
-  compose_checked --profile "$PROFILE" run --rm grype-scanner
+  run_stage grype 0 docker compose --profile "$PROFILE" run --rm grype-scanner
 
   WIN_EXTRACT_DIR="$ARTIFACTS_DIR/extracted/win-installer"
   if [[ -d "$WIN_EXTRACT_DIR" ]]; then
@@ -432,7 +535,7 @@ elif [[ "$FORMAT" == "win" ]]; then
     fi
     export CVE_BIN_TOOL_TARGET="$cve_scan_container"
     export SCAN_TARGET_HOST="$cve_scan_host"
-    compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+    run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
 else
@@ -440,43 +543,50 @@ else
   case "$TOOL" in
     all)
       if [[ $UPDATE_DB -eq 1 ]]; then
-        compose_checked --profile update run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-updater
-        compose_checked --profile update run --rm grype-updater
-        compose_checked --profile update run --rm grype-db-importer
-        compose_checked --profile update run --rm cve-bin-tool-updater
+        run_step "update:trivy" 0        docker compose --profile update run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-updater || die "trivy-updater failed (exit $LAST_STEP_RC)"
+        run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
+        run_step "update:grype-import" 0 docker compose --profile update run --rm grype-db-importer || die "grype-db-importer failed (exit $LAST_STEP_RC)"
+        run_step "update:cve-bin-tool" 0 docker compose --profile update run --rm cve-bin-tool-updater || die "cve-bin-tool-updater failed (exit $LAST_STEP_RC)"
       fi
       db_status trivy /var/lib/resilient-db/trivy
       db_status grype /var/lib/resilient-db/grype/active
       db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
-      echo "[stage] syft-sbom";        compose_checked --profile "$PROFILE" run --rm syft-sbom
-      echo "[stage] trivy-scanner";    compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
-      echo "[stage] grype-scanner";    compose_checked --profile "$PROFILE" run --rm grype-scanner
-      echo "[stage] cve-bin-tool";     compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      run_stage sbom 0           docker compose --profile "$PROFILE" run --rm syft-sbom
+      run_stage trivy 0          docker compose --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
+      run_stage grype 0          docker compose --profile "$PROFILE" run --rm grype-scanner
+      run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
     syft)
-      compose_checked --profile "$PROFILE" run --rm syft-sbom ;;
+      run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom ;;
     grype)
-      [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm grype-updater && compose_checked --profile update run --rm grype-db-importer
+      if [[ $UPDATE_DB -eq 1 ]]; then
+        run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
+        run_step "update:grype-import" 0 docker compose --profile update run --rm grype-db-importer || die "grype-db-importer failed (exit $LAST_STEP_RC)"
+      fi
       db_status grype /var/lib/resilient-db/grype/active
-      compose_checked --profile "$PROFILE" run --rm syft-sbom
-      compose_checked --profile "$PROFILE" run --rm grype-scanner
+      run_stage sbom 0  docker compose --profile "$PROFILE" run --rm syft-sbom
+      run_stage grype 0 docker compose --profile "$PROFILE" run --rm grype-scanner
       ;;
     trivy)
-      [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-updater
+      if [[ $UPDATE_DB -eq 1 ]]; then
+        run_step "update:trivy" 0 docker compose --profile update run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-updater || die "trivy-updater failed (exit $LAST_STEP_RC)"
+      fi
       db_status trivy /var/lib/resilient-db/trivy
-      compose_checked --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
+      run_stage trivy 0 docker compose --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
       ;;
     cve-bin-tool)
-      [[ $UPDATE_DB -eq 1 ]] && compose_checked --profile update run --rm cve-bin-tool-updater
+      if [[ $UPDATE_DB -eq 1 ]]; then
+        run_step "update:cve-bin-tool" 0 docker compose --profile update run --rm cve-bin-tool-updater || die "cve-bin-tool-updater failed (exit $LAST_STEP_RC)"
+      fi
       db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
-      compose_cve_bin_tool_checked --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
   esac
 fi
 
 # ── Collect reports ─────────────────────────────────────────────────
 export CASE_ID="$CASE_ID"
-echo "[stage] report-collector"; compose_checked --profile report run --rm report-collector
+run_stage report 0 docker compose --profile report run --rm report-collector
 
 echo "[stage] collect-report (host $PYTHON_BIN)"
 "$PYTHON_BIN" -m resilient_updates.cli collect-report \
@@ -512,6 +622,10 @@ echo "[stage] report-html (host $PYTHON_BIN)"
   fi
   "$PYTHON_BIN" "${archive_args[@]}"
 } || echo "[history] WARN: archive-run failed" >&2
+
+# Mark the checkpoint state as finished (the NEXT --resume starts fresh only
+# after a new `run-state begin` rewrites it for a new run-key).
+state_cli finish --status "done"
 
 # ── Done ──────────────────────────────────────────────────────────────────────────────────
 echo ""
