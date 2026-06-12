@@ -348,6 +348,18 @@ services:
         # make it world-writable (no sticky bit, so the host-side [clean] step
         # can still delete container-created files).  artifacts is non-sensitive
         # scan output; this removes all cross-uid permission conflicts on deploy.
+        # Pre-create the standard artifact subdirs as 0777 BEFORE any scanner
+        # runs.  The grype/trivy scanner containers run as root and would
+        # otherwise create reports/ at 0755-root, locking the uid-1001
+        # containers (cve-bin-tool-scanner, report-collector) out of writing
+        # sibling dirs (reports/final, reports/cve-bin-tool).  Creating the
+        # parents here means root scanners only add leaf dirs and appuser
+        # containers can still write into the 0777 parents.
+        echo "[volume-init] pre-creating shared artifact subdirs (0777)"
+        mkdir -p /vol/artifacts/reports/final /vol/artifacts/reports/cve-bin-tool \
+                 /vol/artifacts/reports/grype /vol/artifacts/reports/trivy \
+                 /vol/artifacts/extracted/current /vol/artifacts/sbom \
+                 /vol/artifacts/db_status
         echo "[volume-init] making /vol/artifacts world-writable (shared host/uid-1001)"
         chmod -R 0777 /vol/artifacts 2>/dev/null || true
     networks: [scanner-net]
