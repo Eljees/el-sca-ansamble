@@ -123,8 +123,8 @@ bench:  ## Wall-clock benchmark: TARGET=/path RUNS=3 [INCLUDE_COLD=1].
 # Tests
 # ─────────────────────────────────────────────────────────────────────────
 .PHONY: test
-test:  ## Run pytest with coverage.
-	$(PYTHON) -m pytest -q --disable-warnings --cov=resilient_updates --cov-report=term-missing
+test:  ## Run pytest with coverage (gate: 88%).
+	$(PYTHON) -m pytest -q --disable-warnings --cov=resilient_updates --cov-report=term-missing --cov-fail-under=88
 
 # ─────────────────────────────────────────────────────────────────────────
 # Linters (each target also runs in CI; see .github/workflows/ci.yml).

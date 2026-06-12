@@ -226,7 +226,7 @@ jobs:
       - name: pytest with coverage gate
         run: |
           GATE=""
-          if [ "${{ matrix.python-version }}" = "3.12" ]; then GATE="--cov-fail-under=85"; fi
+          if [ "${{ matrix.python-version }}" = "3.12" ]; then GATE="--cov-fail-under=88"; fi
           pytest -q --disable-warnings \
             --cov=resilient_updates \
             --cov-report=term-missing \

@@ -715,6 +715,12 @@ def test_main_continues_after_feed_download_failure(tmp_path, monkeypatch):
     db_root.mkdir()
     _patch_cve_bin_tool(monkeypatch, db_root)
 
+    # Block egress detection so the local-but-empty branch stays local
+    # (otherwise Windows curl.exe / env proxies trigger network fallback).
+    for var in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(MOD.shutil, "which", lambda _name: None)
+
     feed_base = str(feed_dir).replace("\\", "/")
     monkeypatch.setattr(
         "sys.argv",
