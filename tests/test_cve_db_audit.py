@@ -401,3 +401,101 @@ def test_seed_epss_failure_recorded_in_result(tmp_path: Path):
 
     assert result["overall_status"] == "warn"
     assert any("EPSS" in f for f in result["failures"])
+
+
+def test_seed_rsd_failure_recorded_in_result(tmp_path: Path):
+    """When the RSD request fails, the failure is recorded (lines 405-406)."""
+    failing_resp = MagicMock()
+    failing_resp.raise_for_status.side_effect = Exception("rsd network error")
+    failing_resp.content = b""
+
+    with patch("requests.get", return_value=failing_resp):
+        result = seed_cve_bin_tool_aux_sources(tmp_path, seed_epss=False, seed_rsd=True, osv_ecosystems=[])
+
+    assert result["overall_status"] == "warn"
+    assert any("RSD seed failed" in f for f in result["failures"])  # lines 405-406
+
+
+def test_seed_osv_failure_recorded_in_result(tmp_path: Path):
+    """When an OSV ecosystem request fails, the failure is recorded (lines 423-424)."""
+    failing_resp = MagicMock()
+    failing_resp.raise_for_status.side_effect = Exception("osv network error")
+    failing_resp.content = b""
+
+    with patch("requests.get", return_value=failing_resp):
+        result = seed_cve_bin_tool_aux_sources(
+            tmp_path, seed_epss=False, seed_rsd=False, osv_ecosystems=["PyPI"]
+        )
+
+    assert result["overall_status"] == "warn"
+    assert any("OSV seed failed" in f for f in result["failures"])  # lines 423-424
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: _count_tree_files, stale db, policy clamping
+# ---------------------------------------------------------------------------
+
+
+def test_count_tree_files_nonexistent_returns_zero(tmp_path: Path):
+    from resilient_updates.cve_db_audit import _count_tree_files
+
+    assert _count_tree_files(tmp_path / "no_such_dir") == 0  # line 58
+
+
+def test_count_tree_files_file_path_returns_zero(tmp_path: Path):
+    from resilient_updates.cve_db_audit import _count_tree_files
+
+    f = tmp_path / "file.txt"
+    f.write_text("x", encoding="utf-8")
+    assert _count_tree_files(f) == 0  # not is_dir() → line 58
+
+
+def test_audit_stale_db_adds_failure(tmp_path: Path):
+    """When cve.db mtime is older than max_cache_age, a stale failure is appended (line 170)."""
+    import os
+    import time
+
+    root = _make_db_root(tmp_path / "stale", include_nvd=True)
+    # Age the cve.db by 48 hours
+    old_mtime = time.time() - (48 * 3600)
+    os.utime(root / "cve.db", (old_mtime, old_mtime))
+
+    payload = audit_cve_bin_tool_db(
+        root,
+        required_sources=["NVD"],
+        min_entries={"NVD": 1},
+        max_cache_age="24h",  # 24h limit; db is 48h old → stale
+        declared_sources=["NVD"],
+    )
+    assert any("stale" in f for f in payload["failures"])  # line 170-172
+
+
+def test_policy_allows_status_unknown_policy_clamps_to_strict():
+    from resilient_updates.cve_db_audit import _policy_allows_status
+
+    # Unknown policy clamped to "strict" (line 257) → only "fresh" is allowed
+    assert _policy_allows_status("bogus-policy", "fresh") is True
+    assert _policy_allows_status("bogus-policy", "degraded") is False
+
+
+def test_activate_unknown_db_policy_treated_as_strict(tmp_path: Path):
+    """db_policy not in DB_POLICIES → clamped to 'strict' (line 285)."""
+    active_root = _make_db_root(tmp_path / "active", include_nvd=True)
+    previous_root = tmp_path / "previous"
+    temp_root = tmp_path / "tmp"
+    provenance_path = tmp_path / "prov.json"
+
+    activated, payload = activate_best_cve_bin_tool_db(
+        candidate_roots=[str(active_root)],
+        active_root=active_root,
+        previous_root=previous_root,
+        temp_root=temp_root,
+        provenance_path=provenance_path,
+        required_sources=["NVD", "GAD", "REDHAT", "CURL", "PURL2CPE"],
+        min_entries={"NVD": 1, "GAD": 1, "REDHAT": 1, "CURL": 1, "PURL2CPE": 1},
+        max_cache_age="168h",
+        declared_sources=["NVD", "GAD", "REDHAT", "CURL", "PURL2CPE"],
+        db_policy="not-a-valid-policy",  # triggers line 285 clamping
+    )
+    # Fresh db passes strict policy
+    assert activated is True
