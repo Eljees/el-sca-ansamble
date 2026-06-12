@@ -123,3 +123,7 @@ artifacts/enrichment/
 *.out
 push.log
 rp.out
+route-doctor.out
+
+# Dockerfile editor backup
+Dockerfile.cve-bin-tool.fc
