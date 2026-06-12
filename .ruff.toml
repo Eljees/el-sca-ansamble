@@ -51,6 +51,12 @@ ignore = [
 "resilient_updates/dashboard.py" = [
   "RUF001", # HTML template intentionally uses Cyrillic uppercase (НЕ = NOT in Russian)
 ]
+"resilient_updates/monitor.py" = [
+  "RUF001", # operator-facing Russian status strings (с/c lookalikes are intended Cyrillic)
+]
+"resilient_updates/pipeline_state.py" = [
+  "RUF002", # docstring mixes Russian terms (resume «с чекпоинта»)
+]
 "scripts/**.py" = [
   "T201",   # print() is the point of a script
 ]

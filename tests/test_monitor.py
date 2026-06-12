@@ -1,0 +1,124 @@
+"""Tests for resilient_updates.monitor (container/pipeline status view)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from unittest.mock import patch
+
+from resilient_updates import monitor, pipeline_state as ps
+
+
+class _Proc:
+    def __init__(self, stdout: str = "", returncode: int = 0, stderr: str = ""):
+        self.stdout = stdout
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+# --- list_containers ----------------------------------------------------------
+
+
+def test_list_containers_ndjson(tmp_path: Path):
+    lines = "\n".join(
+        json.dumps(o)
+        for o in (
+            {
+                "Name": "el-sca-dashboard-1",
+                "Service": "dashboard",
+                "State": "running",
+                "Status": "Up 2 hours",
+            },
+            {"Name": "el-sca-grype-1", "Service": "grype-scanner", "State": "exited", "Status": "Exited (0)"},
+        )
+    )
+    with patch("resilient_updates.monitor.subprocess.run", return_value=_Proc(stdout=lines)):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is True
+    assert [c["service"] for c in out["containers"]] == ["dashboard", "grype-scanner"]
+    assert out["containers"][0]["state"] == "running"
+
+
+def test_list_containers_json_array(tmp_path: Path):
+    payload = json.dumps([{"Name": "x", "Service": "syft-sbom", "State": "exited", "Status": "Exited (0)"}])
+    with patch("resilient_updates.monitor.subprocess.run", return_value=_Proc(stdout=payload)):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is True
+    assert out["containers"][0]["service"] == "syft-sbom"
+
+
+def test_list_containers_docker_missing(tmp_path: Path):
+    with patch("resilient_updates.monitor.subprocess.run", side_effect=FileNotFoundError):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is False
+    assert "docker" in out["error"]
+
+
+def test_list_containers_nonzero_rc(tmp_path: Path):
+    with patch(
+        "resilient_updates.monitor.subprocess.run",
+        return_value=_Proc(returncode=1, stderr="no compose file"),
+    ):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is False
+    assert "no compose file" in out["error"]
+
+
+# --- db status / log tail -----------------------------------------------------
+
+
+def test_summarize_db_status(tmp_path: Path):
+    db = tmp_path / "db_status"
+    db.mkdir()
+    (db / "grype.json").write_text(
+        json.dumps({"tool": "grype", "exists": True, "age_hours": 5.2, "status": "fresh"}),
+        encoding="utf-8",
+    )
+    (db / "broken.json").write_text("{nope", encoding="utf-8")
+    out = monitor.summarize_db_status(tmp_path)
+    assert out == [{"tool": "grype", "exists": True, "age_hours": 5.2, "status": "fresh"}]
+
+
+def test_tail_log(tmp_path: Path):
+    (tmp_path / "run-scan.log").write_text("\n".join(f"line{i}" for i in range(40)), encoding="utf-8")
+    tail = monitor.tail_log(tmp_path, lines=5)
+    assert tail == ["line35", "line36", "line37", "line38", "line39"]
+    assert monitor.tail_log(tmp_path / "nope") == []
+
+
+# --- gather_status + render_text -----------------------------------------------
+
+
+def test_gather_status_and_render(tmp_path: Path):
+    ps.begin_run(tmp_path, target="/data/app.tar.gz", tool="all", case_id="CYBERSEC-7")
+    ps.stage_start(tmp_path, "extract")
+    ps.stage_end(tmp_path, "extract", ok=True, rc=0)
+    ps.stage_start(tmp_path, "sbom")
+    with patch(
+        "resilient_updates.monitor.subprocess.run",
+        return_value=_Proc(
+            stdout=json.dumps({"Name": "x", "Service": "syft-sbom", "State": "running", "Status": "Up"})
+        ),
+    ):
+        status = monitor.gather_status(tmp_path, repo_root=tmp_path)
+    assert status["pipeline"]["present"] is True
+    assert status["pipeline"]["current_stage"] == "sbom"
+    assert status["containers"]["ok"] is True
+
+    text = monitor.render_text(status)
+    assert "Пайплайн" in text
+    assert "extract" in text
+    assert "syft-sbom" in text
+
+
+def test_render_text_no_state_no_docker():
+    text = monitor.render_text(
+        {
+            "pipeline": {"present": False},
+            "containers": {"ok": False, "error": "docker not found on PATH"},
+            "db_status": [],
+            "log_tail": [],
+        }
+    )
+    assert "pipeline_state.json" in text
+    assert "docker недоступен" in text

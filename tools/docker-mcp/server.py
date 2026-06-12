@@ -259,6 +259,36 @@ def compose_ps() -> dict:
 
 
 @mcp.tool()
+def monitor() -> dict:
+    """Live stack monitor: container status + current pipeline stage/progress
+    + DB freshness + log tail. READ-ONLY (`cli monitor --json`).
+
+    Use this to answer "что сейчас происходит / не повис ли скан": the
+    pipeline block shows the active stage with elapsed seconds and per-stage
+    durations from artifacts/pipeline_state.json.
+    """
+    if not PROJECT_DIR.is_dir():
+        return {"ok": False, "error": f"EL_SCA_DIR not found: {PROJECT_DIR}"}
+    try:
+        proc = subprocess.run(  # nosec B603 - fixed argv, no shell
+            [sys.executable, "-m", "resilient_updates.cli", "monitor", "--json"],
+            cwd=str(PROJECT_DIR),
+            env=_proxy_env(None),
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return {"ok": False, "error": str(exc)}
+    if proc.returncode != 0:
+        return {"ok": False, "returncode": proc.returncode, "stderr_tail": _tail(proc.stderr)}
+    try:
+        return {"ok": True, "status": json.loads(proc.stdout)}
+    except ValueError:
+        return {"ok": False, "error": "monitor printed non-JSON", "stdout_tail": _tail(proc.stdout)}
+
+
+@mcp.tool()
 def update_doctor() -> dict:
     """Run the reachability matrix (`cli update-doctor --json`) from the repo. READ-ONLY."""
     return _run([sys.executable, "-m", "resilient_updates.cli", "update-doctor", "--json"], timeout=180)
@@ -420,6 +450,7 @@ def run_scan(
     update_db: bool = False,
     sbom_scan: bool = False,
     proxy: str | None = None,
+    resume: bool = False,
 ) -> dict:
     """Run the full SCA pipeline against ``target`` via scripts/run-scan.sh.
 
@@ -430,6 +461,8 @@ def run_scan(
         update_db: pull fresh DBs first (needs network/proxy).
         sbom_scan: feed Syft SBOM to cve-bin-tool (faster).
         proxy: optional proxy URL (auto-translated for containers).
+        resume: continue from the last checkpoint — stages already completed
+            for the SAME target+tool are skipped (artifacts/pipeline_state.json).
 
     cve-bin-tool exit code 1 (CVEs found) is treated as success.
     """
@@ -444,6 +477,8 @@ def run_scan(
         args.append("--update-db")
     if sbom_scan:
         args.append("--sbom-scan")
+    if resume:
+        args.append("--resume")
     env_proxy = proxy
     if proxy:
         os.environ["SCAN_TARGET_HOST"] = target
@@ -461,6 +496,7 @@ def run_scan_async(
     update_db: bool = False,
     sbom_scan: bool = False,
     proxy: str | None = None,
+    resume: bool = False,
 ) -> dict:
     """Launch the SCA pipeline in the background and return immediately.
 
@@ -468,6 +504,9 @@ def run_scan_async(
     synchronous ``run_scan`` (the client sees -32001 although the host keeps
     going). This variant detaches the pipeline and returns a ``job_id``;
     poll ``scan_status`` to follow progress via artifacts/run-scan.log.
+
+    Pass ``resume=True`` to continue a hung/interrupted scan from its last
+    checkpoint instead of restarting from zero (see ``monitor`` for progress).
     """
     if tool not in ALL_SCAN_TOOLS:
         return {"ok": False, "error": f"tool must be one of {sorted(ALL_SCAN_TOOLS)}"}
@@ -482,6 +521,8 @@ def run_scan_async(
         args.append("--update-db")
     if sbom_scan:
         args.append("--sbom-scan")
+    if resume:
+        args.append("--resume")
     jobs_dir = PROJECT_DIR / JOBS_DIR_REL
     jobs_dir.mkdir(parents=True, exist_ok=True)
     job_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -538,6 +579,17 @@ def scan_status(job_id: str = "") -> dict:
         text = log_path.read_text(encoding="utf-8", errors="replace")
         log_tail = _tail(text, 15)
         stages = [ln.strip() for ln in text.splitlines() if ln.startswith("[stage]") or "Reports ready" in ln]
+    # Structured per-stage progress (status/durations) from the checkpoint file.
+    pipeline: dict[str, Any] | None = None
+    try:
+        state = json.loads((PROJECT_DIR / "artifacts" / "pipeline_state.json").read_text(encoding="utf-8"))
+        pipeline = {
+            "status": state.get("status"),
+            "current_stage": state.get("current_stage"),
+            "stages": {name: info.get("status") for name, info in (state.get("stages") or {}).items()},
+        }
+    except (OSError, ValueError):
+        pass
     return {
         "ok": True,
         "job_id": job["job_id"],
@@ -545,6 +597,7 @@ def scan_status(job_id: str = "") -> dict:
         "running": running,
         "started_utc": job.get("started_utc"),
         "stages_seen": stages[-8:],
+        "pipeline": pipeline,
         "log_tail": log_tail,
     }
 

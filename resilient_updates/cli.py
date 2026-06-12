@@ -728,6 +728,41 @@ def main() -> int:
         default=None,
         help="Force output format; if omitted, inferred from --output extension (.md→md, else→json)",
     )
+
+    run_state = subparsers.add_parser(
+        "run-state",
+        help="pipeline checkpoint state: begin/stage-start/stage-end/finish/show/should-skip "
+        "(persists artifacts/pipeline_state.json; powers --resume and the monitor)",
+    )
+    run_state.add_argument(
+        "action",
+        choices=["begin", "stage-start", "stage-end", "stage-skip", "finish", "show", "should-skip"],
+    )
+    run_state.add_argument("--artifacts-dir", default="artifacts")
+    run_state.add_argument("--target", default="")
+    run_state.add_argument("--tool", default="all")
+    run_state.add_argument("--case-id", default=None)
+    run_state.add_argument("--extra", default="", help="extra run-key salt (e.g. 'sbom-scan')")
+    run_state.add_argument("--resume", action="store_true", help="begin only: keep completed stages")
+    run_state.add_argument("--stage", default=None)
+    run_state.add_argument("--rc", type=int, default=None)
+    run_state.add_argument("--ok", choices=["true", "false"], default="true")
+    run_state.add_argument("--status", default="done", help="finish only: done|error|aborted")
+
+    monitor_parser = subparsers.add_parser(
+        "monitor",
+        help="live status: compose containers + current pipeline stage/progress + DB freshness",
+    )
+    monitor_parser.add_argument("--artifacts-dir", default="artifacts")
+    monitor_parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="directory to run 'docker compose ps' from (default: parent of --artifacts-dir)",
+    )
+    monitor_parser.add_argument("--json", action="store_true")
+    monitor_parser.add_argument(
+        "--watch", type=int, default=0, metavar="N", help="redraw every N seconds (0 = print once)"
+    )
     args = parser.parse_args()
 
     # Configure the root logger before any module does work.  LOG_LEVEL and
@@ -1039,6 +1074,81 @@ def main() -> int:
             out.write_text(payload + ("\n" if fmt == "json" else ""), encoding="utf-8")
             print(json.dumps({"status": "ok", "output": str(out)}, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS
+    if args.command == "run-state":
+        from . import pipeline_state as ps
+
+        if args.action == "begin":
+            state = ps.begin_run(
+                args.artifacts_dir,
+                target=args.target,
+                tool=args.tool,
+                case_id=args.case_id,
+                extra=args.extra,
+                resume=args.resume,
+            )
+            print(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "run_key": state["run_key"],
+                        "resumed": bool(state.get("resumed")),
+                        "completed": sorted(ps.completed_stages(state)),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
+            return EXIT_SUCCESS
+        if args.action == "should-skip":
+            if not args.stage:
+                print(json.dumps({"status": "error", "error": "--stage is required"}))
+                return EXIT_CONFIG_ERROR
+            skip = ps.should_skip(
+                args.artifacts_dir, args.stage, target=args.target, tool=args.tool, extra=args.extra
+            )
+            print(json.dumps({"stage": args.stage, "skip": skip}))
+            # exit 0 = skip (stage already done for this run), 1 = run it.
+            return EXIT_SUCCESS if skip else 1
+        if args.action in ("stage-start", "stage-end", "stage-skip"):
+            if not args.stage:
+                print(json.dumps({"status": "error", "error": "--stage is required"}))
+                return EXIT_CONFIG_ERROR
+            if args.action == "stage-start":
+                ps.stage_start(args.artifacts_dir, args.stage)
+            elif args.action == "stage-skip":
+                ps.stage_skip(args.artifacts_dir, args.stage)
+            else:
+                ps.stage_end(args.artifacts_dir, args.stage, ok=(args.ok == "true"), rc=args.rc)
+            print(json.dumps({"status": "ok", "stage": args.stage, "action": args.action}))
+            return EXIT_SUCCESS
+        if args.action == "finish":
+            ps.finish_run(args.artifacts_dir, status=args.status)
+            print(json.dumps({"status": "ok", "run_status": args.status}))
+            return EXIT_SUCCESS
+        # show
+        print(json.dumps(ps.summarize(ps.load_state(args.artifacts_dir)), indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS
+    if args.command == "monitor":
+        import time as _time
+
+        from .monitor import gather_status, render_text
+
+        while True:
+            status = gather_status(args.artifacts_dir, repo_root=args.repo_root)
+            if args.json:
+                print(json.dumps(status, indent=2, ensure_ascii=False))
+            else:
+                if args.watch:
+                    # ANSI clear (works in any modern terminal incl. Windows 10+).
+                    print("\x1b[2J\x1b[H", end="")
+                    print(f"el-sca-ansamble monitor · {_time.strftime('%H:%M:%S')} (Ctrl+C — выход)")
+                print(render_text(status))
+            if not args.watch:
+                return EXIT_SUCCESS
+            try:
+                _time.sleep(max(1, args.watch))
+            except KeyboardInterrupt:
+                return EXIT_SUCCESS
     if args.command == "proxy-status":
         # Import lazily so users on older configs (no proxy.chains) never load
         # the new module just to run the legacy CLI commands.
