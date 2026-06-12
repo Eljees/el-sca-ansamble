@@ -1,6 +1,6 @@
 # ADR-0003: VEX-фид — подавление findings через Trivy `--vex`
 
-- Status: Proposed
+- Status: Accepted — P1+P2 shipped (`vex.py` + acquisition; P3 run_summary/scanner_diff deferred)
 - Date: 2026-05-31
 - Decision owners: SCA-pipeline team
 - Связанные документы: [docs/custom-sources.md](../custom-sources.md),

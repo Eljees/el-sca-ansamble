@@ -63,11 +63,11 @@ need to do; each section is ordered by depth (read top-to-bottom).
 
 - `adr/0001-wrapper-first.md` — wrapper-first vs. fork-and-modify.
 - `adr/0002-proxy-sidecar.md` — proxy sidecar chain.
-- `adr/0003-vex-feed.md` — VEX feed via Trivy `--vex` (proposed).
+- `adr/0003-vex-feed.md` — VEX feed via Trivy `--vex` (accepted, P3 deferred).
 - `adr/0004-epss-kev-freshness.md` — EPSS/KEV freshness/TTL (proposed).
-- `adr/0005-unified-cli-scan.md` — unified `cli scan` orchestrator (proposed).
-- `adr/0006-fastapi-dashboard.md` — read-only FastAPI run dashboard (proposed).
-- `adr/0007-updates-from-anywhere.md` — resilient DB updates from any network point (proposed).
+- `adr/0005-unified-cli-scan.md` — unified `cli scan` orchestrator (accepted, Phase 1 shipped).
+- `adr/0006-fastapi-dashboard.md` — read-only FastAPI run dashboard (accepted).
+- `adr/0007-updates-from-anywhere.md` — resilient DB updates from any network point (accepted).
 
 ## Reference
 

@@ -1,6 +1,6 @@
 # ADR-0005: единый `cli scan` — кросс-платформенный оркестратор пайплайна
 
-- Status: Proposed
+- Status: Accepted — Phase 1 shipped (`scan.py` + `cli scan`; `--dry-run` available)
 - Date: 2026-06-01
 - Decision owners: SCA-pipeline team
 - Связанные документы: [docs/operations.md](../operations.md),
