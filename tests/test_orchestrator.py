@@ -540,3 +540,99 @@ def test_update_single_grype_is_sequential(tmp_path):
     job = _wait_done(reg.start_update("grype"))
     assert calls == ["grype-updater", "grype-db-importer"]
     assert job.status == "done"
+
+
+def test_update_single_trivy_runs_one_step(tmp_path):
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+    reg._run_stream = lambda job, cmd, env: calls.append(cmd[-1]) or 0  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("trivy"))
+    assert calls == ["trivy-updater"]
+    assert job.status == "done"
+
+
+def test_update_single_cve_bin_tool_runs_one_step(tmp_path):
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+    reg._run_stream = lambda job, cmd, env: calls.append(cmd[-1]) or 0  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("cve-bin-tool"))
+    assert calls == ["cve-bin-tool-updater"]
+    assert job.status == "done"
+
+
+# ---------------------------------------------------------------------------
+# Job helpers: current_stage_key, maybe_periodic_checkpoint
+# ---------------------------------------------------------------------------
+
+
+def test_job_current_stage_key_returns_active_stage():
+    job = Job("scan", SCAN_STAGES)
+    job.begin_stage("grype")
+    assert job.current_stage_key() == "grype"
+
+
+def test_job_current_stage_key_returns_none_when_all_pending():
+    job = Job("scan", SCAN_STAGES)
+    assert job.current_stage_key() is None
+
+
+def test_job_maybe_periodic_checkpoint_noop_without_run_dir():
+    """No run_dir → early return without error."""
+    job = Job("scan", SCAN_STAGES)
+    job.maybe_periodic_checkpoint()  # should not raise
+
+
+def test_job_maybe_periodic_checkpoint_writes_when_interval_elapsed(tmp_path):
+    """With run_dir + elapsed interval → writes checkpoint.json."""
+    from resilient_updates.orchestrator import write_checkpoint
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    job = Job("scan", SCAN_STAGES, artifacts_dir=tmp_path, run_dir=run_dir)
+    job.begin_stage("grype")
+    job._last_checkpoint_at = 0.0  # force interval elapsed
+    job.maybe_periodic_checkpoint()
+    assert (run_dir / "checkpoint.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Job._resolve_stage and progress tracking
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_stage_returns_none_for_unknown_service():
+    job = Job("scan", SCAN_STAGES)
+    assert job._resolve_stage("nonexistent-service-xyz") is None
+
+
+def test_feed_line_progress_updates_pct():
+    """A download-progress line in auto-detect mode triggers progress events.
+
+    _max_index is updated by _advance (auto-detect only, not explicit-stage
+    mode), so we must feed a service log line first to unlock progress tracking.
+    """
+    job = Job("scan", SCAN_STAGES)
+    q = job.subscribe()
+    # First, feed a service line so _advance sets _max_index >= 0
+    job.feed_line("grype-scanner-1  | matching packages")
+    # Now feed a progress line — parse_progress will extract a percentage
+    job.feed_line("12.34 MiB / 95.30 MiB [===>    ] 12.95%")
+    # Drain the queue and check for a progress event
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    progress_events = [e for e in events if isinstance(e, dict) and "progress" in e]
+    assert progress_events, "expected at least one event with 'progress' key"
+    assert progress_events[0]["progress"]["stage"] == "grype"
+
+
+def test_begin_stage_noop_for_unknown_key():
+    """begin_stage with unknown key must not raise."""
+    job = Job("scan", SCAN_STAGES)
+    job.begin_stage("nonexistent")  # should not raise
+
+
+def test_end_stage_noop_for_unknown_key():
+    """end_stage with unknown key must not raise."""
+    job = Job("scan", SCAN_STAGES)
+    job.end_stage("nonexistent", ok=True)  # should not raise

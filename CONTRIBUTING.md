@@ -28,13 +28,14 @@ make hooks    # installs pre-commit + pre-push hooks
 ## Running tests
 
 ```sh
-make test                       # full pytest with coverage
-pytest -q tests/test_io.py      # one file
-pytest -m "not smoke"           # skip integration tests
-pytest -m smoke                 # only integration
+make test                          # full pytest with coverage (gate: 88%)
+pytest -q tests/test_io.py         # one file
+pytest -m smoke                    # only smoke (fast critical-path sanity)
+pytest -m "not integration"        # exclude Docker/compose/network tests
+pytest -m integration              # only Docker/compose/network tests
 ```
 
-CI enforces `--cov-fail-under=75`.  Add tests for any new module.
+CI enforces `--cov-fail-under=88`.  Add tests for any new module.
 
 ## Linting
 
@@ -62,7 +63,8 @@ Commit both files together.
 
 1. File name: `tests/test_<module>.py`.
 2. Function name: `test_<what_is_being_verified>`.
-3. Mark integration tests with `@pytest.mark.smoke`.
+3. Mark slow Docker/network tests with `@pytest.mark.integration`; fast
+   critical-path sanity tests with `@pytest.mark.smoke`.
 4. Prefer `tmp_path` fixture for filesystem tests over manual cleanup.
 
 ## Adding a new shell script
