@@ -771,9 +771,18 @@ def test_feed_falls_back_to_network_when_local_empty(tmp_path, monkeypatch, caps
         sys,
         "argv",
         [
-            "nvd_feed_import", "--db-root", str(tmp_path / "db"),
-            "--start-year", "2024", "--end-year", "2024", "--no-modified",
-            "--feed-base", f"file://{empty}", "--min-cves", "1",
+            "nvd_feed_import",
+            "--db-root",
+            str(tmp_path / "db"),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
+            "--no-modified",
+            "--feed-base",
+            f"file://{empty}",
+            "--min-cves",
+            "1",
         ],
     )
     MOD.main()
@@ -796,9 +805,18 @@ def test_feed_no_fallback_without_egress(tmp_path, monkeypatch, capsys):
         sys,
         "argv",
         [
-            "nvd_feed_import", "--db-root", str(tmp_path / "db"),
-            "--start-year", "2024", "--end-year", "2024", "--no-modified",
-            "--feed-base", f"file://{empty}", "--min-cves", "1",
+            "nvd_feed_import",
+            "--db-root",
+            str(tmp_path / "db"),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
+            "--no-modified",
+            "--feed-base",
+            f"file://{empty}",
+            "--min-cves",
+            "1",
         ],
     )
     MOD.main()

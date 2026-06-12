@@ -337,10 +337,15 @@ fi
 if [[ $EXTRACT -eq 1 ]]; then
   EXTRACT_REL="artifacts/extracted/current"
   EXTRACT_HOST="$(pwd)/$EXTRACT_REL"
-  # NOTE: the extractor purges `current/` itself (as root, in-container) before
-  # writing — see resilient_updates.extractor.extract_artifacts. A host-side rm
-  # is avoided here because the extracted tree is root-owned (would EACCES).
+  # NOTE: the extractor purges `current/` itself (in-container) before writing
+  # — see resilient_updates.extractor.extract_artifacts. A host-side rm is
+  # avoided here because the extracted tree may be owned by a different uid.
+  # The extractor image runs as appuser (uid 1001); this bind dir is created by
+  # the host user (often uid 1000), so it MUST be world-writable or the
+  # in-container user cannot write extraction_manifest.json (EACCES). chmod 0777
+  # the extract subtree so any container uid can write regardless of host uid.
   mkdir -p "$EXTRACT_HOST"
+  chmod -R 0777 "$(pwd)/artifacts/extracted" 2>/dev/null || true
   export EXTRACT_INPUT_HOST="$SCAN_TARGET_HOST"
   export EXTRACT_OUTPUT="/workspace/$EXTRACT_REL"
   export EXTRACT_MAX_DEPTH="$EXTRACT_MAX_DEPTH"

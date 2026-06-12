@@ -425,6 +425,15 @@ def build_scan_command(profile: str = "scan", compose: list[str] | None = None) 
 
 
 def build_update_command(compose: list[str] | None = None) -> list[str]:
+    """Return a legacy ``compose up`` update command.
+
+    .. deprecated::
+        ``JobRegistry.start_update`` now issues sequential ``compose run --rm``
+        steps instead of a single ``up --abort-on-container-exit``.  That avoids
+        cascading aborts when a fast one-shot container (e.g. ``volume-init``)
+        exits before the updaters finish.  This function is kept for external
+        callers that probe the profile name, but is no longer used internally.
+    """
     base = compose or ["docker", "compose"]
     # --force-recreate: never reuse an existing updater container.  A reused
     # container can carry a dead network-endpoint reference after a Docker
@@ -575,9 +584,7 @@ class JobRegistry:
             job.feed_line("# route: HTTP_PROXY/ALL_PROXY уже заданы — авто-маршрут пропущен")
             return
         job.feed_line("# route: ищу живой egress изнутри docker-сети (route-doctor)…")
-        rc = self._run_stream(
-            job, [*self.compose, "--profile", "route", "run", "--rm", "route-doctor"], env
-        )
+        rc = self._run_stream(job, [*self.compose, "--profile", "route", "run", "--rm", "route-doctor"], env)
         plan_env = self.repo_root / "artifacts" / "route-plan.env"
         try:
             fresh = (time.time() - plan_env.stat().st_mtime) < 600
@@ -612,9 +619,7 @@ class JobRegistry:
         Best-effort: a failure is logged but the update still proceeds.
         """
         job.feed_line("# volinit: нормализую владельца томов (uid 1001)…")
-        rc = self._run_stream(
-            job, [*self.compose, "--profile", "volinit", "run", "--rm", "volume-init"], env
-        )
+        rc = self._run_stream(job, [*self.compose, "--profile", "volinit", "run", "--rm", "volume-init"], env)
         if rc != 0:
             job.feed_line(f"# volinit: WARN rc={rc} — возможны ошибки прав при обновлении")
 

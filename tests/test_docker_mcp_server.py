@@ -158,6 +158,7 @@ def test_expected_tools_are_registered(server):
         "compose_down",
     } <= registered
 
+
 def test_route_plan_tool_registered(server):
     assert "route_plan" in server.mcp.tools
 

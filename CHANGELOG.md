@@ -28,6 +28,22 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Дашборд:** `GET/POST /api/route-plan` + индикатор «🛰 Маршрут» в шапке
   с кнопкой перепроверки сети.
 
+- **Volume-init one-shot** — сервис `volume-init` (профиль `volinit`, alpine,
+  root) выставляет владельца uid 1001 на именованных томах перед каждым
+  обновлением. Без него `grype-updater` падал с EACCES на
+  `/var/lib/resilient-db/grype/tmp`, а `report-collector` не мог перезаписать
+  root-owned `artifacts/summary.json`. Запускается через отдельный
+  `compose run --rm` (не в составе `up --abort-on-container-exit`).
+- **Последовательные шаги обновления** — `start_update` и `update-db.sh`
+  запускают каждый апдейтер отдельным `compose run --rm` вместо общего
+  `up --abort-on-container-exit`. Это устраняет каскадное убийство
+  долгоиграющего cve-bin-tool mid-download при быстром выходе любого другого
+  контейнера (exit 137).
+- **NVD feed network fallback** — если `modes=feed` + локальная директория
+  фидов пуста, `nvd_feed_import.py` автоматически переключается на
+  `nvd.nist.gov` при наличии egress (curl / `ALL_PROXY` / `HTTP_PROXY`);
+  без egress — предупреждение вместо тихого аборта с 0 CVE.
+
 ### Fixed
 
 - Профиль `proxy` не поднимался: `tinyproxy` ждал `service_healthy` от
@@ -38,6 +54,15 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - run-scan.sh/update-db.sh применяют только свежий (≤10 мин) route-plan.env —
   устаревший план от упавшего доктора не уводит апдейтеры на мёртвый прокси;
   частичный план (exit 2) применяется для маршрутизируемых инструментов.
+
+### Maintenance
+
+- `build_update_command()` помечена устаревшей (`.. deprecated::`) — реальный
+  путь обновления использует последовательные `run --rm` шаги.
+- `nvd_feed_import._format_data_api2_safe` — добавлена заметка о необходимости
+  синхронизации с upstream при апгрейде cve-bin-tool > 3.4.
+- `pytest.ini` — обновлена ссылка на актуальный аудит-документ.
+- `ruff format` — ликвидирован drift в 3 файлах после сессий с FUSE-mount.
 
 ## [0.1.1] - 2026-06-11
 

@@ -180,6 +180,11 @@ def _format_data_api2_safe(src: object, all_cve_entries: list[dict]) -> tuple[li
 
     Keep the logic otherwise aligned with upstream so we only isolate the
     broken NVD feed-import path.
+
+    .. note::
+        SYNC: if cve-bin-tool is upgraded past 3.4, re-audit this function
+        against upstream ``NVD_Source.format_data_api2`` to pick up any schema
+        or logic changes before they diverge silently.
     """
     cve_data: list[dict] = []
     affects_data: list[dict] = []
