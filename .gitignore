@@ -100,6 +100,13 @@ artifacts/db_status/
 artifacts/mcp-jobs/
 artifacts/run-scan.log*
 
+# Container-ID scratch files + done-markers + one-off comparison artifacts
+# (session leftovers from interactive debugging — must not reach git).
+artifacts/*.done
+artifacts/_local_*.txt
+artifacts/_*.py
+artifacts/COMPARISON*.md
+
 # Session-completion scratch notes (not source, not docs)
 docs/олл-ок.txt
 
