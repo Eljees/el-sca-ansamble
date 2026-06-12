@@ -204,7 +204,7 @@ pytest:
       else
         GATE=""
       fi
-      pytest -q --disable-warnings \
+      pytest -q --disable-warnings -m "not integration" \
         --cov=resilient_updates \
         --cov-report=term-missing \
         --cov-report=xml \

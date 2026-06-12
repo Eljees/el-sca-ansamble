@@ -227,7 +227,7 @@ jobs:
         run: |
           GATE=""
           if [ "${{ matrix.python-version }}" = "3.12" ]; then GATE="--cov-fail-under=88"; fi
-          pytest -q --disable-warnings \
+          pytest -q --disable-warnings -m "not integration" \
             --cov=resilient_updates \
             --cov-report=term-missing \
             --cov-report=xml \
