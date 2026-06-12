@@ -67,6 +67,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `artifacts/` перед `chmod -R 0777`, чтобы root-owned родительские директории не
   блокировали запись uid-1001 контейнерами (grype-updater, report-collector, cve-bin-tool).
 - `pyproject.toml` — версия синхронизирована с `versions.env` и CHANGELOG: `0.1.0 → 0.1.1`.
+- `docs/architecture.md` — добавлены 8 пропущенных модулей (`orchestrator.py`, `dashboard.py`,
+  `route_plan.py`, `update_doctor.py`, `nvd_feed_import.py`, `scan.py`, `vex.py`,
+  `run_layout.py`) и 5 пропущенных CLI-команд (`scan`, `dashboard`, `update-doctor`,
+  `route-plan`, `archive-run`); дата таблицы обновлена на 2026-06-12.
+- `CONTRIBUTING.md` — исправлены: значение coverage gate (75→88), примеры команд для
+  `smoke`/`integration` маркеров, описание назначения маркеров (были перепутаны).
+- `scripts/README.md` — добавлены 9 пропущенных скриптов: `update-db.sh`, `scan.sh`,
+  `export_images.sh`, `import_images.sh`, `pack_light.sh`, `deploy_light.sh`,
+  `export_db_image.sh`, `import_db_image.sh`, `reproduce-cybersec-11531.sh`.
+- `tests/test_orchestrator.py` — зафиксированы 10 ранее не закоммиченных тестов.
+- Audit-баннеры в `docs/audit/00–30-*.md` — счётчик тестов обновлён до 722.
 
 ## [0.1.1] - 2026-06-11
 

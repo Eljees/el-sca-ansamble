@@ -456,3 +456,278 @@ def test_post_proxy_chain_rejects_invalid_chain(tmp_path: Path):
     client = _client_with_cfg(tmp_path)
     resp = client.post("/api/proxy-chain?chain=evil")
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Private helper coverage: _provenance_status, _deep_find, _read_env_versions
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_status_non_dict_returns_question_mark():
+    from resilient_updates.dashboard import _provenance_status
+
+    assert _provenance_status("not-a-dict") == "?"
+    assert _provenance_status(None) == "?"
+    assert _provenance_status(42) == "?"
+
+
+def test_deep_find_traverses_lists():
+    from resilient_updates.dashboard import _deep_find
+
+    # List containing a dict that has the key.
+    assert _deep_find([{"needle": "found"}, {"other": 1}], "needle") == "found"
+    # Nested: list of lists of dicts.
+    assert _deep_find([[{"deep": "yes"}]], "deep") == "yes"
+    # Not present returns None.
+    assert _deep_find([{"a": 1}], "z") is None
+
+
+def test_read_env_versions_skips_comment_and_empty_lines(tmp_path: Path):
+    """Lines starting with # or without = are ignored in .env."""
+    from resilient_updates.dashboard import _read_env_versions
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "# this is a comment\nNO_EQUALS_HERE\nGRYPE_VERSION=v1.2.3\n",
+        encoding="utf-8",
+    )
+    versions = _read_env_versions(tmp_path)
+    assert versions["GRYPE_VERSION"] == "v1.2.3"
+
+
+def test_read_env_versions_falls_back_to_env_example(tmp_path: Path):
+    """.env.example fills in keys not present in .env or COMPOSE_VERSION_DEFAULTS."""
+    from resilient_updates.dashboard import _read_env_versions
+
+    # .env has no version keys; use a tool name absent from COMPOSE_VERSION_DEFAULTS.
+    (tmp_path / ".env").write_text("SOME_KEY=value\n", encoding="utf-8")
+    # .env.example has a new tool version that the defaults dict doesn't know about.
+    (tmp_path / ".env.example").write_text(
+        "# example\nCUSTOM_TOOL_VERSION=v1.0.0-example\n",
+        encoding="utf-8",
+    )
+    versions = _read_env_versions(tmp_path)
+    assert versions["CUSTOM_TOOL_VERSION"] == "v1.0.0-example"
+
+
+def test_read_env_versions_env_example_does_not_overwrite_env(tmp_path: Path):
+    """.env value wins over .env.example."""
+    from resilient_updates.dashboard import _read_env_versions
+
+    (tmp_path / ".env").write_text("GRYPE_VERSION=v9.0.0\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("GRYPE_VERSION=v0.0.1-example\n", encoding="utf-8")
+    versions = _read_env_versions(tmp_path)
+    assert versions["GRYPE_VERSION"] == "v9.0.0"
+
+
+# ---------------------------------------------------------------------------
+# tool_status coverage: non-dict provenance entries, _fill branches
+# ---------------------------------------------------------------------------
+
+
+def _prov_dir(artifacts: Path) -> Path:
+    d = artifacts / "provenance"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def test_tool_status_with_non_dict_provenance_entry(tmp_path: Path):
+    """_status/_updated return None/None for non-dict provenance payloads."""
+    prov = _prov_dir(tmp_path)
+    # Write a valid-JSON but non-dict provenance file for grype.
+    (prov / "grype.json").write_text(json.dumps("just-a-string"), encoding="utf-8")
+    data = tool_status(tmp_path)
+    by_name = {t["name"]: t for t in data["tools"]}
+    grype = by_name["Grype"]
+    assert grype["db_status"] is None
+    assert grype["db_updated"] is None
+
+
+def test_tool_status_fill_degraded(tmp_path: Path):
+    """degraded status → fill == 80."""
+    prov = _prov_dir(tmp_path)
+    (prov / "grype.json").write_text(
+        json.dumps({"activation_status": "degraded"}),
+        encoding="utf-8",
+    )
+    data = tool_status(tmp_path)
+    grype = next(t for t in data["tools"] if t["name"] == "Grype")
+    assert grype["fill"] == 80
+
+
+def test_tool_status_fill_lkg(tmp_path: Path):
+    """last-known-good status → fill == 55."""
+    prov = _prov_dir(tmp_path)
+    (prov / "grype.json").write_text(
+        json.dumps({"activation_status": "last-known-good"}),
+        encoding="utf-8",
+    )
+    data = tool_status(tmp_path)
+    grype = next(t for t in data["tools"] if t["name"] == "Grype")
+    assert grype["fill"] == 55
+
+
+def test_tool_status_fill_none_status(tmp_path: Path):
+    """None/empty/missing status → fill == 0."""
+    prov = _prov_dir(tmp_path)
+    (prov / "grype.json").write_text(
+        json.dumps({"activation_status": None}),
+        encoding="utf-8",
+    )
+    data = tool_status(tmp_path)
+    grype = next(t for t in data["tools"] if t["name"] == "Grype")
+    assert grype["fill"] == 0
+
+
+def test_tool_status_fill_unknown_status(tmp_path: Path):
+    """Unrecognised status string → fill == 35."""
+    prov = _prov_dir(tmp_path)
+    (prov / "grype.json").write_text(
+        json.dumps({"activation_status": "some-unknown-state"}),
+        encoding="utf-8",
+    )
+    data = tool_status(tmp_path)
+    grype = next(t for t in data["tools"] if t["name"] == "Grype")
+    assert grype["fill"] == 35
+
+
+# ---------------------------------------------------------------------------
+# active_enabled=False → 403 on mutating endpoints
+# ---------------------------------------------------------------------------
+
+
+def _passive_client(tmp_path: Path, monkeypatch):
+    """Create a dashboard with EL_SCA_DASHBOARD_ACTIVE=0 (read-only mode)."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from resilient_updates.dashboard import create_app
+
+    monkeypatch.setenv("EL_SCA_DASHBOARD_ACTIVE", "0")
+    return TestClient(create_app(tmp_path))
+
+
+def test_api_scan_disabled_returns_403(tmp_path: Path, monkeypatch):
+    import io
+
+    client = _passive_client(tmp_path, monkeypatch)
+    resp = client.post(
+        "/api/scan",
+        files={"file": ("a.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+    )
+    assert resp.status_code == 403
+
+
+def test_api_update_db_disabled_returns_403(tmp_path: Path, monkeypatch):
+    client = _passive_client(tmp_path, monkeypatch)
+    assert client.post("/api/update-db").status_code == 403
+
+
+def test_api_route_plan_post_disabled_returns_403(tmp_path: Path, monkeypatch):
+    client = _passive_client(tmp_path, monkeypatch)
+    assert client.post("/api/route-plan").status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# GET /api/route-plan — empty and populated
+# ---------------------------------------------------------------------------
+
+
+def test_api_route_plan_get_empty(tmp_path: Path):
+    """No route-plan.json → returns empty plan."""
+    client = _client(tmp_path)
+    resp = client.get("/api/route-plan")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["plan"] == {}
+    assert body["transports"] == []
+    assert body["generated_utc"] is None
+
+
+def test_api_route_plan_get_populated(tmp_path: Path):
+    """Existing route-plan.json → values are returned."""
+    client = _client(tmp_path)
+    plan_data = {
+        "generated_utc": "2026-06-12T00:00:00Z",
+        "plan": {"trivy": "direct"},
+        "transports": ["direct"],
+    }
+    (tmp_path / "route-plan.json").write_text(json.dumps(plan_data), encoding="utf-8")
+    resp = client.get("/api/route-plan")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["generated_utc"] == "2026-06-12T00:00:00Z"
+    assert body["plan"] == {"trivy": "direct"}
+    assert "direct" in body["transports"]
+
+
+def test_api_route_plan_post_runs_route_doctor(tmp_path: Path, monkeypatch):
+    """POST /api/route-plan with active mode calls subprocess and returns plan."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    import subprocess as _sp
+
+    from fastapi.testclient import TestClient
+
+    from resilient_updates.dashboard import create_app
+
+    calls: list = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        # Simulate route-doctor writing a plan file.
+        plan = {"generated_utc": "2026-06-12T10:00:00Z", "plan": {}, "transports": []}
+        (tmp_path / "route-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        return _sp.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    client = TestClient(create_app(tmp_path))
+    resp = client.post("/api/route-plan")
+    assert resp.status_code == 200
+    assert calls, "subprocess.run should have been called for route-doctor"
+    assert resp.json()["generated_utc"] == "2026-06-12T10:00:00Z"
+
+
+def test_api_route_plan_post_subprocess_error_returns_500(tmp_path: Path, monkeypatch):
+    """When route-doctor raises, POST /api/route-plan returns 500."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    import subprocess as _sp
+
+    from fastapi.testclient import TestClient
+
+    from resilient_updates.dashboard import create_app
+
+    def boom(*args, **kwargs):
+        raise OSError("docker not found")
+
+    monkeypatch.setattr(_sp, "run", boom)
+    client = TestClient(create_app(tmp_path))
+    resp = client.post("/api/route-plan")
+    assert resp.status_code == 500
+
+
+def test_post_proxy_chain_write_error_returns_500(tmp_path: Path, monkeypatch):
+    """If writing the runtime override fails, POST /api/proxy-chain returns 500."""
+    from resilient_updates.dashboard import create_app
+
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    (configs / "feed_sources.yaml").write_text("proxy:\n  default_chain: direct\n", encoding="utf-8")
+
+    original_write_text = Path.write_text
+
+    def boom(self, *args, **kwargs):
+        if self.name == "feed_sources.runtime.yaml":
+            raise OSError("disk full")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", boom)
+    client = TestClient(create_app(tmp_path, repo_root=tmp_path))
+    resp = client.post("/api/proxy-chain?chain=corp")
+    assert resp.status_code == 500

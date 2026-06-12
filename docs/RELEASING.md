@@ -17,7 +17,9 @@ Single source of truth for the project version: **`EL_SCA_VERSION`** in
    (newest dated block on top).
 2. **Update docs/README** if the change is user-facing (new flag, new env var,
    new workflow). New env vars also go in `.env.example`.
-3. **Bump `EL_SCA_VERSION`** in `versions.env` (MAJOR/MINOR/PATCH per above).
+3. **Bump the version** in two places (must stay in sync):
+   - `versions.env` — `EL_SCA_VERSION=X.Y.Z`
+   - `pyproject.toml` — `version = "X.Y.Z"`
 4. **Cut the release in the changelog:** rename `## [Unreleased]` to
    `## [X.Y.Z] - YYYY-MM-DD` and add a fresh empty `## [Unreleased]` above it.
 5. **Commit** with a clear message, e.g.
