@@ -45,11 +45,18 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `_io.py` | Общие hash- и JSON-утилиты для четырёх модулей выше |
 | `_retry.py` | `RetryPolicy` dataclass — единая точка истины для retry/backoff |
 | `_logging.py` | Setup root logger; `LOG_LEVEL` + `LOG_FORMAT=json` из env |
+| `orchestrator.py` | `JobRegistry` — фоновые задачи update/scan, SSE-поток для GUI, последовательный запуск `run --rm` шагов (ADR-0007) |
+| `dashboard.py` | FastAPI-приложение: GUI, SSE, `/api/route-plan`, `/api/proxy-chain` (ADR-0006) |
+| `route_plan.py` | Зондирование egress изнутри `scanner-net`; выбор маршрута per-tool; кэш плана 5 мин (ADR-0007 P2) |
+| `update_doctor.py` | `update-doctor` — матрица достижимости `(tool, layer) × chain` без сайд-эффектов (ADR-0007 P1) |
+| `nvd_feed_import.py` | Локальная копия NVD api2-парсера cve-bin-tool 3.4 с двумя фиксами + network fallback если локальные фиды пусты |
+| `scan.py` | Unified scan pipeline builder (ADR-0005): plan builder + `--dry-run`; реальный запуск через subprocess |
+| `vex.py` | Получение VEX-документов через fallback-pipeline и атомарная публикация в кэш Trivy (ADR-0003) |
+| `run_layout.py` | Per-run артефактная директория, `checkpoint.json`, периодические снапшоты в ходе скана |
 
 #### CLI subcommands
 
-`python -m resilient_updates.cli <команда>` — список ниже соответствует
-тому, что показывает `--help` на 2026-05-25:
+`python -m resilient_updates.cli <команда>` — актуальный список на 2026-06-12:
 
 | Команда | Назначение |
 |---|---|
@@ -64,10 +71,15 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `extract` | Распаковка через `artifact-extractor` контейнер |
 | `render-flags` | Рендеринг Trivy CLI-флагов из YAML-конфига |
 | `write-run-summary` | Деривация sidecar JSON-ов (summary/status/db_snapshot/run_manifest) |
+| `scan` | Запуск unified scan pipeline (ADR-0005); `--dry-run` печатает план без запуска |
+| `dashboard` | Запуск FastAPI GUI (ADR-0006) |
+| `update-doctor` | Матрица достижимости источников обновлений через все цепочки (ADR-0007 P1) |
+| `route-plan` | Зондирование egress + `--write-xray` генерация конфига xray-сайдкара (ADR-0007 P2) |
 | `update <tool>` | Обновление DB для trivy / grype / cve-bin-tool |
 | `proxy-status` | Healthcheck всех proxy-цепочек, запись `artifacts/provenance/proxy.json` |
 | `scanner-diff` | Сравнение двух `artifacts/` директорий |
 | `manifest` | Сборка корневого `MANIFEST.json` со ссылками на все артефакты прогона |
+| `archive-run` | Копирование артефактов прогона в per-run директорию (`artifacts/runs/<name>/`) |
 
 ---
 
