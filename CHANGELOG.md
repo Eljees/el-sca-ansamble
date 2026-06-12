@@ -6,6 +6,40 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Чекпоинты пайплайна + resume (`pipeline_state.py`).** Каждый переход
+  этапа (extract → sbom → trivy → grype → cve-bin-tool → report) атомарно
+  фиксируется в `artifacts/pipeline_state.json` с ключом прогона
+  (target+tool+format). Прерванный/повисший скан продолжается с последнего
+  завершённого этапа: `run-scan.sh --resume`, `run-scan.ps1 -Resume`,
+  кнопка «⏯ Продолжить с чекпоинта» в дашборде, MCP
+  `run_scan(_async)(resume=True)`. CLI-обвязка: `cli run-state
+  begin|stage-start|stage-end|stage-skip|finish|show|should-skip`.
+- **Heartbeat — живой вывод на долгих этапах.** `run-scan.sh` печатает
+  `[stage] … выполняется, прошло Ns` каждые `EL_SCA_HEARTBEAT_SECONDS`
+  (по умолч. 30; `--heartbeat N`); оркестратор дашборда шлёт строку статуса
+  в SSE-лог, когда контейнер молчит дольше heartbeat-интервала. Каждый этап
+  печатает время старта и итоговую длительность (sh и ps1) — больше никакого
+  «кажется, повисло».
+- **Монитор комплекса.** `python -m resilient_updates.cli monitor
+  [--watch N] [--json]` (resilient_updates/monitor.py) — статус
+  compose-контейнеров, текущий этап с elapsed, длительности завершённых
+  этапов, свежесть баз, хвост лога; `make monitor`. В GUI — панель
+  «Монитор · контейнеры и прогресс» (обновление каждые 5 с,
+  `GET /api/monitor`); в MCP — тул `monitor`, а `scan_status` дополнен
+  структурным блоком `pipeline`.
+- **Развёртывание в несколько команд.** `scripts/bootstrap.sh`
+  (`make bootstrap` / `make bootstrap-full`) и
+  `scripts/windows/bootstrap.ps1`: docker-check → `.env` из шаблона →
+  валидация compose → volume-init → сборка образов → (опц.) обновление баз →
+  smoke. Идемпотентно; с чистого clone до рабочего комплекса — одна команда.
+
+### Fixed
+
+- `tests/test_orchestrator.py`: fake `_run_scan` принимает новый kwarg
+  `resume` (устранён PytestUnhandledThreadExceptionWarning).
+
 ## [0.1.2] - 2026-06-12
 
 ### Added

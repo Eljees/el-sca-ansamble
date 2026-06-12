@@ -6,8 +6,27 @@
 
 ## 🚀 From a fresh clone (any OS, pure Docker Compose)
 
-Nothing host-specific required — only Docker with Compose v2. After `git clone`
-(or `git pull`) the pipeline runs in two commands once `.env` is set up:
+**Fastest path — one bootstrap command** (creates `.env`, fixes volume
+permissions, builds images, optionally pulls DBs, smoke-checks):
+
+```bash
+git clone <repo> && cd el-sca-ansamble
+./scripts/bootstrap.sh --update-db        # Linux/macOS (или: make bootstrap-full)
+# Windows: .\scripts\windows\bootstrap.ps1 -UpdateDb
+./scripts/run-scan.sh -t /path/to/artifact.tar.gz
+```
+
+Useful afterwards:
+
+```bash
+./scripts/run-scan.sh -t <тот же target> --resume   # продолжить прерванный скан с чекпоинта
+python3 -m resilient_updates.cli monitor --watch 5  # живой статус контейнеров и этапов
+python3 -m resilient_updates.cli dashboard          # GUI: http://127.0.0.1:8080
+```
+
+Manual alternative — nothing host-specific required, only Docker with Compose
+v2. After `git clone` (or `git pull`) the pipeline runs in two commands once
+`.env` is set up:
 
 ```bash
 # 1. One-time setup: create your local config from the template

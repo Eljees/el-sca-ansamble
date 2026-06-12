@@ -60,6 +60,16 @@ help:  ## Show this help.
 # ─────────────────────────────────────────────────────────────────────────
 # Validation
 # ─────────────────────────────────────────────────────────────────────────
+.PHONY: bootstrap bootstrap-full monitor
+bootstrap:  ## Fresh-clone deploy: .env + volume-init + build + smoke (no DBs).
+	./scripts/bootstrap.sh
+
+bootstrap-full:  ## Fresh-clone deploy INCLUDING database update (network required).
+	./scripts/bootstrap.sh --update-db
+
+monitor:  ## Live monitor: containers + pipeline stage progress (Ctrl+C to exit).
+	$(PYTHON) -m resilient_updates.cli monitor --watch 5
+
 .PHONY: validate
 validate:  ## Validate feed_sources.yaml + compose schema.
 	$(COMPOSE) -f $(COMPOSE_FILE) config -q
