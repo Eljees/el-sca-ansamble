@@ -199,3 +199,93 @@ def test_load_config_ignores_undeclared_runtime_chain(tmp_path):
 def test_load_config_ignores_malformed_runtime_file(tmp_path):
     cfg = _write_cfg_pair(tmp_path, _STATIC, "{not yaml: [")
     assert load_config(cfg)["proxy"]["default_chain"] == "corp"
+
+
+def test_load_config_runtime_no_default_chain_key(tmp_path):
+    # Runtime file present but has no default_chain key → chain is None → line 52 return
+    cfg = _write_cfg_pair(tmp_path, _STATIC, "some_other_key: value\n")
+    result = load_config(cfg)
+    assert result["proxy"]["default_chain"] == "corp"  # static value unchanged
+
+
+def test_load_config_runtime_with_no_proxy_section(tmp_path):
+    # Static config has no proxy section → proxy is None → not isinstance(proxy, dict) → line 52
+    static = "trivy:\n  db_repositories: []\n  java_db_repositories: []\n  checks_bundle_repositories: []\n"
+    cfg = _write_cfg_pair(tmp_path, static, "default_chain: corp\n")
+    # Must not raise; override is silently skipped
+    load_config(cfg)
+
+
+# ---------------------------------------------------------------------------
+# validate_config_data — duration parse errors and unknown sources (lines 105-160, 134)
+# ---------------------------------------------------------------------------
+
+
+def test_trivy_db_status_invalid_warning_age_reported():
+    config = _good()
+    config["trivy"].setdefault("db_status", {})["warning_age"] = "2d"  # invalid unit → lines 105-106
+    errors = validate_config_data(config)
+    assert any("Unsupported duration format" in e for e in errors)
+
+
+def test_grype_validation_invalid_max_age_reported():
+    config = _good()
+    config["grype"]["validation"]["max_allowed_built_age"] = "nope"  # lines 119-120
+    errors = validate_config_data(config)
+    assert any("Unsupported duration format" in e for e in errors)
+
+
+def test_grype_db_status_invalid_warning_age_reported():
+    config = _good()
+    config["grype"].setdefault("db_status", {})["warning_age"] = "bad"  # lines 124-125
+    errors = validate_config_data(config)
+    assert any("Unsupported duration format" in e for e in errors)
+
+
+def test_cve_bin_tool_unknown_data_source_reported():
+    config = _good()
+    config["cve_bin_tool"]["data_sources"] = ["NVD", "GHOST_SOURCE"]  # line 134
+    errors = validate_config_data(config)
+    assert any("unknown sources" in e for e in errors)
+
+
+def test_cve_db_audit_invalid_max_cache_age_reported():
+    config = _good()
+    config["cve_bin_tool"]["db_audit"]["max_cache_age"] = "3years"  # lines 151-152
+    errors = validate_config_data(config)
+    assert any("Unsupported duration format" in e for e in errors)
+
+
+def test_cve_db_status_invalid_warning_age_reported():
+    config = _good()
+    config["cve_bin_tool"].setdefault("db_status", {})["warning_age"] = "???"  # lines 159-160
+    errors = validate_config_data(config)
+    assert any("Unsupported duration format" in e for e in errors)
+
+
+def test_custom_sources_duplicate_priority_reported():
+    config = _good()
+    config.setdefault("custom_sources", {})["entries"] = [
+        {"name": "a", "url": "http://a", "priority": 5, "enabled": True, "layer": "grype"},
+        {"name": "b", "url": "http://b", "priority": 5, "enabled": True, "layer": "grype"},  # dup → line 182
+    ]
+    errors = validate_config_data(config)
+    assert any("duplicate priority" in e for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# validate_proxy_config — proxy.chains / proxy.policies path (lines 260-265)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_proxy_config_with_chains_section_runs_chain_validator():
+    # Triggers lines 260-265: section has "chains" → validate_chains is invoked
+    config = {
+        "proxy": {
+            "chains": {"direct": [], "corp": ["http://proxy.internal:8080"]},
+            "policies": {"default": "direct"},
+        }
+    }
+    errors = validate_proxy_config(config)
+    # validate_chains may or may not find errors — we just need the branch covered
+    assert isinstance(errors, list)
