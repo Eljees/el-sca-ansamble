@@ -282,3 +282,21 @@ def test_fetch_vex_no_sources_configured(tmp_path: Path) -> None:
     assert result["activation_status"] == "all-sources-failed"
     assert result["published"] == []
     assert result["used_last_known_good"] is False
+
+
+def test_fresh_lkg_oserror_from_glob_returns_empty(tmp_path: Path, monkeypatch) -> None:
+    """When vex_dir.glob raises OSError, _fresh_lkg returns [] (lines 94-95)."""
+    vex_dir = tmp_path / "vex"
+    vex_dir.mkdir()
+    (vex_dir / "recent.openvex.json").write_bytes(b"data")
+
+    original_glob = Path.glob
+
+    def boom(self, pattern):
+        if self == vex_dir:
+            raise OSError("permission denied")
+        return original_glob(self, pattern)
+
+    monkeypatch.setattr(Path, "glob", boom)
+    result = _fresh_lkg(vex_dir, max_age_hours=24)
+    assert result == []  # lines 94-95

@@ -485,7 +485,7 @@ def test_activate_unknown_db_policy_treated_as_strict(tmp_path: Path):
     temp_root = tmp_path / "tmp"
     provenance_path = tmp_path / "prov.json"
 
-    activated, payload = activate_best_cve_bin_tool_db(
+    activated, _payload = activate_best_cve_bin_tool_db(
         candidate_roots=[str(active_root)],
         active_root=active_root,
         previous_root=previous_root,

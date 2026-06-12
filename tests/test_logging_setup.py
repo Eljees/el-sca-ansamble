@@ -77,3 +77,10 @@ def test_setup_reads_env_when_args_not_passed(monkeypatch) -> None:
     output = buf.getvalue()
     assert "should-be-suppressed" not in output
     assert "should-pass" in output
+
+
+def test_get_logger_returns_named_logger() -> None:
+    from resilient_updates._logging import get_logger
+
+    logger = get_logger("test.el_sca")  # line 139
+    assert logger.name == "test.el_sca"

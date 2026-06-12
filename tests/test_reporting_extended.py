@@ -21,7 +21,6 @@ from resilient_updates.reporting import (
     target_digest,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # target_digest
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,9 +193,7 @@ def _scaffold(artifacts: Path) -> None:
     (artifacts / "reports" / "trivy" / "report.json").write_text(
         json.dumps({"Results": []}), encoding="utf-8"
     )
-    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(
-        json.dumps([]), encoding="utf-8"
-    )
+    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -279,25 +276,25 @@ def test_build_report_policy_violated_shows_fail(tmp_path):
     (artifacts / "reports" / "cve-bin-tool").mkdir(parents=True, exist_ok=True)
     (artifacts / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
     (artifacts / "reports" / "grype" / "report.json").write_text(
-        json.dumps({
-            "matches": [{
-                "vulnerability": {"id": "CVE-2024-0001", "severity": "CRITICAL", "cvss": []},
-                "artifact": {"name": "openssl", "version": "3.0.0", "type": "binary"},
-            }]
-        }),
+        json.dumps(
+            {
+                "matches": [
+                    {
+                        "vulnerability": {"id": "CVE-2024-0001", "severity": "CRITICAL", "cvss": []},
+                        "artifact": {"name": "openssl", "version": "3.0.0", "type": "binary"},
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     (artifacts / "reports" / "trivy" / "report.json").write_text(
         json.dumps({"Results": []}), encoding="utf-8"
     )
-    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(
-        json.dumps([]), encoding="utf-8"
-    )
+    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
     configs = tmp_path / "configs"
     configs.mkdir()
-    (configs / "policy.json").write_text(
-        json.dumps({"max_counts": {"CRITICAL": 0}}), encoding="utf-8"
-    )
+    (configs / "policy.json").write_text(json.dumps({"max_counts": {"CRITICAL": 0}}), encoding="utf-8")
     out = tmp_path / "report.md"
     build_report(artifacts, out)
     content = out.read_text(encoding="utf-8")
@@ -363,7 +360,9 @@ def test_build_report_enrichment_exception_silenced(tmp_path, monkeypatch):
 
     import resilient_updates.enrichment as _enrich
 
-    monkeypatch.setattr(_enrich, "enrich_findings", lambda findings: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        _enrich, "enrich_findings", lambda findings: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     out = tmp_path / "report.md"
     build_report(artifacts, out)  # must not raise; lines 363-364 handle it
     assert out.exists()
@@ -415,7 +414,9 @@ def test_build_report_source_freshness_exception_silenced(tmp_path, monkeypatch)
 
     import resilient_updates.enrichment as _enrich
 
-    monkeypatch.setattr(_enrich, "source_freshness", lambda: (_ for _ in ()).throw(RuntimeError("stale boom")))
+    monkeypatch.setattr(
+        _enrich, "source_freshness", lambda: (_ for _ in ()).throw(RuntimeError("stale boom"))
+    )
     out = tmp_path / "report.md"
     build_report(artifacts, out)  # lines 433-434 except handles it
     assert out.exists()
