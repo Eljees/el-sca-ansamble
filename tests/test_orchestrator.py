@@ -634,3 +634,180 @@ def test_end_stage_noop_for_unknown_key():
     """end_stage with unknown key must not raise."""
     job = Job("scan", SCAN_STAGES)
     job.end_stage("nonexistent", ok=True)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _run_stream: heartbeat + carriage-return splitting
+# ---------------------------------------------------------------------------
+
+
+def _make_proc_mock(lines: list[str], returncode: int = 0):
+    """Build a mock Popen whose stdout.read() delivers *lines* then "".
+
+    _run_stream opens Popen with encoding="utf-8" so stdout yields str, not bytes.
+    """
+    chunks = list(lines) + [""]
+    read_calls = iter(chunks)
+    _rc = returncode  # alias: class body has no closure over enclosing params
+
+    class FakeStdout:
+        def read(self, _n):
+            return next(read_calls, "")
+
+    class FakeProc:
+        stdout = FakeStdout()
+        returncode = _rc
+
+        def wait(self):
+            pass
+
+        def kill(self):
+            pass
+
+    return FakeProc()
+
+
+def test_run_stream_delivers_lines_to_job_log(tmp_path):
+    """Lines emitted by the process must appear in job.log."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("scan", SCAN_STAGES)
+    proc = _make_proc_mock(["line one\nline two\n"])
+
+    with patch("subprocess.Popen", return_value=proc):
+        rc = reg._run_stream(job, ["docker", "compose", "up"], {})
+
+    assert rc == 0
+    assert any("line one" in ln for ln in job.log)
+    assert any("line two" in ln for ln in job.log)
+
+
+def test_run_stream_carriage_return_splits_into_segments(tmp_path):
+    """Progress bars use \\r to redraw a line; each segment must be emitted."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("scan", SCAN_STAGES)
+    # Simulate a progress-bar line redrawn twice then a final newline.
+    proc = _make_proc_mock(["10%\r50%\r100%\n"])
+
+    with patch("subprocess.Popen", return_value=proc):
+        reg._run_stream(job, ["docker", "compose", "up"], {})
+
+    assert any("10%" in ln for ln in job.log)
+    assert any("50%" in ln for ln in job.log)
+    assert any("100%" in ln for ln in job.log)
+
+
+def test_run_stream_returns_nonzero_returncode(tmp_path):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("scan", SCAN_STAGES)
+    proc = _make_proc_mock(["error output\n"], returncode=2)
+
+    with patch("subprocess.Popen", return_value=proc):
+        rc = reg._run_stream(job, ["docker", "compose", "up"], {})
+
+    assert rc == 2
+
+
+def test_run_stream_heartbeat_fires_when_silent(tmp_path, monkeypatch):
+    """When the process is silent, the heartbeat thread must emit a status line."""
+    import threading
+
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("scan", SCAN_STAGES)
+    monkeypatch.setenv("EL_SCA_HEARTBEAT_SECONDS", "1")
+
+    # Proc yields no output for ~1.5 s, then terminates.
+    read_count = [0]
+
+    class SlowStdout:
+        def read(self, _n):
+            read_count[0] += 1
+            if read_count[0] == 1:
+                time.sleep(1.5)  # trigger heartbeat
+                return ""
+            return ""
+
+    class SlowProc:
+        stdout = SlowStdout()
+        returncode = 0
+
+        def wait(self):
+            pass
+
+        def kill(self):
+            pass
+
+    with patch("subprocess.Popen", return_value=SlowProc()):
+        reg._run_stream(job, ["docker", "compose", "up"], {})
+
+    assert any("ещё выполняется" in ln or "нет вывода" in ln for ln in job.log), (
+        "expected a heartbeat line in the log"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _normalise_volumes
+# ---------------------------------------------------------------------------
+
+
+def test_normalise_volumes_success_path(tmp_path):
+    """On success (_run_stream rc=0) no warning is logged."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("update", UPDATE_STAGES)
+    reg._run_stream = lambda j, cmd, env: 0  # type: ignore[assignment]
+    reg._normalise_volumes(job, {})
+    assert not any("WARN" in ln for ln in job.log)
+
+
+def test_normalise_volumes_logs_warning_on_failure(tmp_path):
+    """If volume-init fails, a WARN line must be logged but no exception raised."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("update", UPDATE_STAGES)
+    reg._run_stream = lambda j, cmd, env: 1  # type: ignore[assignment]
+    reg._normalise_volumes(job, {})
+    assert any("WARN" in ln for ln in job.log)
+
+
+def test_normalise_volumes_calls_volinit_profile(tmp_path):
+    """The command passed to _run_stream must include the volinit profile."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    job = Job("update", UPDATE_STAGES)
+    captured: list[list[str]] = []
+    reg._run_stream = lambda j, cmd, env: captured.append(cmd) or 0  # type: ignore[assignment]
+    reg._normalise_volumes(job, {})
+    assert captured, "expected _run_stream to be called"
+    assert "volinit" in captured[0]
+    assert "volume-init" in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# start_update: edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_update_normalise_volumes_failure_does_not_cancel_steps(tmp_path):
+    """A volinit failure (logged WARN) must not prevent updater steps from running."""
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+    reg._run_stream = lambda j, cmd, env: calls.append(cmd[-1]) or 0  # type: ignore[assignment]
+
+    # Simulate _normalise_volumes logging a warning (as the real impl does on rc!=0)
+    def warn_vol(job, env):
+        job.feed_line("# volinit: WARN rc=1 — возможны ошибки прав при обновлении")
+
+    reg._normalise_volumes = warn_vol  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("trivy"))
+    assert "trivy-updater" in calls
+    assert any("WARN" in ln for ln in job.log)
+
+
+def test_update_unknown_tool_treated_as_all(tmp_path):
+    """An unrecognised tool name must fall back to running all updaters (not raise)."""
+    reg = _seq_registry(tmp_path)
+    calls: list[str] = []
+    reg._run_stream = lambda j, cmd, env: calls.append(cmd[-1]) or 0  # type: ignore[assignment]
+    job = _wait_done(reg.start_update("not-a-real-tool"))
+    # Falls back to "all" — all three updaters run
+    assert "trivy-updater" in calls
+    assert "grype-updater" in calls
+    assert "cve-bin-tool-updater" in calls
+    assert job.status == "done"
