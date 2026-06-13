@@ -166,13 +166,17 @@ case "$TOOL" in
   cve-bin-tool) update_cve_bin_tool ;;
 esac
 
-# ── Freshness summary (best-effort) ──────────────────────────────────────────
+# ── Freshness summary (best-effort) — also persists db_status/*.json so the
+# dashboard shows current barrel fill even without a subsequent scan run.
+mkdir -p "$ARTIFACTS_DIR/db_status"
 for pair in "trivy:/var/lib/resilient-db/trivy/active" \
             "grype:/var/lib/resilient-db/grype/active" \
             "cve-bin-tool:/home/appuser/.cache/cve-bin-tool"; do
   t="${pair%%:*}"; p="${pair#*:}"
   [[ "$TOOL" == "all" || "$TOOL" == "$t" ]] || continue
-  docker compose run --rm db-admin db-status "$t" --path "$p" --warning-age 24h 2>/dev/null || true
+  _out="$(docker compose run --rm db-admin db-status "$t" --path "$p" --warning-age 24h 2>/dev/null || true)"
+  printf '%s\n' "$_out" | sed -n '/^{/,/^}/p' > "$ARTIFACTS_DIR/db_status/$t.json" 2>/dev/null || true
+  printf '%s\n' "$_out"
 done
 
 if [[ ${#FAILED[@]} -gt 0 ]]; then
