@@ -8,6 +8,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Живой таймер этапа в GUI.** Карточка активного этапа в «Процессе анализа»
+  показывает прошедшее время (`▶ 42s`) с обновлением каждую секунду и
+  пульсирующую подсветку — очевидно, что сканер работает, а не завис.
+  Heartbeat-интервал снижен с 30 → 10 с по умолчанию (`EL_SCA_HEARTBEAT_SECONDS`).
+- **Имена артефактов рядом с источником (`near-source`).** Дефолтный режим
+  сохранения прогонов изменён с `artifacts` на `auto` (оркестратор, `run-scan.sh`
+  уже использовал `auto`). В режиме `auto` папка прогона создаётся рядом с
+  исходным артефактом: `<dir-артефакта>/<пакет>-<YYYYMMDD-HHMMSS>/` — легко
+  найти отчёт рядом с тем, что сканировалось. Управляется через
+  `EL_SCA_RUN_OUTPUT_MODE=artifacts|near-source|auto`.
+
 - **Чекпоинты пайплайна + resume (`pipeline_state.py`).** Каждый переход
   этапа (extract → sbom → grype → trivy → cve-bin-tool → report) атомарно
   фиксируется в `artifacts/pipeline_state.json` с ключом прогона

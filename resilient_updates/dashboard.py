@@ -388,8 +388,15 @@ _GUI_HTML = """<!doctype html>
   .stage .lbl { font-weight:600; }
   .stage .st { font-size:12px; color:var(--muted); margin-top:2px; }
   .stage.pending { opacity:.55; }
-  .stage.active { border-color:var(--active); box-shadow:0 0 0 1px var(--active) inset; }
+  .stage.active { border-color:var(--active); box-shadow:0 0 0 1px var(--active) inset;
+                  animation:pulse-border 1.8s ease-in-out infinite; }
+  @keyframes pulse-border {
+    0%,100% { box-shadow:0 0 0 1px var(--active) inset,0 0 4px #3b82f633; }
+    50%      { box-shadow:0 0 0 1px var(--active) inset,0 0 10px #3b82f688; }
+  }
   .stage.active .st { color:var(--active); }
+  .stage .timer { font-size:11px; color:var(--muted); margin-top:3px; min-height:14px; }
+  .stage.active .timer { color:var(--active); }
   .stage.done { border-color:var(--ok); }
   .stage.done .st { color:var(--ok); }
   .stage.error { border-color:var(--err); }
@@ -573,18 +580,45 @@ const $ = s => document.querySelector(s);
 const logEl = $("#log"), pipeEl = $("#pipeline"), statusEl = $("#job-status"), connEl = $("#conn"), mapEl = $("#map"), runInfoEl = $("#run-info");
 let es = null;
 let stagesByKey = {};
+// key → timestamp (ms) when the stage became active; cleared on done/error
+const stageStartMs = {};
+
+function fmtElapsed(ms){
+  const s = Math.round(ms / 1000);
+  if(s < 60) return s + "s";
+  return Math.floor(s/60) + "m " + (s%60) + "s";
+}
 
 function renderStages(stages){
   pipeEl.innerHTML = "";
   (stages||[]).forEach(s => {
+    const prev = stagesByKey[s.key];
+    const st = s.status || "pending";
+    // track when stage went active
+    if(st === "active" && prev !== "active") stageStartMs[s.key] = Date.now();
+    if(st !== "active") delete stageStartMs[s.key];
     const d = document.createElement("div");
-    d.className = "stage " + (s.status||"pending");
-    d.innerHTML = `<div class="lbl">${s.label}</div><div class="st">${s.status||"pending"}</div>`;
+    d.id = "stage-" + s.key;
+    d.className = "stage " + st;
+    const timerTxt = st === "active" ? "▶ выполняется" : "";
+    d.innerHTML = `<div class="lbl">${s.label}</div><div class="st">${st}</div><div class="timer">${timerTxt}</div>`;
     pipeEl.appendChild(d);
   });
   stagesByKey = {}; (stages||[]).forEach(s => stagesByKey[s.key] = s.status||"pending");
   renderMap();
 }
+
+// Live elapsed-time ticker on active stages
+setInterval(() => {
+  const now = Date.now();
+  Object.entries(stageStartMs).forEach(([key, t]) => {
+    const el = document.getElementById("stage-" + key);
+    if(el) {
+      const timer = el.querySelector(".timer");
+      if(timer) timer.textContent = "▶ " + fmtElapsed(now - t);
+    }
+  });
+}, 1000);
 function mapNode(key, label){
   const st = stagesByKey[key] || "pending";
   return `<div class="map-node ${st}"><div>${label}</div><div class="ms">${st}</div></div>`;

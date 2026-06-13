@@ -466,7 +466,9 @@ class JobRegistry:
         # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
         # resume = skip stages already completed for the SAME target+tools
         # (artifacts/pipeline_state.json — written by every previous run).
-        mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "artifacts")
+        # "auto" tries near-source (sibling dir named <pkg>-<timestamp>) when the
+        # target path exists on disk; falls back to artifacts/runs/ otherwise.
+        mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "auto")
         run_dir = resolve_run_dir(
             artifacts_dir=self.artifacts_dir,
             target_host=target_host,
@@ -714,9 +716,9 @@ class JobRegistry:
         # arrived for EL_SCA_HEARTBEAT_SECONDS, emit a status line with the
         # elapsed time so the GUI/CLI never LOOK hung.  0 disables.
         try:
-            heartbeat = int(os.environ.get("EL_SCA_HEARTBEAT_SECONDS", "30") or "30")
+            heartbeat = int(os.environ.get("EL_SCA_HEARTBEAT_SECONDS", "10") or "10")
         except ValueError:
-            heartbeat = 30
+            heartbeat = 10
         started = time.time()
         last_output = [started]
         stop_hb = threading.Event()
