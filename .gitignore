@@ -90,6 +90,16 @@ incoming/images.tar
 artifacts/run-scan.log
 artifacts/db_status/
 
+# Session build/bootstrap log files (bootstrap.sh, update-db.sh write these here).
+# Covers run-scan.log* as well, which is also listed above (kept for clarity).
+artifacts/*.log
+# Build PID files written by background build processes.
+artifacts/*.pid
+# Debug probe scratch output (SSE, SSH, etc.) from interactive sessions.
+artifacts/*.txt
+# One-off shell scripts generated during interactive deploy/probe sessions.
+artifacts/*.sh
+
 # *.tar / *.tar.gz are ignored above, but the LFS-tracked deploy bundle MUST be
 # committed so `git clone` brings the runnable images + DBs. Un-ignore it.
 !bundle/

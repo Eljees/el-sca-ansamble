@@ -49,15 +49,16 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/300-fixups-2026-06-12.md` — **latest**: pyproject version, CI link, CHANGELOG links, CONTRIBUTING markers, scripts/README, orchestrator tests, architecture.md (2026-06-12).
-7. `audit/290-analysis-2026-06-12.md` — deploy-hardening recap, gitignore gaps, docker-compose pre-mkdir (2026-06-12).
-8. `audit/280-analysis-2026-06-12.md` — ruff format fix, deprecation docstring, CHANGELOG unreleased, run-scan.sh chmod fix (2026-06-12).
-9. `audit/270-analysis-2026-06-11.md` — full analysis pass (2026-06-11): D-NEW-1 gitkeep deletions, D-NEW-2 runtime proxy config, phased plan.
-10. `audit/260-fixups-2026-06-11.md` — fix pass: README cleanup, proxy-chain tests, gitignore, nvd-feeds untrack.
-11. `audit/250-fixups-2026-06-09.md` — proxy healthcheck + CVE source isolation.
-12. `audit/240-analysis-2026-06-08.md` — full analysis pass (2026-06-08).
-13. `audit/archive/` — superseded planning notes (`PLAN_2026-05-1x.md`).
-14. `../CHANGELOG.md` — release notes (Keep a Changelog).
+6. `audit/310-analysis-2026-06-13.md` — **latest**: 829 tests, v0.1.3 bump, gitignore session debris, monitor.py coverage, artifacts cleanup (2026-06-13).
+7. `audit/300-fixups-2026-06-12.md` — pyproject version, CI link, CHANGELOG links, CONTRIBUTING markers, scripts/README, orchestrator tests, architecture.md (2026-06-12).
+8. `audit/290-analysis-2026-06-12.md` — deploy-hardening recap, gitignore gaps, docker-compose pre-mkdir (2026-06-12).
+9. `audit/280-analysis-2026-06-12.md` — ruff format fix, deprecation docstring, CHANGELOG unreleased, run-scan.sh chmod fix (2026-06-12).
+10. `audit/270-analysis-2026-06-11.md` — full analysis pass (2026-06-11): D-NEW-1 gitkeep deletions, D-NEW-2 runtime proxy config, phased plan.
+11. `audit/260-fixups-2026-06-11.md` — fix pass: README cleanup, proxy-chain tests, gitignore, nvd-feeds untrack.
+12. `audit/250-fixups-2026-06-09.md` — proxy healthcheck + CVE source isolation.
+13. `audit/240-analysis-2026-06-08.md` — full analysis pass (2026-06-08).
+14. `audit/archive/` — superseded planning notes (`PLAN_2026-05-1x.md`).
+15. `../CHANGELOG.md` — release notes (Keep a Changelog).
 
 ## Architectural decisions
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,3 +123,103 @@ def test_render_text_no_state_no_docker():
     )
     assert "pipeline_state.json" in text
     assert "docker недоступен" in text
+
+
+# --- additional branch coverage -----------------------------------------------
+
+
+def test_list_containers_timeout(tmp_path: Path):
+    """TimeoutExpired → ok=False with timed-out message (lines 41-42)."""
+    with patch(
+        "resilient_updates.monitor.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=30),
+    ):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is False
+    assert "timed out" in out["error"]
+
+
+def test_list_containers_json_array_invalid(tmp_path: Path):
+    """JSON array that fails to parse → containers=[] but ok=True (lines 55-56)."""
+    with patch("resilient_updates.monitor.subprocess.run", return_value=_Proc(stdout="[not-valid-json")):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is True
+    assert out["containers"] == []
+
+
+def test_list_containers_ndjson_empty_and_garbage_lines(tmp_path: Path):
+    """Empty lines and non-JSON lines in NDJSON are skipped (lines 61, 64-65)."""
+    # Empty line must be in the MIDDLE so proc.stdout.strip() doesn't remove it.
+    ndjson = "\n".join(
+        [
+            json.dumps({"Name": "el-sca-grype-1", "Service": "grype-scanner", "State": "running", "Status": "Up"}),
+            "",  # empty line in the middle → if not line: continue (line 61)
+            "not-json-at-all",  # ValueError → continue (lines 64-65)
+        ]
+    )
+    with patch("resilient_updates.monitor.subprocess.run", return_value=_Proc(stdout=ndjson)):
+        out = monitor.list_containers(tmp_path)
+    assert out["ok"] is True
+    assert len(out["containers"]) == 1
+    assert out["containers"][0]["service"] == "grype-scanner"
+
+
+def test_summarize_db_status_non_dict_json(tmp_path: Path):
+    """A JSON file whose value is not a dict is silently skipped (line 93)."""
+    db = tmp_path / "db_status"
+    db.mkdir()
+    (db / "weird.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")  # list, not dict
+    (db / "ok.json").write_text(
+        json.dumps({"tool": "grype", "exists": True, "age_hours": 1.0, "status": "fresh"}),
+        encoding="utf-8",
+    )
+    out = monitor.summarize_db_status(tmp_path)
+    assert len(out) == 1
+    assert out[0]["tool"] == "grype"
+
+
+def test_render_text_resumed_and_skipped():
+    """render_text covers resumed flag (line 151) and skipped_via_resume (line 163)."""
+    status = {
+        "pipeline": {
+            "present": True,
+            "status": "running",
+            "current_stage": "grype",
+            "elapsed_s": 120.0,
+            "resumed": True,
+            "target": "/data/app.tar.gz",
+            "stages": [
+                {"stage": "extract", "status": "done", "duration_s": 5.0, "skipped_via_resume": True},
+                {"stage": "sbom", "status": "done", "duration_s": 10.0, "skipped_via_resume": False},
+                {"stage": "grype", "status": "active", "elapsed_s": 60.0, "skipped_via_resume": False},
+            ],
+        },
+        "containers": {"ok": True, "containers": []},
+        "db_status": [],
+        "log_tail": [],
+    }
+    text = monitor.render_text(status)
+    assert "продолжен с чекпоинта" in text  # noqa: RUF001
+    assert "skip:checkpoint" in text
+    assert "120s" in text
+    assert "extract" in text
+
+
+def test_render_text_db_status_and_log_tail():
+    """render_text covers db_status section (lines 180-183) and log_tail (lines 187-188)."""
+    status = {
+        "pipeline": {"present": False},
+        "containers": {"ok": True, "containers": []},
+        "db_status": [
+            {"tool": "trivy", "age_hours": 2.5, "status": "fresh"},
+            {"tool": "grype", "age_hours": None, "status": "unknown"},
+        ],
+        "log_tail": ["2026-06-13 10:00 extracting...", "2026-06-13 10:01 done"],
+    }
+    text = monitor.render_text(status)
+    assert "Базы" in text
+    assert "trivy" in text
+    assert "2.5h" in text
+    assert "?" in text  # grype age_hours=None → "?"
+    assert "Лог" in text
+    assert "extracting" in text

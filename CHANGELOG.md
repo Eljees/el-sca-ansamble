@@ -6,6 +6,8 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-06-13
+
 ### Added
 
 - **Живой таймер этапа в GUI.** Карточка активного этапа в «Процессе анализа»
@@ -18,7 +20,6 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   исходным артефактом: `<dir-артефакта>/<пакет>-<YYYYMMDD-HHMMSS>/` — легко
   найти отчёт рядом с тем, что сканировалось. Управляется через
   `EL_SCA_RUN_OUTPUT_MODE=artifacts|near-source|auto`.
-
 - **Чекпоинты пайплайна + resume (`pipeline_state.py`).** Каждый переход
   этапа (extract → sbom → grype → trivy → cve-bin-tool → report) атомарно
   фиксируется в `artifacts/pipeline_state.json` с ключом прогона
@@ -48,6 +49,22 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `scripts/run-scan.sh`: критическая ошибка — отсутствовал `set -e` в ряде
+  путей; hardened robustness stderr/perms на Linux и Windows.
+- `scripts/windows/bootstrap.ps1`: заменён PS7-only null-conditional `?.Source`
+  на 5.1-safe `Get-Command/.Source`; добавлен `resume:`-hint в «next steps».
+- `scripts/run-scan.sh`: `report-collector` запускается с `-u 0` (согласовано
+  с run-scan.ps1 и оркестратором) — устранена ошибка прав на uid-owned report-dir.
+- `scripts/windows/run-scan.ps1`: добавлен параметр `-Heartbeat` (паритет с
+  `--heartbeat` в run-scan.sh); `EL_SCA_HEARTBEAT_SECONDS` экспортируется.
+- `scripts/update-db.sh`: persist `db_status/*.json` после обновления баз —
+  барели дашборда показывают заполнение без необходимости запускать полный скан.
+- `resilient_updates/monitor.py`: UTF-8 stdout на Windows — текстовый вид
+  монитора больше не падает на non-ASCII символах.
+- `scripts/bootstrap.sh`: установка host-зависимостей Python (fastapi, uvicorn,
+  python-multipart) — CLI и дашборд работают out-of-box после bootstrap.
+- `scripts/run-scan.sh` + `scripts/windows/run-scan.ps1`: абсолютный путь
+  `ARTIFACTS_DIR` в collect-report/report-html — фикс WSL getcwd race.
 - `tests/test_orchestrator.py`: fake `_run_scan` принимает новый kwarg
   `resume` (устранён PytestUnhandledThreadExceptionWarning).
 
@@ -658,7 +675,8 @@ Internal release (see `docs/status-and-roadmap.md` Phase 1):
 - Initial proxy support (flat env / yaml form).
 - cve-bin-tool scan timeout wrapper.
 
-[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Eljees/el-sca-ansamble/releases/tag/v0.1.0
