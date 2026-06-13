@@ -53,16 +53,26 @@ export EXTRACT_INPUT_HOST="${EXTRACT_INPUT_HOST:-.}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# Host Python (same fallback dance as run-scan.sh: a bare `python` can be a
-# broken shim on some WSL hosts).
+# Host Python that can actually import the project (needs PyYAML/requests to
+# render trivy flags).  A bare `python3` on a WSL host is often the distro
+# interpreter WITHOUT the project deps, so probing `import sys` is not enough —
+# we require `resilient_updates` to be importable.  Fall back across the common
+# launchers (python3 / python / py -3) and pick the first that has the package.
 PYTHON_BIN="${PYTHON_BIN:-}"
+_py_has_project() { "$@" -c 'import resilient_updates' >/dev/null 2>&1; }
 if [[ -z "$PYTHON_BIN" ]]; then
   for _py in python3 python; do
-    if command -v "$_py" >/dev/null 2>&1 && "$_py" -c 'import sys' >/dev/null 2>&1; then
+    if command -v "$_py" >/dev/null 2>&1 && _py_has_project "$_py"; then
       PYTHON_BIN="$_py"; break
     fi
   done
+  # Windows host invoked from WSL/git-bash: the py launcher reaches the real
+  # interpreter where fastapi/pyyaml/etc are installed.
+  if [[ -z "$PYTHON_BIN" ]] && command -v py >/dev/null 2>&1 && _py_has_project py -3; then
+    PYTHON_BIN="py -3"
+  fi
 fi
+# Last resort: a plain interpreter (render may be empty; we guard that below).
 [[ -n "$PYTHON_BIN" ]] || PYTHON_BIN="python3"
 
 compose_checked() {
@@ -108,7 +118,21 @@ FAILED=()
 update_trivy() {
   echo "[update] trivy DB..."
   local flags
-  flags="$("$PYTHON_BIN" -m resilient_updates.cli render-flags trivy 2>/dev/null || true)"
+  # The aquasec/trivy updater image has NO python, so it cannot render its own
+  # --db-repository flags — they MUST arrive from the host.  $PYTHON_BIN is the
+  # interpreter we verified can import the project; word-split it (it may be
+  # "py -3").  An empty render here is fatal for the updater ("required"), so
+  # surface it as a clear host-side error instead of a cryptic exit 3.
+  # shellcheck disable=SC2086
+  flags="$($PYTHON_BIN -m resilient_updates.cli render-flags trivy 2>/dev/null || true)"
+  if [[ -z "${flags// }" ]]; then
+    echo "[update] trivy FAILED: could not render TRIVY_RENDERED_FLAGS on the host." >&2
+    echo "         The trivy image has no python; flags must come from the host but" >&2
+    echo "         '$PYTHON_BIN -m resilient_updates.cli render-flags trivy' produced nothing." >&2
+    echo "         Fix: run from a python env with project deps installed, or set" >&2
+    echo "         PYTHON_BIN=/path/to/python (e.g. PYTHON_BIN='py -3' on a Windows host)." >&2
+    FAILED+=(trivy); return
+  fi
   if docker compose --profile update run --rm -e "TRIVY_RENDERED_FLAGS=$flags" trivy-updater; then
     echo "[update] trivy OK"
   else
