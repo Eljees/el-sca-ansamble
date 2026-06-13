@@ -45,8 +45,11 @@ if (-not $env:SCAN_TARGET_HOST)  { $env:SCAN_TARGET_HOST = "." }
 if (-not $env:EXTRACT_INPUT_HOST) { $env:EXTRACT_INPUT_HOST = "." }
 
 Step "2.5/7 Хостовые Python-зависимости (CLI + дашборд)"
-$pyBin = (Get-Command python -ErrorAction SilentlyContinue)?.Source
-if (-not $pyBin) { $pyBin = (Get-Command python3 -ErrorAction SilentlyContinue)?.Source }
+# NB: avoid the PS7-only null-conditional `?.` — it is a SYNTAX error on stock
+# Windows PowerShell 5.1, which would break the whole bootstrap before it runs.
+$pyCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $pyCmd) { $pyCmd = Get-Command python3 -ErrorAction SilentlyContinue }
+$pyBin = if ($pyCmd) { $pyCmd.Source } else { $null }
 if ($pyBin) {
     $pipArgs = @("-m","pip","install","--quiet",
         "fastapi>=0.110","uvicorn[standard]>=0.29","httpx>=0.27",
@@ -88,5 +91,6 @@ docker compose ps
 
 Write-Host "`nКомплекс готов. Дальше:" -ForegroundColor Green
 Write-Host "  скан:    .\scripts\windows\run-scan.ps1 -Target C:\path\to\artifact.tar.gz"
+Write-Host "  resume:  .\scripts\windows\run-scan.ps1 -Target <тот же target> -Resume"
 Write-Host "  монитор: python -m resilient_updates.cli monitor --watch 5"
 Write-Host "  дашборд: python -m resilient_updates.cli dashboard   # http://127.0.0.1:8080"

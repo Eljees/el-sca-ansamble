@@ -35,6 +35,13 @@
   # target+tool are skipped (artifacts/pipeline_state.json). Incompatible with -Clean.
   [switch]$Resume,
 
+  # Liveness interval, in seconds (parity with run-scan.sh --heartbeat).  On
+  # Windows the per-stage progress comes from docker compose's own streamed
+  # output (container + scanner lines), so a stage is never silent; this value
+  # is exported as EL_SCA_HEARTBEAT_SECONDS so the dashboard/orchestrator path
+  # (which CAN emit a timed heartbeat) honours the same setting. 0 disables.
+  [int]$Heartbeat = $(if ($env:EL_SCA_HEARTBEAT_SECONDS) { [int]$env:EL_SCA_HEARTBEAT_SECONDS } else { 30 }),
+
   # Feed Syft-generated SBOM to cve-bin-tool instead of full binary scan.
   # Much faster (~30s vs 10+ min) but requires correct syft-format support in
   # cve-bin-tool v3.4. Disabled by default until verified working.
@@ -93,6 +100,14 @@ function Invoke-ComposeChecked {
   # the exit code — making every stage spuriously fail in redirected contexts.
   # Pin ErrorAction to Continue around the native call so we judge success by
   # $LASTEXITCODE only (the real contract), exactly like the bash entrypoints.
+  #
+  # Liveness ("не повис"): docker compose streams container + scanner progress
+  # through this pipe in real time, so a long stage is never silent — the same
+  # streamed output the bash entrypoint relies on.  (A concurrent timer-based
+  # heartbeat like run-scan.sh's is not used here: PowerShell does not run
+  # System.Timers.Timer script callbacks without a runspace on the timer thread,
+  # and an async Start-Process would mangle args that contain spaces such as
+  # -e "TRIVY_RENDERED_FLAGS=--db-repository …".)
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
@@ -118,6 +133,9 @@ function Invoke-CveBinToolScannerChecked {
 # показывает живой статус контейнеров и этапов.
 $script:StateOk  = $false
 $script:RunExtra = ""
+# Propagate the heartbeat interval to any child (dashboard/orchestrator) so the
+# whole ensemble shares one liveness cadence (parity with run-scan.sh).
+$env:EL_SCA_HEARTBEAT_SECONDS = [string]$Heartbeat
 
 function Invoke-RunStateCli {
   param([Parameter(Mandatory=$true)][string[]]$StateArgs)

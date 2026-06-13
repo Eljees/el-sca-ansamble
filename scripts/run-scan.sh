@@ -590,8 +590,11 @@ else
 fi
 
 # ── Collect reports ─────────────────────────────────────────────────
+# report-collector runs as root (-u 0) so it can always aggregate into the
+# bind-mounted artifacts/ regardless of which uid the scanners left report dirs
+# as (mirrors orchestrator._run_scan and scripts/windows/run-scan.ps1).
 export CASE_ID="$CASE_ID"
-run_stage report 0 docker compose --profile report run --rm report-collector
+run_stage report 0 docker compose --profile report run --rm -u 0 report-collector
 
 echo "[stage] collect-report (host $PYTHON_BIN)"
 "$PYTHON_BIN" -m resilient_updates.cli collect-report \
