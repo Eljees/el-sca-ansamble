@@ -9,7 +9,7 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Чекпоинты пайплайна + resume (`pipeline_state.py`).** Каждый переход
-  этапа (extract → sbom → trivy → grype → cve-bin-tool → report) атомарно
+  этапа (extract → sbom → grype → trivy → cve-bin-tool → report) атомарно
   фиксируется в `artifacts/pipeline_state.json` с ключом прогона
   (target+tool+format). Прерванный/повисший скан продолжается с последнего
   завершённого этапа: `run-scan.sh --resume`, `run-scan.ps1 -Resume`,

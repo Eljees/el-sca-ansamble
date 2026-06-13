@@ -40,7 +40,7 @@ SCHEMA_VERSION = 1
 
 #: Canonical stage order of the full pipeline (mirrors run-scan.sh and
 #: orchestrator.SCAN_STAGES).  Unknown stages are appended as they appear.
-KNOWN_STAGES = ("extract", "sbom", "trivy", "grype", "cve-bin-tool", "report")
+KNOWN_STAGES = ("extract", "sbom", "grype", "trivy", "cve-bin-tool", "report")
 
 
 def _now_iso() -> str:

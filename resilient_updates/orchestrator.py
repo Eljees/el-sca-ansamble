@@ -857,8 +857,6 @@ class JobRegistry:
         # a different container uid) makes the in-container extractor fail with
         # "Permission denied".  The host can always delete it; the extractor then
         # re-creates it fresh.
-        import shutil
-
         _cur = self.repo_root / "artifacts" / "extracted" / "current"
         # On resume the already-extracted tree IS the checkpoint — keep it
         # (only when its manifest is still in place, otherwise re-extract).

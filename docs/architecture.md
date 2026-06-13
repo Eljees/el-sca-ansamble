@@ -53,6 +53,8 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `scan.py` | Unified scan pipeline builder (ADR-0005): plan builder + `--dry-run`; реальный запуск через subprocess |
 | `vex.py` | Получение VEX-документов через fallback-pipeline и атомарная публикация в кэш Trivy (ADR-0003) |
 | `run_layout.py` | Per-run артефактная директория, `checkpoint.json`, периодические снапшоты в ходе скана |
+| `pipeline_state.py` | Атомарный чекпоинт `artifacts/pipeline_state.json`: begin/stage-start/stage-end/finish; resume-логика (`completed_stages`, `should_skip`); `summarize` для монитора |
+| `monitor.py` | Монитор комплекса: `gather_status` (compose ps + pipeline + DB + лог), `render_text`; consumer'ы — CLI `monitor`, `GET /api/monitor`, MCP `monitor` |
 
 #### CLI subcommands
 
@@ -77,6 +79,8 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `route-plan` | Зондирование egress + `--write-xray` генерация конфига xray-сайдкара (ADR-0007 P2) |
 | `update <tool>` | Обновление DB для trivy / grype / cve-bin-tool |
 | `proxy-status` | Healthcheck всех proxy-цепочек, запись `artifacts/provenance/proxy.json` |
+| `run-state` | Управление чекпоинтами пайплайна: `begin|stage-start|stage-end|stage-skip|finish|show|should-skip` |
+| `monitor` | Статус контейнеров + текущий этап + DB-свежесть; `--watch N` — автообновление, `--json` |
 | `scanner-diff` | Сравнение двух `artifacts/` директорий |
 | `manifest` | Сборка корневого `MANIFEST.json` со ссылками на все артефакты прогона |
 | `archive-run` | Копирование артефактов прогона в per-run директорию (`artifacts/runs/<name>/`) |
