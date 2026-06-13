@@ -140,6 +140,11 @@ state_begin() {
   else
     echo "[state] WARN: checkpoint state unavailable (host python?); --resume/monitor degraded"
   fi
+  # MUST return 0: this function is called as a bare statement under
+  # `set -e`, and its last command above is `[[ $RESUME -eq 1 ]] && echo …`,
+  # which evaluates to FALSE (rc 1) on every non-resume run — that would abort
+  # the whole pipeline right after the banner.  Pin success explicitly.
+  return 0
 }
 
 stage_should_skip() {

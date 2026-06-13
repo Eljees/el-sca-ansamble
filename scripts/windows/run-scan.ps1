@@ -86,7 +86,20 @@ function Invoke-ComposeChecked {
     [Parameter(Mandatory=$true)][string[]]$Args,
     [int[]]$SuccessExitCodes = @(0)
   )
-  & docker compose @Args
+  # docker compose writes progress ("Container ... Creating/Started") to STDERR.
+  # The script runs under $ErrorActionPreference = "Stop"; when the caller's
+  # output is captured with 2>&1 (background jobs, CI, `... | Out-File`), those
+  # native stderr lines become error records and `&` THROWS before we ever see
+  # the exit code — making every stage spuriously fail in redirected contexts.
+  # Pin ErrorAction to Continue around the native call so we judge success by
+  # $LASTEXITCODE only (the real contract), exactly like the bash entrypoints.
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & docker compose @Args 2>&1 | ForEach-Object { "$_" }
+  } finally {
+    $ErrorActionPreference = $prev
+  }
   if ($SuccessExitCodes -notcontains $LASTEXITCODE) {
     throw "docker compose failed (exit $LASTEXITCODE): $($Args -join ' ')"
   }
@@ -166,9 +179,22 @@ function Invoke-DbStatus {
     [Parameter(Mandatory=$true)][string]$DbTool,
     [Parameter(Mandatory=$true)][string]$DbPath
   )
-  & docker compose run --rm db-admin db-status $DbTool --path $DbPath --warning-age 24h
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warning "db-status for $DbTool returned exit code $LASTEXITCODE"
+  # stderr-safe (see Invoke-ComposeChecked): db-admin writes container status to
+  # stderr; under $ErrorActionPreference='Stop' with a 2>&1-captured caller that
+  # would throw and abort the whole scan right after extract.  This is an
+  # informational status print, so never let it crash the pipeline.
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & docker compose run --rm db-admin db-status $DbTool --path $DbPath --warning-age 24h 2>&1 |
+      ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "db-status for $DbTool returned exit code $LASTEXITCODE"
+    }
+  } catch {
+    Write-Warning "db-status for $DbTool failed: $($_.Exception.Message)"
+  } finally {
+    $ErrorActionPreference = $prev
   }
 }
 
@@ -393,6 +419,18 @@ if ($Clean) {
 
 # Initialise the checkpoint state (fresh run, or load completed stages on -Resume).
 Initialize-RunState
+
+# Pre-create report/SBOM subdirs on the HOST before any scanner runs.  On
+# Windows the artifacts/ tree is a bind-mount (NOT the named volume that
+# volume-init fixes), so when -Clean wipes it the first root scanner
+# (grype/trivy) recreates reports/ root-owned and the later uid-1001 containers
+# (cve-bin-tool, report-collector) fail with "mkdir reports/cve-bin-tool:
+# Permission denied".  Host-created dirs are writable by every container UID
+# through Docker Desktop's bind mount, so creating them up front removes the
+# whole permission class.  Mirrors orchestrator._run_scan + volume-init.
+foreach ($sub in @('reports','reports\grype','reports\trivy','reports\cve-bin-tool','reports\final','sbom','provenance')) {
+  New-Item -ItemType Directory -Force -Path (Join-Path $ArtifactsDir $sub) | Out-Null
+}
 
 # Always remove stale SBOM files so Syft writes fresh ones — unless we resume
 # past an already-completed sbom stage (those files ARE the checkpoint then).
@@ -643,7 +681,10 @@ switch ($Tool) {
 # ── Collect reports ───────────────────────────────────────────────────────────
 
 $env:CASE_ID = $CaseId
-Invoke-Stage -Stage "report" -ComposeArgs @("--profile","report","run","--rm","report-collector")
+# report-collector runs as root (-u 0) so it can always aggregate into the
+# bind-mounted artifacts/ regardless of which UID the scanners left dirs as
+# (mirrors orchestrator._run_scan).
+Invoke-Stage -Stage "report" -ComposeArgs @("--profile","report","run","--rm","-u","0","report-collector")
 
 # Generate Markdown report next to source file
 python -m resilient_updates.cli collect-report `
