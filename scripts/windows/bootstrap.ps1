@@ -44,6 +44,19 @@ if (-not (Test-Path ".env")) {
 if (-not $env:SCAN_TARGET_HOST)  { $env:SCAN_TARGET_HOST = "." }
 if (-not $env:EXTRACT_INPUT_HOST) { $env:EXTRACT_INPUT_HOST = "." }
 
+Step "2.5/7 Хостовые Python-зависимости (CLI + дашборд)"
+$pyBin = (Get-Command python -ErrorAction SilentlyContinue)?.Source
+if (-not $pyBin) { $pyBin = (Get-Command python3 -ErrorAction SilentlyContinue)?.Source }
+if ($pyBin) {
+    $pipArgs = @("-m","pip","install","--quiet",
+        "fastapi>=0.110","uvicorn[standard]>=0.29","httpx>=0.27",
+        "python-multipart>=0.0.9","pyyaml>=6.0","requests>=2.31.0")
+    & $pyBin @pipArgs 2>&1 | Where-Object { $_ -notmatch "WARNING" }
+    Write-Host "host-deps: OK"
+} else {
+    Write-Warning "python не найден — CLI/дашборд без host-Python не запустятся"
+}
+
 Step "3/7 Валидация compose-схемы"
 docker compose config -q
 if ($LASTEXITCODE -ne 0) { throw "docker compose config failed" }

@@ -58,6 +58,19 @@ fi
 export SCAN_TARGET_HOST="${SCAN_TARGET_HOST:-.}"
 export EXTRACT_INPUT_HOST="${EXTRACT_INPUT_HOST:-.}"
 
+step "2.5/7 Хостовые Python-зависимости (CLI + дашборд)"
+PYTHON_BIN="$(command -v python3 || command -v python || true)"
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "WARN: python не найден — CLI/дашборд без host-Python не запустятся."
+else
+  PIP_BIN="$PYTHON_BIN -m pip"
+  $PIP_BIN install --quiet --break-system-packages \
+    "fastapi>=0.110" "uvicorn[standard]>=0.29" "httpx>=0.27" \
+    "python-multipart>=0.0.9" "pyyaml>=6.0" "requests>=2.31.0" \
+    2>&1 | grep -v "^WARNING.*root\|^WARNING.*venv" || true
+  echo "host-deps: OK"
+fi
+
 step "3/7 Валидация compose-схемы"
 docker compose config -q && echo "compose: OK"
 
