@@ -99,12 +99,17 @@ def begin_run(
 
     With ``resume=True`` and a matching ``run_key``, previously completed
     stages are kept so :func:`completed_stages` can skip them.  Any mismatch
-    (different target/tool, no previous state) silently degrades to a fresh
-    run — resuming must never poison a scan of a different artifact.
+    (different target/tool, incompatible schema_version, no previous state)
+    silently degrades to a fresh run — resuming must never poison a scan of
+    a different artifact or misparse a stale file format.
     """
     run_key = compute_run_key(target, tool, extra)
     prev = load_state(artifacts_dir) if resume else None
-    if prev is not None and prev.get("run_key") == run_key:
+    if (
+        prev is not None
+        and prev.get("run_key") == run_key
+        and prev.get("schema_version") == SCHEMA_VERSION
+    ):
         state = prev
         state["resumed"] = True
         state["status"] = "running"

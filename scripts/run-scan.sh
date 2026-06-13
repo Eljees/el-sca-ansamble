@@ -27,6 +27,7 @@
 #       --auto-route        Before --update-db, run route-doctor to pick a live egress (default on)
 #       --no-auto-route     Disable egress auto-discovery (use .env/direct as-is)
 #       --timeout N         cve-bin-tool scan timeout in seconds (default: 1800)
+#       --checkers LIST     Comma-separated cve-bin-tool checker list (default: all enabled)
 #       --artifact-mode M   Save run snapshot: artifacts|near-source|auto (default: auto)
 #
 # Requires: docker, docker compose, bash >= 4

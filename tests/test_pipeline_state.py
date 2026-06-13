@@ -141,6 +141,20 @@ def test_summarize_running_has_elapsed(tmp_path: Path):
     assert active["elapsed_s"] >= 0
 
 
+def test_resume_with_wrong_schema_version_starts_fresh(tmp_path: Path):
+    """A state file from a future schema version must not be reused on resume."""
+    _begin(tmp_path)
+    ps.stage_start(tmp_path, "extract")
+    ps.stage_end(tmp_path, "extract", ok=True)
+    # Tamper with schema_version to simulate a future format.
+    raw = json.loads(ps.state_path(tmp_path).read_text(encoding="utf-8"))
+    raw["schema_version"] = ps.SCHEMA_VERSION + 1
+    ps.state_path(tmp_path).write_text(json.dumps(raw), encoding="utf-8")
+    state = ps.begin_run(tmp_path, target="/data/app.tar.gz", tool="all", resume=True)
+    assert state["resumed"] is False
+    assert state["stages"] == {}
+
+
 def test_corrupt_state_treated_as_absent(tmp_path: Path):
     ps.state_path(tmp_path).write_text("{not json", encoding="utf-8")
     assert ps.load_state(tmp_path) is None
