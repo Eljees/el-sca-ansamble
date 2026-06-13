@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import sys
 import tarfile
 from argparse import ArgumentParser
 
@@ -1132,6 +1134,14 @@ def main() -> int:
         import time as _time
 
         from .monitor import gather_status, render_text
+
+        # The text view contains Cyrillic + box-drawing glyphs.  A Windows
+        # console defaults to cp1252/cp866 and `print()` then dies with
+        # UnicodeEncodeError.  Force UTF-8 with replacement so the monitor never
+        # crashes on the very platform whose long scans it exists to watch.
+        if not args.json:
+            with contextlib.suppress(Exception):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
         while True:
             status = gather_status(args.artifacts_dir, repo_root=args.repo_root)
