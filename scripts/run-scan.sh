@@ -595,7 +595,7 @@ run_stage report 0 docker compose --profile report run --rm report-collector
 
 echo "[stage] collect-report (host $PYTHON_BIN)"
 "$PYTHON_BIN" -m resilient_updates.cli collect-report \
-  --reports-dir artifacts \
+  --reports-dir "$ARTIFACTS_DIR" \
   --target      "$SCAN_TARGET_HOST" \
   --display-target "$SCAN_TARGET_DISPLAY" \
   --case-id     "$CASE_ID" \
@@ -603,7 +603,7 @@ echo "[stage] collect-report (host $PYTHON_BIN)"
 
 echo "[stage] report-html (host $PYTHON_BIN)"
 "$PYTHON_BIN" scripts/report_html.py \
-  --artifacts-dir artifacts \
+  --artifacts-dir "$ARTIFACTS_DIR" \
   --target        "$SCAN_TARGET_DISPLAY" \
   --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"
 
