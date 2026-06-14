@@ -88,9 +88,27 @@ def _source_count(
     range_counts: dict[str, int],
     purl2cpe_total: int,
     dir_infos: dict[str, dict[str, Any]],
+    metrics_total: int = 0,
+    db_root: Path | None = None,
 ) -> tuple[int | None, str]:
     source_upper = source.upper()
-    if source_upper in {"NVD", "GAD", "REDHAT"}:
+    if source_upper == "NVD":
+        # cve-bin-tool does NOT store NVD data in cve_severity or cve_range.
+        # NVD vulnerability ranges are read from nvdcve-YYYY.json.gz files at
+        # scan time; NVD CVSS scores are stored in the cve_metrics table.
+        # Use nvdcve file count as primary signal (present in json-nvd / api2
+        # modes); fall back to cve_metrics total for json-mirror pre-built DBs
+        # that embed NVD data without writing separate year-files.
+        if db_root is not None:
+            nvd_file_count = sum(1 for _ in db_root.glob("nvdcve*.json.gz"))
+            if nvd_file_count > 0:
+                return nvd_file_count, "nvdcve json files"
+        # json-mirror embeds NVD CVSS in cve_metrics; treat non-zero total as
+        # proof of NVD presence (real DBs have hundreds of thousands of rows).
+        if metrics_total > 0:
+            return metrics_total, "cve_metrics table"
+        return 0, "nvdcve json files"
+    if source_upper in {"GAD", "REDHAT"}:
         return severity_counts.get(source_upper, 0), "cve_severity"
     if source_upper == "CURL":
         return range_counts.get("Curl", 0), "cve_range"
@@ -139,6 +157,7 @@ def audit_cve_bin_tool_db(
         "counts": {
             "cve_range_total": 0,
             "cve_severity_total": 0,
+            "cve_metrics_total": 0,
             "purl2cpe_total": 0,
             "cve_range_by_source": {},
             "cve_severity_by_source": {},
@@ -160,6 +179,11 @@ def audit_cve_bin_tool_db(
             result["counts"]["purl2cpe_total"] = _query_table_count(cursor, "purl2cpe")
             result["counts"]["cve_range_by_source"] = _query_group_counts(cursor, "cve_range")
             result["counts"]["cve_severity_by_source"] = _query_group_counts(cursor, "cve_severity")
+            # cve_metrics stores NVD CVSS scores (metric_id-keyed, no data_source column)
+            try:
+                result["counts"]["cve_metrics_total"] = _query_table_count(cursor, "cve_metrics")
+            except Exception:
+                result["counts"]["cve_metrics_total"] = 0
     except sqlite3.DatabaseError as exc:
         result["failures"].append(f"sqlite error: {exc}")
         return result
@@ -174,10 +198,14 @@ def audit_cve_bin_tool_db(
     severity_counts = result["counts"]["cve_severity_by_source"]
     range_counts = result["counts"]["cve_range_by_source"]
     purl2cpe_total = int(result["counts"]["purl2cpe_total"])
+    metrics_total = int(result["counts"]["cve_metrics_total"])
     declared = declared_sources or sorted(OBSERVABLE_CVE_SOURCES | UNOBSERVABLE_CVE_SOURCES)
 
     for source in declared:
-        count, evidence = _source_count(source, severity_counts, range_counts, purl2cpe_total, dir_infos)
+        count, evidence = _source_count(
+            source, severity_counts, range_counts, purl2cpe_total, dir_infos,
+            metrics_total=metrics_total, db_root=root,
+        )
         observable = source.upper() in OBSERVABLE_CVE_SOURCES
         min_count = int(min_entries.get(source.upper(), min_entries.get(source, 1 if observable else 0)))
         present = (count or 0) >= min_count if observable else None

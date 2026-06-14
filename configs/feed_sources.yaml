@@ -174,10 +174,10 @@ grype:
     warning_age: "24h"
 
 cve_bin_tool:
-  # json-mirror is the stable primary route in this contour: it produced a
-  # complete NVD/GAD/REDHAT/PURL2CPE candidate on 2026-06-02, while api2/json-nvd
-  # were kept only as manual fallback routes for operator diagnostics.
-  nvd_modes: ["json-mirror", "api2", "json-nvd"]
+  # json-nvd is the primary route: it downloads NVD year-files (nvdcve-*.json.gz)
+  # that are correctly detected by the NVD audit check. json-mirror downloads a
+  # pre-built DB and falls back to cve_metrics-based NVD detection.
+  nvd_modes: ["json-nvd", "json-mirror", "api2"]
   data_sources:
     - NVD
     - OSV
@@ -222,15 +222,17 @@ cve_bin_tool:
       - npm
       - Rust
   db_audit:
-    # NVD-only slim build (api2 with NVD API keys): the scanner only needs the
-    # NVD-derived cve.db, so GAD/REDHAT/CURL/PURL2CPE are no longer required and
-    # the 45 GB json-mirror is not built.  Restore the full list to go back to
-    # the json-mirror multi-source build.
+    # NVD check: cve-bin-tool stores NVD data as nvdcve-YYYY.json.gz files (for
+    # json-nvd/api2 modes) or in cve_metrics table (json-mirror pre-built DBs).
+    # The audit counts nvdcve files first; min_entries=20 requires at least 20
+    # year-files (2002-2026 = 25 files). For json-mirror DBs without year-files,
+    # the fallback checks cve_metrics row count (which is also > 20 when NVD is
+    # embedded). Keep NVD as required so an empty DB is always rejected.
     db_policy: "degraded-ok"
     required_sources:
       - NVD
     min_entries:
-      NVD: 1000
+      NVD: 20
     max_cache_age: "168h"
     fail_closed_if_required_missing: true
     activation_policy:

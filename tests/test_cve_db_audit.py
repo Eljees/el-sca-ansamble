@@ -19,6 +19,12 @@ from resilient_updates.cve_db_audit import (
 
 
 def _make_db_root(root: Path, *, include_nvd: bool = True) -> Path:
+    """Create a minimal cve-bin-tool DB root suitable for audit tests.
+
+    NVD presence is indicated by an ``nvdcve-*.json.gz`` file (matching real
+    cve-bin-tool behaviour where NVD data lives in year-files, not in the
+    ``cve_severity`` SQLite table).
+    """
     root.mkdir(parents=True, exist_ok=True)
     (root / "redhat").mkdir(exist_ok=True)
     (root / "purl2cpe").mkdir(exist_ok=True)
@@ -27,18 +33,27 @@ def _make_db_root(root: Path, *, include_nvd: bool = True) -> Path:
     (root / "version_map.db").write_bytes(b"sqlite-placeholder")
     (root / "gad" / "advisory.yml").write_text("id: GAD-1\n", encoding="utf-8")
     (root / "redhat" / "CVE-2026-0001.json").write_text("{}", encoding="utf-8")
+    if include_nvd:
+        # Simulate a downloaded NVD year-file (content irrelevant for audit).
+        (root / "nvdcve-2.0-2024.json.gz").write_bytes(b"")
     db_path = root / "cve.db"
     with sqlite3.connect(db_path) as connection:
         cursor = connection.cursor()
         cursor.execute("CREATE TABLE cve_range (data_source TEXT)")
         cursor.execute("CREATE TABLE cve_severity (data_source TEXT)")
+        cursor.execute("CREATE TABLE cve_metrics (cve_number TEXT, metric_id INTEGER, metric_score REAL, metric_field TEXT)")
         cursor.execute("CREATE TABLE purl2cpe (id INTEGER)")
         cursor.executemany(
             "INSERT INTO cve_range (data_source) VALUES (?)", [("Curl",), ("REDHAT",), ("REDHAT",)]
         )
         cursor.executemany("INSERT INTO cve_severity (data_source) VALUES (?)", [("GAD",), ("REDHAT",)])
         if include_nvd:
-            cursor.executemany("INSERT INTO cve_severity (data_source) VALUES (?)", [("NVD",), ("NVD",)])
+            # Populate cve_metrics to simulate embedded NVD CVSS data (used by
+            # json-mirror pre-built DBs that have no separate nvdcve year-files).
+            cursor.executemany(
+                "INSERT INTO cve_metrics VALUES (?,?,?,?)",
+                [("CVE-2024-0001", 3, 7.5, "CVSS:3.1/AV:N"), ("CVE-2024-0002", 2, 5.0, "AV:N")],
+            )
         cursor.executemany("INSERT INTO purl2cpe (id) VALUES (?)", [(1,), (2,), (3,)])
         connection.commit()
     return root
@@ -68,7 +83,9 @@ def test_audit_passes_with_required_sources(tmp_path: Path):
         declared_sources=["NVD", "GAD", "REDHAT", "CURL", "PURL2CPE"],
     )
     assert payload["overall_status"] == "pass"
-    assert payload["source_status"]["NVD"]["count"] == 2
+    # NVD is detected via nvdcve year-files (1 file created by fixture).
+    assert payload["source_status"]["NVD"]["count"] == 1
+    assert payload["source_status"]["NVD"]["evidence"] == "nvdcve json files"
     assert payload["source_status"]["PURL2CPE"]["count"] == 3
 
 
