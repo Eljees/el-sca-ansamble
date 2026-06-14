@@ -78,6 +78,75 @@ function Import-LocalEnv {
   }
 }
 
+function Import-RoutePlan {
+  <#
+  .SYNOPSIS
+    Load proxy settings from artifacts/route-plan.env into the current process.
+
+  .DESCRIPTION
+    docker-compose.yml interpolates ${HTTP_PROXY:-} / ${ALL_PROXY:-} from the
+    host environment.  On Linux, update-db.sh sources route-plan.env before
+    calling docker compose; on Windows this function replicates that step.
+
+    If HTTP_PROXY or ALL_PROXY are already pinned (e.g. via .env.local), the
+    function is a no-op so manual overrides are always respected.
+
+    When -RunDoctor is passed the function re-runs route-doctor whenever the
+    plan is missing or older than $MaxAgeMinutes (default 30).  This keeps the
+    plan fresh on -UpdateDb without slowing down plain scan runs.
+  #>
+  param(
+    [switch]$RunDoctor,
+    [int]$MaxAgeMinutes = 30
+  )
+
+  if ($env:HTTP_PROXY -or $env:ALL_PROXY) {
+    Write-Host "[route] HTTP_PROXY/ALL_PROXY already set; skipping route-plan.env load." -ForegroundColor DarkGray
+    return
+  }
+
+  $planFile = Join-Path (Get-Location).Path "artifacts\route-plan.env"
+
+  if ($RunDoctor) {
+    $needDoctor = $false
+    if (-not (Test-Path $planFile)) {
+      $needDoctor = $true
+    } else {
+      $age = (Get-Date) - (Get-Item $planFile).LastWriteTime
+      if ($age.TotalMinutes -gt $MaxAgeMinutes) {
+        Write-Host "[route] route-plan.env is $([int]$age.TotalMinutes)m old; refreshing..." -ForegroundColor DarkYellow
+        $needDoctor = $true
+      }
+    }
+
+    if ($needDoctor) {
+      Write-Host "[route] running route-doctor..." -ForegroundColor DarkYellow
+      $prev = $ErrorActionPreference
+      $ErrorActionPreference = 'Continue'
+      & docker compose --profile route run --rm route-doctor 2>&1 | ForEach-Object { "$_" }
+      $ErrorActionPreference = $prev
+    }
+  }
+
+  if (-not (Test-Path $planFile)) {
+    Write-Host "[route] artifacts\route-plan.env not found; proceeding without proxy." -ForegroundColor DarkYellow
+    return
+  }
+
+  $loaded = [System.Collections.Generic.List[string]]::new()
+  foreach ($line in Get-Content $planFile) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if ($line.TrimStart().StartsWith("#"))    { continue }
+    $parts = $line -split "=", 2
+    if ($parts.Count -ne 2) { continue }
+    $k = $parts[0].Trim()
+    $v = $parts[1].Trim()
+    [Environment]::SetEnvironmentVariable($k, $v, "Process")
+    $loaded.Add($k)
+  }
+  Write-Host "[route] plan loaded: HTTP_PROXY=$($env:HTTP_PROXY) ALL_PROXY=$($env:ALL_PROXY)" -ForegroundColor DarkCyan
+}
+
 function Enable-WindowsComposeOverlay {
   $repoRoot = (Get-Location).Path
   $baseCompose = Join-Path $repoRoot "docker-compose.yml"
@@ -310,6 +379,7 @@ function Show-DbFreshnessBanner {
 docker --version     | Out-Null
 docker compose version | Out-Null
 Import-LocalEnv
+Import-RoutePlan -RunDoctor:$UpdateDb
 Enable-WindowsComposeOverlay
 
 if (-not (Test-Path $Target)) {
