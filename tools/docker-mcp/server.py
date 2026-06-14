@@ -514,29 +514,63 @@ def run_scan_async(
         return {"ok": False, "error": "refusing to scan an empty/root target; pass a concrete path"}
     if not PROJECT_DIR.is_dir():
         return {"ok": False, "error": f"EL_SCA_DIR not found: {PROJECT_DIR}"}
-    args = ["bash", "scripts/run-scan.sh", "--target", target, "--tool", tool]
-    if extract:
-        args.append("--extract")
-    if update_db:
-        args.append("--update-db")
-    if sbom_scan:
-        args.append("--sbom-scan")
-    if resume:
-        args.append("--resume")
+    # On Windows the MCP server's Python process runs natively; WSL bash cannot
+    # resolve Windows paths like d:\..., so we delegate to run-scan.ps1 instead.
+    # run-scan.ps1 writes [stage] markers and updates pipeline_state.json via the
+    # same CLI tools, so scan_status works identically on both platforms.
+    if sys.platform == "win32":
+        ps_script = str(PROJECT_DIR / "scripts" / "windows" / "run-scan.ps1")
+        args: list[str] = [
+            "powershell.exe", "-ExecutionPolicy", "Bypass", "-File", ps_script,
+            "-Target", target, "-Tool", tool,
+        ]
+        if extract:
+            args.append("-Extract")
+        if update_db:
+            args.append("-UpdateDb")
+        if sbom_scan:
+            args.append("-SbomScan")
+        if resume:
+            args.append("-Resume")
+    else:
+        args = ["bash", "scripts/run-scan.sh", "--target", target, "--tool", tool]
+        if extract:
+            args.append("--extract")
+        if update_db:
+            args.append("--update-db")
+        if sbom_scan:
+            args.append("--sbom-scan")
+        if resume:
+            args.append("--resume")
     jobs_dir = PROJECT_DIR / JOBS_DIR_REL
     jobs_dir.mkdir(parents=True, exist_ok=True)
     job_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    log_path = PROJECT_DIR / "artifacts" / "run-scan.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        proc = subprocess.Popen(  # argv list, allow-listed script — no shell
-            args,
-            cwd=str(PROJECT_DIR),
-            env=_proxy_env(proxy),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        if sys.platform == "win32":
+            # PowerShell manages its own output; we capture it to run-scan.log
+            # so scan_status can tail it (mirrors run-scan.sh's `tee` redirect).
+            log_fh = open(log_path, "w", encoding="utf-8")  # noqa: WPS515
+            proc = subprocess.Popen(  # argv list, no shell
+                args,
+                cwd=str(PROJECT_DIR),
+                env=_proxy_env(proxy),
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        else:
+            proc = subprocess.Popen(  # argv list, allow-listed script — no shell
+                args,
+                cwd=str(PROJECT_DIR),
+                env=_proxy_env(proxy),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
     except FileNotFoundError:
-        return {"ok": False, "error": "bash/docker not found on PATH in this environment"}
+        return {"ok": False, "error": "bash/powershell not found on PATH in this environment"}
     job = {
         "job_id": job_id,
         "pid": proc.pid,
