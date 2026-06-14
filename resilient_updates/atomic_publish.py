@@ -45,7 +45,12 @@ def _replace_tree(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     staging = dst.parent / f".staging_{dst.name}_{os.getpid()}"
     if staging.exists():
-        shutil.rmtree(staging)
+        shutil.rmtree(staging, ignore_errors=True)
+        if staging.exists():
+            # rmtree failed (overlayfs / Docker volume quirk with large trees).
+            # Fall back to a fresh unique path so we don't block on stale state.
+            import time  # noqa: PLC0415
+            staging = dst.parent / f".staging_{dst.name}_{os.getpid()}_{time.time_ns()}"
     try:
         shutil.copytree(src, staging)
         # Use os.rename directly here: staging and dst are guaranteed to be on
