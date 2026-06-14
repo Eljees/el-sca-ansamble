@@ -334,6 +334,7 @@ def _download_grype_candidate(
     )
     if archive_status >= 400:
         raise ValueError(f"http_{archive_status}")
+    archive_target.parent.mkdir(parents=True, exist_ok=True)
     archive_target.write_bytes(archive_payload)
     _validate_grype_archive(archive_target, checksum if validation_cfg.get("validate_hash") else None)
     if validation_cfg.get("validate_age") and built:
