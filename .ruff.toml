@@ -23,6 +23,11 @@ extend-exclude = [
 [lint]
 # Curated, opinionated baseline.  Add rules incrementally as the codebase
 # stabilises — avoid blanket "ALL" so contributors aren't drowned in churn.
+# External linter codes used in `# noqa` comments that ruff must not flag.
+external = [
+  "PLC0415", # pylint: import-outside-toplevel (deferred import in atomic_publish)
+  "WPS515",  # wemake: open-without-context-manager (intentional: fh lives beyond with-block)
+]
 select = [
   "E",    # pycodestyle errors
   "F",    # pyflakes

@@ -49,8 +49,9 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/320-analysis-2026-06-14.md` — **latest**: 845 tests, N1 --checkers docs, N2 RetryPolicy dual-truth, N3 schema_version guard, pipeline_state fix, orchestrator mock tests, network-design route-doctor section (2026-06-14).
-7. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, gitignore session debris, monitor.py 100% coverage, artifacts cleanup (2026-06-13).
+6. `audit/330-analysis-2026-06-14.md` — **latest**: 845 tests, CHANGELOG gap, scan.sh disclaimer fix needed, workspace.md/session docs → archive candidates, N2 RetryPolicy carry-forward, feature backlog (2026-06-14).
+7. `audit/320-analysis-2026-06-14.md` — 845 tests, N1 --checkers docs, N2 RetryPolicy dual-truth, N3 schema_version guard, pipeline_state fix, orchestrator mock tests, network-design route-doctor section (2026-06-14).
+8. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, gitignore session debris, monitor.py 100% coverage, artifacts cleanup (2026-06-13).
 8. `audit/300-fixups-2026-06-12.md` — pyproject version, CI link, CHANGELOG links, CONTRIBUTING markers, scripts/README, orchestrator tests, architecture.md (2026-06-12).
 9. `audit/290-analysis-2026-06-12.md` — deploy-hardening recap, gitignore gaps, docker-compose pre-mkdir (2026-06-12).
 10. `audit/280-analysis-2026-06-12.md` — ruff format fix, deprecation docstring, CHANGELOG unreleased, run-scan.sh chmod fix (2026-06-12).
