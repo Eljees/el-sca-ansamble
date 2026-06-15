@@ -41,7 +41,9 @@ def _make_db_root(root: Path, *, include_nvd: bool = True) -> Path:
         cursor = connection.cursor()
         cursor.execute("CREATE TABLE cve_range (data_source TEXT)")
         cursor.execute("CREATE TABLE cve_severity (data_source TEXT)")
-        cursor.execute("CREATE TABLE cve_metrics (cve_number TEXT, metric_id INTEGER, metric_score REAL, metric_field TEXT)")
+        cursor.execute(
+            "CREATE TABLE cve_metrics (cve_number TEXT, metric_id INTEGER, metric_score REAL, metric_field TEXT)"
+        )
         cursor.execute("CREATE TABLE purl2cpe (id INTEGER)")
         cursor.executemany(
             "INSERT INTO cve_range (data_source) VALUES (?)", [("Curl",), ("REDHAT",), ("REDHAT",)]

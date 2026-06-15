@@ -521,8 +521,15 @@ def run_scan_async(
     if sys.platform == "win32":
         ps_script = str(PROJECT_DIR / "scripts" / "windows" / "run-scan.ps1")
         args: list[str] = [
-            "powershell.exe", "-ExecutionPolicy", "Bypass", "-File", ps_script,
-            "-Target", target, "-Tool", tool,
+            "powershell.exe",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            ps_script,
+            "-Target",
+            target,
+            "-Tool",
+            tool,
         ]
         if extract:
             args.append("-Extract")
@@ -551,7 +558,7 @@ def run_scan_async(
         if sys.platform == "win32":
             # PowerShell manages its own output; we capture it to run-scan.log
             # so scan_status can tail it (mirrors run-scan.sh's `tee` redirect).
-            log_fh = open(log_path, "w", encoding="utf-8")  # noqa: WPS515
+            log_fh = open(log_path, "w", encoding="utf-8")  # noqa: WPS515,SIM115
             proc = subprocess.Popen(  # argv list, no shell
                 args,
                 cwd=str(PROJECT_DIR),

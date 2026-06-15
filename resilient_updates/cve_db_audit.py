@@ -203,8 +203,13 @@ def audit_cve_bin_tool_db(
 
     for source in declared:
         count, evidence = _source_count(
-            source, severity_counts, range_counts, purl2cpe_total, dir_infos,
-            metrics_total=metrics_total, db_root=root,
+            source,
+            severity_counts,
+            range_counts,
+            purl2cpe_total,
+            dir_infos,
+            metrics_total=metrics_total,
+            db_root=root,
         )
         observable = source.upper() in OBSERVABLE_CVE_SOURCES
         min_count = int(min_entries.get(source.upper(), min_entries.get(source, 1 if observable else 0)))

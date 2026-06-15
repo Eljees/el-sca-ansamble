@@ -50,6 +50,7 @@ def _replace_tree(src: Path, dst: Path) -> None:
             # rmtree failed (overlayfs / Docker volume quirk with large trees).
             # Fall back to a fresh unique path so we don't block on stale state.
             import time  # noqa: PLC0415
+
             staging = dst.parent / f".staging_{dst.name}_{os.getpid()}_{time.time_ns()}"
     try:
         shutil.copytree(src, staging)

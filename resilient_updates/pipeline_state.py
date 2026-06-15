@@ -105,11 +105,7 @@ def begin_run(
     """
     run_key = compute_run_key(target, tool, extra)
     prev = load_state(artifacts_dir) if resume else None
-    if (
-        prev is not None
-        and prev.get("run_key") == run_key
-        and prev.get("schema_version") == SCHEMA_VERSION
-    ):
+    if prev is not None and prev.get("run_key") == run_key and prev.get("schema_version") == SCHEMA_VERSION:
         state = prev
         state["resumed"] = True
         state["status"] = "running"

@@ -152,7 +152,9 @@ def test_list_containers_ndjson_empty_and_garbage_lines(tmp_path: Path):
     # Empty line must be in the MIDDLE so proc.stdout.strip() doesn't remove it.
     ndjson = "\n".join(
         [
-            json.dumps({"Name": "el-sca-grype-1", "Service": "grype-scanner", "State": "running", "Status": "Up"}),
+            json.dumps(
+                {"Name": "el-sca-grype-1", "Service": "grype-scanner", "State": "running", "Status": "Up"}
+            ),
             "",  # empty line in the middle → if not line: continue (line 61)
             "not-json-at-all",  # ValueError → continue (lines 64-65)
         ]

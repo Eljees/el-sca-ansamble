@@ -646,7 +646,7 @@ def _make_proc_mock(lines: list[str], returncode: int = 0):
 
     _run_stream opens Popen with encoding="utf-8" so stdout yields str, not bytes.
     """
-    chunks = list(lines) + [""]
+    chunks = [*list(lines), ""]
     read_calls = iter(chunks)
     _rc = returncode  # alias: class body has no closure over enclosing params
 
@@ -709,8 +709,6 @@ def test_run_stream_returns_nonzero_returncode(tmp_path):
 
 def test_run_stream_heartbeat_fires_when_silent(tmp_path, monkeypatch):
     """When the process is silent, the heartbeat thread must emit a status line."""
-    import threading
-
     reg = JobRegistry(tmp_path, compose=["docker", "compose"])
     job = Job("scan", SCAN_STAGES)
     monkeypatch.setenv("EL_SCA_HEARTBEAT_SECONDS", "1")
