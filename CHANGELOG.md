@@ -6,6 +6,33 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `pipeline_state.begin_run`: проверка `schema_version` при resume — несовместимый
+  формат сбрасывает состояние вместо тихого mismatch. (`13ebe00`)
+- `cli.py`: создание `temp_dir` перед записью grype-архива (grype мог падать с
+  FileNotFoundError при отсутствии каталога). (`8810d61`)
+- `cve_db_audit`: NVD-детекция через `nvdcve*.json.gz`-файлы; `cve_severity`-таблица
+  для NVD заполняется через `cve_metrics` — ранее count всегда возвращал 0. (`cb12af3`)
+- `atomic_publish`: фолбэк на уникальный staging-путь при сбое `rmtree` на
+  Docker overlayfs (Python 3.12 `_rmtree_safe_fd` не мог удалить 47K-файловое
+  дерево на overlayfs). (`106d74e`)
+- Windows `run-scan.ps1`: загрузка `route-plan.env` (прокси) перед `-UpdateDb` —
+  без этого прокси не применялся при обновлении БД. (`91c19cd`)
+- Windows `run_scan_async` (MCP): делегирование на `powershell.exe run-scan.ps1`
+  вместо `bash run-scan.sh`; stdout/stderr перенаправляются в
+  `artifacts/run-scan.log`. (`b306b42`)
+- `tools/docker-mcp/server.py`: `mcp.run()` вместо голого `mcp` в `__main__` —
+  без этого сервер завершался немедленно при запуске через `python server.py`.
+  Исправлен также `# noqa: WPS515,SIM115` (ruff SIM115 не подавлялся старым
+  `# noqa: WPS515`). (`4e81b95`)
+
+### Changed
+
+- `configs/feed_sources.yaml`: `min_entries.NVD` снижен с 1000 → 20 (NVD хранит
+  метаданные в `cve_metrics`, а не в `cve_severity`; прежний порог всегда давал
+  «пустую» базу). (`cb12af3`)
+
 ## [0.1.3] - 2026-06-13
 
 ### Added

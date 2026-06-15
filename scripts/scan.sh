@@ -13,9 +13,9 @@
 #   scripts/scan.sh --target path/to/artifact.tar.gz --extract
 #   scripts/scan.sh --target path/to/artifact.tar.gz --dry-run   # preview only
 #
-# NOTE: run-scan.sh remains the validated docker-compose path until `cli scan`
-# live mode has been exercised against the full stack (ADR-0005 P3 — completed
-# migration). Until then, prefer `--dry-run` here to preview, and run-scan.sh
-# for production scans.
+# NOTE: run-scan.sh remains the validated docker-compose path for production.
+# ADR-0005 P1+P2 are complete (orchestrator + unified CLI); P3 (thin-wrapper
+# migration of run-scan.sh/ps1) is still deferred. Until P3 ships, prefer
+# `--dry-run` here to preview and run-scan.sh for production scans.
 set -euo pipefail
 exec python -m resilient_updates.cli scan "$@"

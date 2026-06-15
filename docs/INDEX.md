@@ -35,7 +35,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 ## I need to develop / contribute
 
 1. `../CONTRIBUTING.md` — dev environment, tests, linting, commit conventions.
-2. `workspace.md` — local dev-workspace layout and conventions (historical).
+2. `audit/archive/workspace.md` — local dev-workspace layout and conventions (historical, archived).
 3. `architecture.md` — service / module map.
 4. `audit/00-overview.md` — current audit findings and phased remediation.
 5. `adr/0001-wrapper-first.md` — why we don't fork upstream.
@@ -49,7 +49,8 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/330-analysis-2026-06-14.md` — **latest**: 845 tests, CHANGELOG gap, scan.sh disclaimer fix needed, workspace.md/session docs → archive candidates, N2 RetryPolicy carry-forward, feature backlog (2026-06-14).
+6. `audit/340-analysis-2026-06-15.md` — **latest**: D-RUFF-1/2 CI blockers fixed (SIM115+B018+format), mcp.run() bug fixed, 330+340 analysis committed, CHANGELOG filled, scan.sh comment fixed, stale docs archived (2026-06-15).
+7. `audit/330-analysis-2026-06-14.md` — 845 tests, CHANGELOG gap, scan.sh disclaimer, workspace.md/session docs → archive candidates, N2 RetryPolicy carry-forward (2026-06-14).
 7. `audit/320-analysis-2026-06-14.md` — 845 tests, N1 --checkers docs, N2 RetryPolicy dual-truth, N3 schema_version guard, pipeline_state fix, orchestrator mock tests, network-design route-doctor section (2026-06-14).
 8. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, gitignore session debris, monitor.py 100% coverage, artifacts cleanup (2026-06-13).
 8. `audit/300-fixups-2026-06-12.md` — pyproject version, CI link, CHANGELOG links, CONTRIBUTING markers, scripts/README, orchestrator tests, architecture.md (2026-06-12).
