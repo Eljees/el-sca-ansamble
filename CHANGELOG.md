@@ -26,6 +26,16 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   без этого сервер завершался немедленно при запуске через `python server.py`.
   Исправлен также `# noqa: WPS515,SIM115` (ruff SIM115 не подавлялся старым
   `# noqa: WPS515`). (`4e81b95`)
+- `deploy_light.sh`: автодетект `BUNDLE_DIR` распознаёт бандл, разбитый на части
+  (`bundle/el-sca-images-light.tar.part*`), а не только собранный `.tar` — иначе
+  «голый» `./scripts/deploy_light.sh` падал с `no such file` на чистом клоне
+  (бандл шиппится частями через Git LFS).
+- `update_grype` + `feed_sources.yaml`: multi-source failover при сетевых ошибках —
+  таймаут / `ReadTimeout` / `ConnectionError` на одном источнике больше НЕ роняет
+  обновление, а переходит к следующему источнику (раньше ловился только
+  `ValueError`, поэтому троттлинг CDN `grype.anchore.io` ронял весь прогон).
+  Добавлен запасной источник `anchore-toolbox-data` (другой хост Anchore);
+  `update_download_timeout` поднят 30s→300s (архив grype v6 ~200 МБ).
 
 ### Changed
 

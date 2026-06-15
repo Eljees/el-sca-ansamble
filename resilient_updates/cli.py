@@ -395,12 +395,20 @@ def update_grype(config: dict[str, Any], session: requests.Session | None = None
             )
             selected_source = candidate_source
             break
-        except ValueError as exc:
+        except (ValueError, requests.exceptions.RequestException, OSError) as exc:
+            # Multi-source failover (ADR-0007): a timeout / read-timeout /
+            # connection reset on ONE upstream must NOT abort the whole update.
+            # Previously only ValueError was caught, so a throttled CDN
+            # (e.g. grype.anchore.io read-timeout) propagated and killed the
+            # run instead of falling through to the next configured source.
+            # ValueError still carries a structured FailureReason (e.g. stale);
+            # network errors are recorded generically and we move to source N+1.
+            reason = str(exc) if isinstance(exc, ValueError) else "source_unreachable"
             validation_failures.append(
                 {
                     "source": candidate_source.name,
-                    "reason": str(exc),
-                    "message": str(exc),
+                    "reason": reason,
+                    "message": f"{type(exc).__name__}: {exc}",
                     "status_code": None,
                 }
             )

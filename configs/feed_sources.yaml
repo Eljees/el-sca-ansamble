@@ -144,13 +144,26 @@ grype:
       url: "https://grype.anchore.io/databases/v6/latest.json"
       priority: 20
       enabled: true
+    # Fallback host: legacy Anchore S3-fronted endpoint.  Different hostname /
+    # CDN edge than grype.anchore.io, so it can succeed when the primary is
+    # blocked or throttled on a given network.  May serve an older build —
+    # validate_age skips it if too stale, and the multi-source failover in
+    # update_grype() then falls through to the next source / last-known-good
+    # instead of aborting the whole run.  See ADR-0007.
+    - name: anchore-toolbox-data
+      url: "https://toolbox-data.anchore.io/grype/databases/v6/latest.json"
+      priority: 30
+      enabled: true
   validation:
     validate_hash: true
     validate_age: true
     max_allowed_built_age: "72h"
   timeout_policy:
-    update_available_timeout: 10
-    update_download_timeout: 30
+    # download timeout raised 30s -> 300s: the grype v6 archive is ~200 MB and
+    # a slow / throttled CDN edge needs minutes, not seconds, before we give up
+    # and fail over to the next source.
+    update_available_timeout: 30
+    update_download_timeout: 300
   # retry_backoff_policy used by update_grype for the listing-fetch phase
   # (probing each source quickly).  Short retry on purpose: if source N's
   # listing endpoint stalls, we want to fall through to source N+1 rather

@@ -12,7 +12,11 @@ set -euo pipefail
 # Default to the in-repo LFS bundle/ (shipped via Git LFS); fall back to cwd.
 BUNDLE_DIR="${1:-}"
 if [ -z "$BUNDLE_DIR" ]; then
-  if [ -f bundle/el-sca-images-light.tar ]; then BUNDLE_DIR="bundle"; else BUNDLE_DIR="."; fi
+  if [ -f bundle/el-sca-images-light.tar ] || ls bundle/el-sca-images-light.tar.part* >/dev/null 2>&1; then
+    BUNDLE_DIR="bundle"
+  else
+    BUNDLE_DIR="."
+  fi
 fi
 
 echo "==> [1/4] configuring .env (strict offline + skip cve-bin-tool)"
