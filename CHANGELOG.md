@@ -41,6 +41,12 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cve.db пишется предупреждение и пайплайн продолжается к отчёту grype/trivy).
   Жёсткий режим возвращается через `EL_SCA_CVEBT_REQUIRED=1`. Раньше
   `cve_bin_tool - Database does not exist` (exit 40) блокировал весь отчёт.
+- `docker-compose.yml` (cve-bin-tool-scanner): закреплён `HOME=/home/appuser` +
+  `XDG_CACHE_HOME`. Контейнер шёл как root (HOME=/root), а cve-bin-tool ищет БД в
+  `$HOME/.cache/cve-bin-tool/cve.db`, тогда как том с базой смонтирован в
+  `/home/appuser/.cache` → сканер падал `Database does not exist` (exit 40) при
+  ЖИВОЙ, наполненной cve.db. Теперь offline-скан находит базу. (Корневой фикс к
+  предыдущему пункту про run_stage_soft.)
 
 ### Changed
 

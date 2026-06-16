@@ -281,6 +281,12 @@ services:
     working_dir: /workspace
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
+      # cve-bin-tool resolves its DB at $HOME/.cache/cve-bin-tool/cve.db. The
+      # container runs as root (HOME=/root), but the DB volume is mounted at
+      # /home/appuser/.cache — without pinning HOME there the offline scan fails
+      # with "Database does not exist" (exit 40) despite a populated cve.db.
+      HOME: /home/appuser
+      XDG_CACHE_HOME: /home/appuser/.cache
       CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}
       # SBOM fast-path: set to a CycloneDX/SPDX path to skip binary scanning.
       CVE_BIN_TOOL_SBOM_PATH: ${CVE_BIN_TOOL_SBOM_PATH:-}
