@@ -1,228 +1,153 @@
-# Ручное развёртывание SCA-комплекса на Ubuntu + проверка баз + скан
+# Установка и запуск SCA-комплекса на Ubuntu (с нуля, для нового человека)
 
-Пошаговый алгоритм: поднять комплекс с нуля на Ubuntu-сервере, убедиться, что
-базы уязвимостей на месте и свежие, и просканировать артефакт
-`/home/elaria/_SCA/CYBERSEC-11603/`.
+Комплекс анализирует артефакты на уязвимости (**Syft + Grype + Trivy + cve-bin-tool**):
+даёшь файл → получаешь отчёт. Код, docker-образы и базы приходят одним `git clone`
+(через Git LFS) — на машине ничего не собирается. Инструкция рассчитана на **чистую,
+ранее не настроенную Ubuntu**, где комплекс ставится впервые.
 
-Проверено на: Ubuntu (kernel 6.17), Docker 29.5 + Compose v2, Python 3.12,
-сервер `192.168.1.33`, деплой в `/opt/sca-work/`.
-
-> Все «грабли», найденные при реальном прогоне, вынесены в callout-блоки `⚠️`
-> и в раздел [Подводные камни](#подводные-камни).
-
----
-
-## 0. Предусловия (один раз)
-
-```bash
-# Docker + Compose v2, git+git-lfs, python3 — должны быть установлены и запущены
-docker version              # нужна секция Server
-docker compose version      # v2.x
-git lfs version
-python3 --version           # 3.10+
-```
-
-⚠️ **Диск.** Комплекс держит ~30 ГБ в docker-томах (БД) + бандл ~4.3 ГБ.
-Убедитесь, что под `/opt/sca-work` смонтирован достаточный диск, а на `/`
-(там `/var/lib/docker`) есть запас. Проверка:
-
-```bash
-df -h /opt/sca-work /var/lib/docker
-```
+> Подставляйте свои значения вместо плейсхолдеров:
+> `<SERVER_IP>` — IP вашего сервера · `<ARTIFACT>` — путь к вашему артефакту ·
+> `$INSTALL_DIR` — каталог установки.
 
 ---
 
-## 1. Очистка прошлого деплоя
+## 0. Требования и установка зависимостей
 
-⚠️ **Нужен `sudo`.** Сканеры пишут артефакты в `artifacts/` от **root**, поэтому
-обычный `rm` от `elaria` оставит «неудаляемые» файлы. Удаляйте через sudo:
+**Железо/ОС:** Ubuntu 20.04+ (или Linux x86_64), 4 ГБ RAM (лучше 8+), 2 ядра (лучше
+4+), и **≥ 40 ГБ свободного диска** в каталоге установки (бандл ~4.3 ГБ + образы +
+тома БД ~30 ГБ + место под распаковку артефактов).
 
-```bash
-sudo rm -rf /opt/sca-work/el-sca-ansamble
-```
-
----
-
-## 2. Клон с GitHub (с LFS-бандлом ~4.3 ГБ)
+Установка зависимостей (один раз):
 
 ```bash
-cd /opt/sca-work
+# Docker Engine + Compose v2
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"        # ВАЖНО: затем перелогиньтесь (или `newgrp docker`)
+# git + git-lfs + python
+sudo apt-get update
+sudo apt-get install -y git git-lfs python3 python3-pip python3-venv
 git lfs install
+```
+
+Проверка:
+
+```bash
+docker version            # должна быть секция Server (демон запущен)
+docker compose version    # v2.x
+git lfs version
+python3 --version         # 3.10+
+```
+
+---
+
+## 1. Каталог установки и клонирование
+
+Выберите каталог на диске с запасом места (пример — `/opt/sca-work`, подойдёт и `~`):
+
+```bash
+export INSTALL_DIR=/opt/sca-work
+sudo mkdir -p "$INSTALL_DIR" && sudo chown "$USER:$USER" "$INSTALL_DIR"
+cd "$INSTALL_DIR"
 GIT_TERMINAL_PROMPT=0 git clone https://github.com/Eljees/el-sca-ansamble.git
 cd el-sca-ansamble
-# Убедиться, что бандл реально скачан (части по сотни МБ, не указатели):
-ls -lh bundle/ | head
+ls -lh bundle/ | head     # части бандла должны весить сотни МБ, а НЕ ~130 байт
 ```
 
-Если в `bundle/` файлы по ~130 байт — LFS не сработал: `git lfs pull`.
-
-> GitHub LFS в этом контуре тянется быстро (десятки МБ/с). Если GitHub недоступен —
-> клонируйте с GitLab: `https://gitlab01.soc.rt.ru/yurij.m.tumanov/el-sca-ansamble.git`.
+Если файлы в `bundle/` крошечные (это указатели LFS) → `git lfs pull`.
+Запасной источник, если GitHub недоступен:
+`https://gitlab01.soc.rt.ru/yurij.m.tumanov/el-sca-ansamble.git`.
 
 ---
 
-## 3. Развёртывание (офлайн-база из бандла)
+## 2. Развёртывание (офлайн-база из бандла)
 
 ```bash
-chmod +x scripts/deploy_light.sh
 ./scripts/deploy_light.sh
 ```
 
-Скрипт сам: пропишет `.env` (strict offline), пересоберёт бандл из частей,
-`docker load` образов, восстановит тома Grype/Trivy/cve-bin-tool, активирует
-снимок Grype. Ожидаемый финал: `done — fully offline`.
-
-⚠️ **Баг был исправлен (commit 43e2399):** раньше «голый» `deploy_light.sh` падал
-с `open ./el-sca-images-light.tar: no such file` — автодетект бандла не видел
-части `*.tar.part*`. Теперь работает без аргумента. На старых клонах — обходной
-путь: `./scripts/deploy_light.sh bundle`.
+Скрипт сам: пишет `.env` (strict offline), пересобирает бандл из частей,
+`docker load` образов, восстанавливает тома Grype/Trivy/cve-bin-tool, активирует
+снимок Grype. Ожидаемый финал: **`done — fully offline`**. Сеть тут не нужна.
 
 ---
 
-## 4. GUI-дашборд
+## 3. GUI-дашборд
 
 ```bash
-python3 -m pip install fastapi "uvicorn[standard]" python-multipart   # один раз
-# слушать на всех интерфейсах, чтобы открыть с другого хоста:
+python3 -m pip install fastapi "uvicorn[standard]" python-multipart
+# (Ubuntu 24 + ошибка "externally-managed-environment" → добавьте --break-system-packages)
 python3 -m resilient_updates.cli dashboard --repo-root . --host 0.0.0.0 --port 8088
 ```
 
-Открыть в браузере: `http://192.168.1.33:8088`
-(или `http://127.0.0.1:8088` на самом сервере).
-
-> Ставьте пакеты тем же интерпретатором (`python3 -m pip`), иначе будет
-> `dashboard requires uvicorn`. На Ubuntu 24 при ошибке
-> `externally-managed-environment` добавьте `--break-system-packages`.
+Открыть в браузере: **`http://<SERVER_IP>:8088`** (или `http://127.0.0.1:8088` на
+самой машине). `--host 0.0.0.0` нужен, чтобы открыть с другого компьютера.
 
 ---
 
-## 5. Проверка, что базы на месте
-
-Быстрая проверка статуса всех баз (тот же бэкенд, что у GUI):
+## 4. Проверка, что базы на месте
 
 ```bash
 curl -s http://127.0.0.1:8088/api/tools | python3 -m json.tool | \
-  grep -E '"name"|"db_status"|"db_updated"|"fill"|"count"'
+  grep -E '"name"|"db_status"|"db_updated"|"fill"'
 ```
 
-Что хотим увидеть:
+Норма: **Grype** `active`, fill 100, дата **не старше 5 дней**; **Trivy** `active`,
+fill 100; **cve-bin-tool** — наполнены NVD/REDHAT (часть доп-источников может быть
+0 — это норма). Те же «бочки» видны в GUI (блок «БАЗЫ ИНСТРУМЕНТОВ»); кнопка
+«Обновить статус» перечитывает наполненность.
 
-| База | Норма |
-|------|-------|
-| **Grype** | `db_status: active`, `fill: 100`, `db_updated` **не старше 5 дней** |
-| **Trivy** | `db_status: active`, `fill: 100` |
-| **cve-bin-tool** | NVD `count` ~2.5M, REDHAT ~291k (остальные источники могут быть 0 — это норма для этого образа) |
-
-Те же бочки видно в GUI в блоке **«БАЗЫ ИНСТРУМЕНТОВ — БОЧКИ С МУТАГЕНОМ»**;
-кнопка **«Обновить статус»** перечитывает наполненность.
-
-⚠️ **Критично для скана: возраст базы Grype.** Сканер grype отвергает БД старше
-~5 дней (`failed to load vulnerability db: the vulnerability database was built …
-ago`). Бандл-снимок из деплоя часто СТАРШЕ 5 дней → перед сканом базу Grype нужно
-обновить онлайн (шаг 6).
+> ⚠️ **Возраст базы Grype критичен.** Сканер отвергает БД старше ~5 дней
+> (`failed to load vulnerability db: … was built … ago`). Снимок из бандла может
+> быть старше → перед сканом обновите Grype онлайн (шаг 5).
 
 ---
 
-## 6. Полное онлайн-обновление баз (через GUI)
+## 5. Онлайн-обновление баз (через GUI)
 
-В браузере `http://192.168.1.33:8088` → блок «БАЗЫ ИНСТРУМЕНТОВ» →
-кнопка **«☢ Обновить ВСЁ»** (или per-tool кнопки `⟳`). Внизу панели
-«ПРОЦЕСС АНАЛИЗА» идёт лог: сначала `route-doctor` ищет egress, затем тянутся
-trivy → grype → cve-bin-tool. По завершении нажать **«Обновить статус»** —
-бочки нальются.
+В браузере `http://<SERVER_IP>:8088` → блок «БАЗЫ ИНСТРУМЕНТОВ» →
+**«☢ Обновить ВСЁ»**. В логе «ПРОЦЕСС АНАЛИЗА»: `route-doctor` ищет egress, затем
+тянутся trivy → grype → cve-bin-tool. По завершении — **«Обновить статус»**, бочки
+наливаются.
 
-⚠️ **Если Grype не качается (троттлинг `grype.anchore.io`).** В некоторых контурах
-CDN anchore режется до ~1 КБ/с — скачивание 128-МБ архива «висит». Признак в логе:
-`grype.anchore.io … Read timed out`. Что сделано/делать:
+Если у сервера есть прямой интернет — этого достаточно. Если нет или CDN режется —
+см. [Закрытый контур](#закрытый-контур--внутреннее-зеркало).
 
-1. **Failover уже встроен** (commit 43e2399): таймаут на одном источнике больше не
-   роняет обновление, апдейтер переходит к следующему источнику
-   (`configs/feed_sources.yaml → grype.upstream_update_urls`).
-2. **Для закрытого контура — внутреннее зеркало.** Любая машина С доступом к
-   anchore (CI / отдельный сервер) кладёт свежую базу на HTTP-раздачу, а сервер
-   тянет её оттуда. Включить источник-зеркало:
+---
 
+## 6. Скан артефакта (любого)
+
+```bash
+./scripts/run-scan.sh -t <ARTIFACT>
+```
+
+Поддержка: `.tar.gz/.tgz/.zip/.apk/.deb/.whl/.exe/.msi` и др. Стадии:
+extract → syft (SBOM) → trivy → grype → cve-bin-tool → report. Прерванный скан
+продолжается с места обрыва: добавьте `--resume`.
+
+**Два правила корректного скана:**
+
+1. **Без пробелов/скобок в имени файла.** Иначе syft падает
+   `could not determine source … resolve '/scan-target'`. Если имя «грязное» —
+   сделайте hardlink с чистым именем (без копирования, без лишнего диска):
    ```bash
-   # на машине с доступом — получить свежую v6 и отдать по HTTP:
-   #   curl -s https://grype.anchore.io/databases/v6/latest.json -o v6/latest.json
-   #   curl -s "https://grype.anchore.io/databases/v6/$(jq -r .path v6/latest.json)" -o v6/<archive>
-   #   (в latest.json заменить "path" на имя без двоеточий), затем:
-   #   python3 -m http.server 8901 --bind 0.0.0.0
-   # на сервере — указать зеркало в configs/feed_sources.yaml:
-   #   grype.upstream_update_urls[internal-grype-mirror].url = http://<MIRROR_IP>:8901/v6/latest.json
-   #   enabled: true   (priority 10 — пробуется первым)
+   ln -f "грязное имя (1).gz" clean.tar.gz
+   ./scripts/run-scan.sh -t "$PWD/clean.tar.gz"
+   ```
+2. **Бандлы с вложенными архивами** (`.tgz`/`.zip` внутри внешнего архива) сканируйте
+   с рекурсией, иначе будут **ложные «0 находок»** (внешний слой распакуется, а
+   вложенные сервисы — нет):
+   ```bash
+   ./scripts/run-scan.sh -t <ARTIFACT> --extract-max-depth 4
    ```
 
-3. После любого обновления Grype нужно **импортировать** базу в кэш сканера
-   (апдейтер кладёт в `…/active`, сканер читает `grype-cache`):
-
-   ```bash
-   docker compose --profile airgap run --rm grype-db-importer
-   ```
-
-   Через `./scripts/run-scan.sh --update-db` этот шаг делается автоматически.
-
-Проверить, что Grype активен и свеж:
-
-```bash
-python3 -c "import json;d=json.load(open('artifacts/provenance/grype.json'));print(d.get('activation_status'),(d.get('selected_source') or {}).get('name'))"
-# ждём: active internal-grype-mirror   (или anchore-public-db)
-```
-
 ---
 
-## 7. (Опц.) Монитор
+## 7. Результат
 
 ```bash
-python3 -m resilient_updates.cli monitor --repo-root .   # статус контейнеров + стадия + свежесть БД
-```
-
-Либо блок «МОНИТОР · КОНТЕЙНЕРЫ И ПРОГРЕСС» в GUI — он сам обновляется.
-
----
-
-## 8. Скан артефакта CYBERSEC-11603
-
-Два критичных нюанса именно для этого артефакта:
-
-```bash
-cd /opt/sca-work/el-sca-ansamble
-
-# (1) ПРОБЕЛ в имени файла ломает bind-mount → syft падает
-#     "could not determine source: ... resolve '/scan-target'".
-#     Сделайте hardlink с чистым именем (без пробела, без лишнего диска):
-cd /home/elaria/_SCA/CYBERSEC-11603 && ln -f "makarov-i-686402 (1).gz" makarov-11603.tar.gz
-cd /opt/sca-work/el-sca-ansamble
-
-# (2) Это БАНДЛ с вложенными архивами (distr/services/*.tgz). По умолчанию
-#     распаковывается только верхний слой (--extract-max-depth 0) → вложенные
-#     сервисы НЕ сканируются → ложные «0 находок». Нужна рекурсия:
-./scripts/run-scan.sh -t /home/elaria/_SCA/CYBERSEC-11603/makarov-11603.tar.gz --extract-max-depth 4
-```
-
-> Проверено: при `--extract-max-depth 0` → 1 архив, **0 находок** (обманка);
-> при `--extract-max-depth 4` → **50 архивов, 254 находки** (1 CRITICAL, 37 HIGH,
-> 67 MEDIUM; grype 105 / trivy 73 / cve-bin-tool 76). Всегда задавайте глубину для
-> бандлов из вложенных архивов.
-
-Стадии: extract → syft (SBOM) → trivy → grype → cve-bin-tool → report.
-Прерванный скан продолжается с места обрыва: добавить `--resume`.
-
-> **cve-bin-tool теперь работает офлайн** (фикс 6f51e03: `HOME=/home/appuser` в
-> compose — раньше контейнер-сканер шёл под root и искал БД в `/root/.cache`,
-> мимо тома `/home/appuser/.cache`, и падал `Database does not exist`, exit 40).
-> Дополнительно стадия cve-bin сделана **не фатальной** (208bdd1): даже если на
-> чужом образе она упадёт, отчёт grype/trivy всё равно соберётся. Жёсткий режим:
-> `EL_SCA_CVEBT_REQUIRED=1 ./scripts/run-scan.sh -t "…"`.
-
----
-
-## 9. Результат
-
-```bash
-ls -la /home/elaria/_SCA/CYBERSEC-11603/*report*       # .md / .html рядом с артефактом
-ls -la artifacts/reports/final/                        # index.html + сводный отчёт
-# распределение grype по severity:
+ls -la <папка_артефакта>/*report*            # *_report_<дата>.md и .html рядом с артефактом
+ls -la artifacts/reports/final/              # index.html + сводный отчёт
+# сводка находок grype по severity:
 python3 - <<'PY'
 import json,collections
 d=json.load(open('artifacts/reports/grype/report.json'))
@@ -231,34 +156,83 @@ print('matches:',len(d.get('matches',[])),dict(c))
 PY
 ```
 
----
-
-## Подводные камни
-
-| # | Симптом | Причина | Что делать |
-|---|---------|---------|-----------|
-| 1 | `rm` не удаляет старый клон | артефакты сканов от root | `sudo rm -rf …` |
-| 2 | `deploy_light` → `no such file el-sca-images-light.tar` | старый автодетект бандла | обновиться (фикс 43e2399) или `deploy_light.sh bundle` |
-| 3 | скан-grype: `database was built … ago` | бандл-БД старше 5 дней | онлайн-обновить Grype (шаг 6) + `grype-db-importer` |
-| 4 | grype-update: `anchore.io Read timed out` | троттлинг CDN в контуре | failover/зеркало (шаг 6) |
-| 5 | свежий grype-update не виден сканеру | не сделан import в `grype-cache` | `grype-db-importer` или `run-scan --update-db` |
-| 6 | cve-bin: `Database does not exist` (exit 40) при живой cve.db | контейнер-сканер шёл как **root (HOME=/root)**, а cve-bin-tool ищет БД в `$HOME/.cache/...`, тогда как том с базой смонтирован в `/home/appuser/.cache` | **ИСПРАВЛЕНО:** `HOME=/home/appuser` в compose (6f51e03). Плюс стадия не фатальна (208bdd1) как страховка |
-| 8 | Любой долгий скан «падает»/обрывается | сервер `192.168.1.33` **перезагружается каждые ~20–30 мин** (питание/watchdog?) | `uptime` показывает малый аптайм; разберитесь с причиной ребутов — иначе скан 2-ГБ артефакта не успевает завершиться |
-| 7 | `df /opt` «не меняется» при клоне | `/opt/sca-work` — отдельный диск (sdb1), а df смотрел `/` | смотреть `df /opt/sca-work` |
-| 9 | syft: `could not determine source ... '/scan-target'` | **пробел/скобки в имени файла** артефакта ломают bind-mount | hardlink/переименование в имя без пробелов |
-| 10 | Скан бандла даёт **0 находок** (обманчиво) | вложенные `.tgz/.zip` не распакованы (`--extract-max-depth 0` по умолчанию) | сканировать с `--extract-max-depth 4` |
+Готовые отчёты: `*_report_<дата>.md` (читать), `*_report_<дата>.html` (общий),
+плюс per-tool `_grype/_trivy/_cve-bin-tool/_syft.html`.
 
 ---
 
-## TL;DR — в несколько команд (контур с доступом к интернету)
+## Закрытый контур / внутреннее зеркало
+
+Если сервер не достаёт `grype.anchore.io` (CDN режется — признак `Read timed out`):
+встроенный **failover** сам перейдёт к следующему источнику, а свежую базу можно
+раздать с **любой машины, у которой есть доступ** (CI, отдельный сервер — НЕ
+обязательно ваш рабочий ПК):
 
 ```bash
-sudo rm -rf /opt/sca-work/el-sca-ansamble
-cd /opt/sca-work && git lfs install && \
-  git clone https://github.com/Eljees/el-sca-ansamble.git && cd el-sca-ansamble
+# на машине С доступом к anchore — скачать свежую v6 и отдать по HTTP:
+mkdir -p v6 && curl -s https://grype.anchore.io/databases/v6/latest.json -o v6/latest.json
+A=$(python3 -c "import json;print(json.load(open('v6/latest.json'))['path'])")
+curl -s "https://grype.anchore.io/databases/v6/$A" -o v6/db.tar.zst
+python3 - <<'PY'   # path с двоеточиями -> чистое имя файла
+import json;d=json.load(open('v6/latest.json'));d['path']='db.tar.zst'
+open('v6/latest.json','w').write(json.dumps(d))
+PY
+python3 -m http.server 8901 --bind 0.0.0.0
+```
+
+На сервере в `configs/feed_sources.yaml` → `grype.upstream_update_urls`, запись
+`internal-grype-mirror`: `url: http://<MIRROR_IP>:8901/v6/latest.json`,
+`enabled: true` (priority 10 — пробуется первой). Затем «Обновить ВСЁ» в GUI или
+`./scripts/run-scan.sh --update-db` — это само импортирует базу в кэш сканера.
+
+---
+
+## Траблшутинг
+
+| Симптом | Причина | Решение |
+|---|---|---|
+| `git clone`: файлы `bundle/` ~130 байт | git-lfs не подтянул | `git lfs pull` |
+| `deploy_light` не находит образ-тар | очень старый клон | обновить репо или `./scripts/deploy_light.sh bundle` |
+| скан-grype: `database was built … ago` | база Grype старше 5 дней | обновить Grype онлайн (шаг 5) |
+| grype-update: `anchore.io Read timed out` | CDN режется в контуре | failover/внутреннее зеркало |
+| свежий grype не виден сканеру | не импортирован в кэш | `docker compose --profile airgap run --rm grype-db-importer` (или `run-scan --update-db`) |
+| cve-bin: `Database does not exist` (exit 40) | старый образ (исправлено: `HOME=/home/appuser` в compose) | обновить репо; стадия не фатальна — отчёт соберётся |
+| syft: `could not determine source '/scan-target'` | пробел/скобки в имени артефакта | hardlink/переименовать в имя без пробелов |
+| скан бандла = `0 находок` (обманка) | вложенные архивы не распакованы | `--extract-max-depth 4` |
+| `rm` не удаляет каталог | внутри файлы от root (артефакты прошлых сканов) | `sudo rm -rf …` |
+| долгий скан обрывается | нестабильный сервер / перезагрузки | обеспечить стабильный аптайм; повторить с `--resume` |
+| `df` «не меняется» | каталог установки — отдельный mount | смотреть `df` именно на `$INSTALL_DIR` |
+
+---
+
+## TL;DR (есть прямой интернет)
+
+```bash
+# 0) один раз: зависимости (docker, git-lfs, python) — см. шаг 0
+export INSTALL_DIR=/opt/sca-work
+sudo mkdir -p "$INSTALL_DIR" && sudo chown "$USER:$USER" "$INSTALL_DIR" && cd "$INSTALL_DIR"
+git lfs install && git clone https://github.com/Eljees/el-sca-ansamble.git && cd el-sca-ansamble
 ./scripts/deploy_light.sh
 python3 -m pip install fastapi "uvicorn[standard]" python-multipart
 python3 -m resilient_updates.cli dashboard --repo-root . --host 0.0.0.0 --port 8088 &
-# → браузер http://<IP>:8088 → «☢ Обновить ВСЁ» → «Обновить статус»
-./scripts/run-scan.sh -t "/home/elaria/_SCA/CYBERSEC-11603/makarov-i-686402 (1).gz" --update-db
+#  → браузер http://<SERVER_IP>:8088 → «☢ Обновить ВСЁ» → «Обновить статус»
+./scripts/run-scan.sh -t <ARTIFACT> --update-db --extract-max-depth 4
 ```
+
+---
+
+## Приложение: наш тестовый прогон (это НЕ требования, а пример)
+
+Проверено на сервере `192.168.1.33`, деплой в `/opt/sca-work`, пользователь `elaria`.
+Артефакт-пример **CYBERSEC-11603** (`makarov-i-686402 (1).gz`, 2 ГБ, бандл фронтенда
+`distr/services/*.tgz`):
+- при `--extract-max-depth 0` → 1 архив, **0 находок** (обманка);
+- при `--extract-max-depth 4` → **50 архивов, 254 находки** (1 CRITICAL, 37 HIGH,
+  67 MEDIUM; grype 105 / trivy 73 / cve-bin-tool 76), policy `fail`.
+
+Особенности именно нашего стенда (у вас будут другими, на инструкцию не влияют):
+`/opt/sca-work` смонтирован как отдельный диск `sdb1`; сервер периодически
+перезагружался (~20–30 мин), из-за чего длинные сканы приходилось повторять с
+`--resume`. Базовые фиксы (автодетект бандла, failover Grype, `HOME` для cve-bin,
+нефатальный cve-bin) уже в репозитории — на свежем клоне ничего из этого делать не
+нужно.
