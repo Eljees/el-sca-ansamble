@@ -50,6 +50,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Отчёт (`reporting.py`): в таблицу High/Critical-находок добавлена колонка
+  **«Fixed in»** (исправленная версия пакета) — из grype `fix.versions` и trivy
+  `FixedVersion`. Теперь видно не только уязвимую версию, но и в какой версии
+  уязвимость устранена (по аналогии с таблицами в задачах CYBERSEC).
+
 - `configs/feed_sources.yaml`: `min_entries.NVD` снижен с 1000 → 20 (NVD хранит
   метаданные в `cve_metrics`, а не в `cve_severity`; прежний порог всегда давал
   «пустую» базу). (`cb12af3`)

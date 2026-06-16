@@ -65,6 +65,7 @@ def _grype_findings(data: Any) -> list[dict[str, Any]]:
                 "vendor": artifact.get("type") or "",
                 "product": artifact.get("name") or "",
                 "version": artifact.get("version") or "",
+                "fixed": ", ".join((vuln.get("fix", {}) or {}).get("versions", []) or []),
                 "source": "grype",
             }
         )
@@ -86,6 +87,7 @@ def _trivy_findings(data: Any) -> list[dict[str, Any]]:
                     "vendor": result.get("Type") or "",
                     "product": vuln.get("PkgName") or "",
                     "version": vuln.get("InstalledVersion") or "",
+                    "fixed": vuln.get("FixedVersion") or "",
                     "source": vuln.get("PrimaryURL") or "trivy",
                 }
             )
@@ -122,6 +124,7 @@ def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
                 "vendor": item.get("vendor") or "",
                 "product": item.get("product") or item.get("package") or "",
                 "version": item.get("version") or "",
+                "fixed": item.get("fixed_version") or item.get("fixed") or "",
                 "source": item.get("source") or "cve-bin-tool",
             }
         )
@@ -200,18 +203,18 @@ def _markdown_table(findings: list[dict[str, Any]]) -> str:
 
     has_enrichment = any(item.get("epss") not in (None, "") or item.get("kev") for item in findings)
     if has_enrichment:
-        header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Source | EPSS | KEV |"
-        rule = "|---|---|---|---:|---|---|---|---|---:|:---:|"
+        header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Fixed in | Source | EPSS | KEV |"
+        rule = "|---|---|---|---:|---|---|---|---|---|---:|:---:|"
     else:
-        header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Source |"
-        rule = "|---|---|---|---:|---|---|---|---|"
+        header = "| Tool | CVE/GHSA | Severity | Score | Vendor | Product | Version | Fixed in | Source |"
+        rule = "|---|---|---|---:|---|---|---|---|---|"
     lines: list[str] = [header, rule]
     for item in sorted(
         findings, key=lambda row: (SEVERITY_ORDER.get(row["severity"], 9), row["id"], row["tool"])
     ):
         cells = {key: str(value).replace("|", "\\|") for key, value in item.items()}
         # Provide blank defaults so .format() never raises KeyError.
-        for fallback in ("tool", "id", "severity", "score", "vendor", "product", "version", "source"):
+        for fallback in ("tool", "id", "severity", "score", "vendor", "product", "version", "fixed", "source"):
             cells.setdefault(fallback, "")
         if has_enrichment:
             epss_raw = item.get("epss", "")
@@ -223,12 +226,12 @@ def _markdown_table(findings: list[dict[str, Any]]) -> str:
             cells["kev"] = "yes" if item.get("kev") in ("yes", True, "true", "True") else ""
             lines.append(
                 "| {tool} | {id} | {severity} | {score} | {vendor} | {product} | {version} | "
-                "{source} | {epss} | {kev} |".format(**cells)
+                "{fixed} | {source} | {epss} | {kev} |".format(**cells)
             )
         else:
             lines.append(
                 "| {tool} | {id} | {severity} | {score} | {vendor} | {product} | "
-                "{version} | {source} |".format(**cells)
+                "{version} | {fixed} | {source} |".format(**cells)
             )
     return "\n".join(lines) + "\n"
 
