@@ -36,6 +36,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ValueError`, поэтому троттлинг CDN `grype.anchore.io` ронял весь прогон).
   Добавлен запасной источник `anchore-toolbox-data` (другой хост Anchore);
   `update_download_timeout` поднят 30s→300s (архив grype v6 ~200 МБ).
+- `run-scan.sh`: cve-bin-tool стадия больше НЕ роняет весь скан — добавлен
+  `run_stage_soft` (при провале offline-скана / нераспознанной feed-собранной
+  cve.db пишется предупреждение и пайплайн продолжается к отчёту grype/trivy).
+  Жёсткий режим возвращается через `EL_SCA_CVEBT_REQUIRED=1`. Раньше
+  `cve_bin_tool - Database does not exist` (exit 40) блокировал весь отчёт.
 
 ### Changed
 

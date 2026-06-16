@@ -211,6 +211,34 @@ run_stage() {
   die "stage $stage failed (exit $LAST_STEP_RC); перезапуск с этого места: --resume"
 }
 
+# run_stage_soft <stage-key> <ok_codes> <cmd...> — like run_stage but a stage
+# failure is NON-FATAL: it is recorded and a warning printed, then the pipeline
+# CONTINUES.  cve-bin-tool is a supplementary scanner — when its DB build/offline
+# scan fails (e.g. the feed-built cve.db is not recognised by cve-bin-tool's
+# --offline reader) it must NOT block the grype/trivy report.  Set
+# EL_SCA_CVEBT_REQUIRED=1 to restore hard-fail behaviour.
+run_stage_soft() {
+  local stage="$1" ok_codes="$2"; shift 2
+  if stage_should_skip "$stage"; then
+    echo "[stage] $stage ✓ пропущен — уже выполнен (чекпоинт, --resume)"
+    state_cli stage-skip --stage "$stage"
+    return 0
+  fi
+  state_cli stage-start --stage "$stage"
+  if run_step "$stage" "$ok_codes" "$@"; then
+    state_cli stage-end --stage "$stage" --ok true --rc "$LAST_STEP_RC"
+    return 0
+  fi
+  state_cli stage-end --stage "$stage" --ok false --rc "$LAST_STEP_RC"
+  if [[ "${EL_SCA_CVEBT_REQUIRED:-0}" == "1" ]]; then
+    state_cli finish --status error
+    die "stage $stage failed (exit $LAST_STEP_RC); перезапуск с этого места: --resume"
+  fi
+  echo "[stage] $stage ⚠ не фатально — продолжаю, отчёт будет без $stage (rc=$LAST_STEP_RC)" >&2
+  echo "        (вернуть жёсткий режим: EL_SCA_CVEBT_REQUIRED=1)" >&2
+  return 0
+}
+
 db_status() {
   local tool="$1" path="$2" out
   out="$(docker compose run --rm db-admin db-status "$tool" --path "$path" --warning-age 24h 2>/dev/null || true)"
@@ -483,7 +511,7 @@ if [[ "$FORMAT" == "apk" ]]; then
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/apk-native"
     export SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
     db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
-    run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
+    run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
 elif [[ "$FORMAT" == "win" ]]; then
@@ -541,7 +569,7 @@ elif [[ "$FORMAT" == "win" ]]; then
     fi
     export CVE_BIN_TOOL_TARGET="$cve_scan_container"
     export SCAN_TARGET_HOST="$cve_scan_host"
-    run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
+    run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
 
 else
@@ -560,7 +588,7 @@ else
       run_stage sbom 0           docker compose --profile "$PROFILE" run --rm syft-sbom
       run_stage trivy 0          docker compose --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
       run_stage grype 0          docker compose --profile "$PROFILE" run --rm grype-scanner
-      run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
     syft)
       run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom ;;
@@ -585,7 +613,7 @@ else
         run_step "update:cve-bin-tool" 0 docker compose --profile update run --rm cve-bin-tool-updater || die "cve-bin-tool-updater failed (exit $LAST_STEP_RC)"
       fi
       db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
-      run_stage cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
   esac
 fi
