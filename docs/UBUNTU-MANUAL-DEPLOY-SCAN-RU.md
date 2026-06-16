@@ -183,12 +183,27 @@ python3 -m resilient_updates.cli monitor --repo-root .   # статус конт
 
 ## 8. Скан артефакта CYBERSEC-11603
 
-⚠️ В имени файла есть пробел и скобка — **обязательно в кавычках**:
+Два критичных нюанса именно для этого артефакта:
 
 ```bash
 cd /opt/sca-work/el-sca-ansamble
-./scripts/run-scan.sh -t "/home/elaria/_SCA/CYBERSEC-11603/makarov-i-686402 (1).gz"
+
+# (1) ПРОБЕЛ в имени файла ломает bind-mount → syft падает
+#     "could not determine source: ... resolve '/scan-target'".
+#     Сделайте hardlink с чистым именем (без пробела, без лишнего диска):
+cd /home/elaria/_SCA/CYBERSEC-11603 && ln -f "makarov-i-686402 (1).gz" makarov-11603.tar.gz
+cd /opt/sca-work/el-sca-ansamble
+
+# (2) Это БАНДЛ с вложенными архивами (distr/services/*.tgz). По умолчанию
+#     распаковывается только верхний слой (--extract-max-depth 0) → вложенные
+#     сервисы НЕ сканируются → ложные «0 находок». Нужна рекурсия:
+./scripts/run-scan.sh -t /home/elaria/_SCA/CYBERSEC-11603/makarov-11603.tar.gz --extract-max-depth 4
 ```
+
+> Проверено: при `--extract-max-depth 0` → 1 архив, **0 находок** (обманка);
+> при `--extract-max-depth 4` → **50 архивов, 254 находки** (1 CRITICAL, 37 HIGH,
+> 67 MEDIUM; grype 105 / trivy 73 / cve-bin-tool 76). Всегда задавайте глубину для
+> бандлов из вложенных архивов.
 
 Стадии: extract → syft (SBOM) → trivy → grype → cve-bin-tool → report.
 Прерванный скан продолжается с места обрыва: добавить `--resume`.
@@ -230,6 +245,8 @@ PY
 | 6 | cve-bin: `Database does not exist` (exit 40) при живой cve.db | контейнер-сканер шёл как **root (HOME=/root)**, а cve-bin-tool ищет БД в `$HOME/.cache/...`, тогда как том с базой смонтирован в `/home/appuser/.cache` | **ИСПРАВЛЕНО:** `HOME=/home/appuser` в compose (6f51e03). Плюс стадия не фатальна (208bdd1) как страховка |
 | 8 | Любой долгий скан «падает»/обрывается | сервер `192.168.1.33` **перезагружается каждые ~20–30 мин** (питание/watchdog?) | `uptime` показывает малый аптайм; разберитесь с причиной ребутов — иначе скан 2-ГБ артефакта не успевает завершиться |
 | 7 | `df /opt` «не меняется» при клоне | `/opt/sca-work` — отдельный диск (sdb1), а df смотрел `/` | смотреть `df /opt/sca-work` |
+| 9 | syft: `could not determine source ... '/scan-target'` | **пробел/скобки в имени файла** артефакта ломают bind-mount | hardlink/переименование в имя без пробелов |
+| 10 | Скан бандла даёт **0 находок** (обманчиво) | вложенные `.tgz/.zip` не распакованы (`--extract-max-depth 0` по умолчанию) | сканировать с `--extract-max-depth 4` |
 
 ---
 
