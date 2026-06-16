@@ -193,11 +193,12 @@ cd /opt/sca-work/el-sca-ansamble
 Стадии: extract → syft (SBOM) → trivy → grype → cve-bin-tool → report.
 Прерванный скан продолжается с места обрыва: добавить `--resume`.
 
-⚠️ **cve-bin-tool теперь НЕ фатален (commit 208bdd1).** Если его offline-скан
-падает (`cve_bin_tool - Database does not exist`, exit 40 — feed-собранная
-`cve.db` не распознаётся cve-bin-tool 3.4), пайплайн пишет предупреждение и
-**идёт дальше к отчёту** grype/trivy. Вернуть жёсткий режим:
-`EL_SCA_CVEBT_REQUIRED=1 ./scripts/run-scan.sh -t "…"`.
+> **cve-bin-tool теперь работает офлайн** (фикс 6f51e03: `HOME=/home/appuser` в
+> compose — раньше контейнер-сканер шёл под root и искал БД в `/root/.cache`,
+> мимо тома `/home/appuser/.cache`, и падал `Database does not exist`, exit 40).
+> Дополнительно стадия cve-bin сделана **не фатальной** (208bdd1): даже если на
+> чужом образе она упадёт, отчёт grype/trivy всё равно соберётся. Жёсткий режим:
+> `EL_SCA_CVEBT_REQUIRED=1 ./scripts/run-scan.sh -t "…"`.
 
 ---
 
@@ -226,7 +227,8 @@ PY
 | 3 | скан-grype: `database was built … ago` | бандл-БД старше 5 дней | онлайн-обновить Grype (шаг 6) + `grype-db-importer` |
 | 4 | grype-update: `anchore.io Read timed out` | троттлинг CDN в контуре | failover/зеркало (шаг 6) |
 | 5 | свежий grype-update не виден сканеру | не сделан import в `grype-cache` | `grype-db-importer` или `run-scan --update-db` |
-| 6 | cve-bin: `Database does not exist` (exit 40) | feed-`cve.db` не для cve-bin-tool 3.4 --offline | теперь не фатально (208bdd1); отчёт строится без cve-bin |
+| 6 | cve-bin: `Database does not exist` (exit 40) при живой cve.db | контейнер-сканер шёл как **root (HOME=/root)**, а cve-bin-tool ищет БД в `$HOME/.cache/...`, тогда как том с базой смонтирован в `/home/appuser/.cache` | **ИСПРАВЛЕНО:** `HOME=/home/appuser` в compose (6f51e03). Плюс стадия не фатальна (208bdd1) как страховка |
+| 8 | Любой долгий скан «падает»/обрывается | сервер `192.168.1.33` **перезагружается каждые ~20–30 мин** (питание/watchdog?) | `uptime` показывает малый аптайм; разберитесь с причиной ребутов — иначе скан 2-ГБ артефакта не успевает завершиться |
 | 7 | `df /opt` «не меняется» при клоне | `/opt/sca-work` — отдельный диск (sdb1), а df смотрел `/` | смотреть `df /opt/sca-work` |
 
 ---
