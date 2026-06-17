@@ -6,8 +6,20 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-06-17
+
 ### Fixed
 
+- `route_plan.render_env`: не выставляет `HTTP_PROXY`/`HTTPS_PROXY` когда trivy/grype
+  работают через SOCKS-only маршрут. Ранее HTTP-маршрут cve-bin-tool проникал в глобальные
+  `HTTP_PROXY`/`HTTPS_PROXY`, а Go's `net/http` отдаёт предпочтение `HTTPS_PROXY` над
+  `ALL_PROXY` — grype/trivy пытались HTTP CONNECT на SOCKS5-порт и завершались с ошибкой
+  даже при корректном `ALL_PROXY`. (`d4065cd`)
+- `orchestrator._run_scan` / `orchestrator.start_update`: добавлен `_load_dotenv` — читает
+  `.env` файл в окружение оркестратора. Без этого прокси, заданный только в `.env`, не
+  попадал в auto-route логику и игнорировался при запуске из GUI / MCP. (`d4065cd`)
+- `orchestrator._extract_produced_output`: удалён лишний `import json` внутри метода
+  (F811 — `json` уже импортирован на уровне модуля в строке 23). (этот коммит)
 - `pipeline_state.begin_run`: проверка `schema_version` при resume — несовместимый
   формат сбрасывает состояние вместо тихого mismatch. (`13ebe00`)
 - `cli.py`: создание `temp_dir` перед записью grype-архива (grype мог падать с
@@ -48,12 +60,18 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ЖИВОЙ, наполненной cve.db. Теперь offline-скан находит базу. (Корневой фикс к
   предыдущему пункту про run_stage_soft.)
 
+### Added
+
+- Тесты для колонки «Fixed in» в `reporting.py`: `test_grype_findings_extracts_fix_versions`,
+  `test_trivy_findings_extracts_fixed_version`, `test_cve_bin_tool_findings_fixed`,
+  `test_markdown_table_renders_fixed_in_column` и сопутствующие (N6-2). (этот коммит)
+
 ### Changed
 
 - Отчёт (`reporting.py`): в таблицу High/Critical-находок добавлена колонка
   **«Fixed in»** (исправленная версия пакета) — из grype `fix.versions` и trivy
   `FixedVersion`. Теперь видно не только уязвимую версию, но и в какой версии
-  уязвимость устранена (по аналогии с таблицами в задачах CYBERSEC).
+  уязвимость устранена (по аналогии с таблицами в задачах CYBERSEC). (`2bf9fea`)
 
 - `configs/feed_sources.yaml`: `min_entries.NVD` снижен с 1000 → 20 (NVD хранит
   метаданные в `cve_metrics`, а не в `cve_severity`; прежний порог всегда давал

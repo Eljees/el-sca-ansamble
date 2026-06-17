@@ -819,8 +819,6 @@ class JobRegistry:
     def _extract_produced_output(self) -> bool:
         """True if the extractor's manifest reports a successful unpack (used to
         keep the extract stage green even when it exited non-zero on a member)."""
-        import json
-
         mf = self.repo_root / "artifacts" / "extracted" / "current" / "extraction_manifest.json"
         try:
             data = json.loads(mf.read_text(encoding="utf-8"))
