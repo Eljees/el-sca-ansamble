@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from resilient_updates.reporting import build_report
 from resilient_updates.reporting import (
-    _grype_findings,
-    _trivy_findings,
     _cve_bin_tool_findings,
+    _grype_findings,
     _markdown_table,
+    _trivy_findings,
+    build_report,
 )
 
 

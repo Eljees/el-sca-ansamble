@@ -244,3 +244,80 @@ def test_update_db_only_source_rejected_for_all(server):
     out = server.update_db("all", only_source="NVD")
     assert out["ok"] is False
     assert "cve-bin-tool only" in out["error"]
+
+
+# N5-1: platform-specific argument construction tests for run_scan_async
+
+def test_run_scan_async_windows_ps1_args(server, monkeypatch):
+    """On win32, run_scan_async delegates to powershell.exe + run-scan.ps1."""
+    import subprocess as _subprocess
+
+    captured: list[list[str]] = []
+
+    class _FakeProc:
+        pid = 9998
+
+    monkeypatch.setattr(_subprocess, "Popen", lambda args, **kw: captured.append(list(args)) or _FakeProc())
+    monkeypatch.setattr(server.sys, "platform", "win32")
+
+    result = server.run_scan_async(r"D:\scans\firmware.bin", tool="trivy", update_db=True, sbom_scan=False, resume=False)
+
+    assert result["ok"] is True
+    args = captured[0]
+    assert args[0] == "powershell.exe"
+    assert "-File" in args
+    assert any("run-scan.ps1" in a for a in args)
+    assert "-Target" in args
+    assert r"D:\scans\firmware.bin" in args
+    assert "-Tool" in args
+    assert "trivy" in args
+    assert "-UpdateDb" in args
+    assert "-SbomScan" not in args
+    assert "-Resume" not in args
+    assert "bash" not in args
+
+
+def test_run_scan_async_windows_all_optional_flags(server, monkeypatch):
+    """All optional boolean flags (-Extract/-UpdateDb/-SbomScan/-Resume) appear on win32."""
+    import subprocess as _subprocess
+
+    captured: list[list[str]] = []
+
+    class _FakeProc:
+        pid = 9997
+
+    monkeypatch.setattr(_subprocess, "Popen", lambda args, **kw: captured.append(list(args)) or _FakeProc())
+    monkeypatch.setattr(server.sys, "platform", "win32")
+
+    server.run_scan_async(r"C:\fw.bin", tool="all", extract=True, update_db=True, sbom_scan=True, resume=True)
+
+    args = captured[0]
+    for flag in ("-Extract", "-UpdateDb", "-SbomScan", "-Resume"):
+        assert flag in args, f"missing {flag!r} in Windows args: {args}"
+
+
+def test_run_scan_async_linux_bash_args(server, monkeypatch):
+    """On non-Windows, run_scan_async builds a bash / run-scan.sh command."""
+    import subprocess as _subprocess
+
+    captured: list[list[str]] = []
+
+    class _FakeProc:
+        pid = 9996
+
+    monkeypatch.setattr(_subprocess, "Popen", lambda args, **kw: captured.append(list(args)) or _FakeProc())
+    monkeypatch.setattr(server.sys, "platform", "linux")
+
+    result = server.run_scan_async("/data/firmware.bin", tool="grype", extract=True, resume=True)
+
+    assert result["ok"] is True
+    args = captured[0]
+    assert args[0] == "bash"
+    assert "--target" in args
+    assert "/data/firmware.bin" in args
+    assert "--tool" in args
+    assert "grype" in args
+    assert "--extract" in args
+    assert "--resume" in args
+    assert "powershell.exe" not in args
+    assert "-Target" not in args
