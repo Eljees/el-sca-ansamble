@@ -37,6 +37,34 @@ from typing import Any, ClassVar
 from . import pipeline_state
 from .run_layout import resolve_run_dir, snapshot_artifacts, write_checkpoint
 
+
+def _load_dotenv(env: dict[str, str], dotenv_path: Path) -> None:
+    """Merge KEY=VALUE pairs from a ``.env`` file into *env*.
+
+    Shell environment (already in *env* via ``os.environ``) takes priority —
+    existing keys are never overwritten.  This makes proxy settings declared in
+    ``.env`` visible to the orchestrator's auto-route logic, which otherwise only
+    sees the shell environment (``os.environ``), while ``docker compose`` reads
+    ``.env`` automatically.  Without this merge, a proxy configured only in
+    ``.env`` is invisible to :meth:`JobRegistry._apply_auto_route`, causing the
+    route-doctor to run unnecessarily and potentially write a conflicting plan.
+    """
+    try:
+        for raw in dotenv_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            # Strip surrounding quotes (common in .env files: VAR="value")
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                val = val[1:-1]
+            if key and key not in env:  # shell env always wins
+                env[key] = val
+    except OSError:
+        pass
+
 # ── Stage pipelines ─────────────────────────────────────────────────────────
 # Each entry: (stage_key, human_label, [compose service names feeding it]).
 # Order is the visual left-to-right pipeline shown in the GUI.
@@ -511,6 +539,11 @@ class JobRegistry:
         job = Job("update", UPDATE_STAGES)
         self._register(job)
         env = dict(os.environ)
+        # Merge .env so proxy settings declared there are visible to _apply_auto_route.
+        # docker compose reads .env automatically; the orchestrator process doesn't.
+        # Without this merge a proxy in .env is invisible here → auto-route fires
+        # unnecessarily and may write a conflicting route-plan that overrides .env.
+        _load_dotenv(env, self.repo_root / ".env")
         # Compose interpolates the whole file (incl. the ${SCAN_TARGET_HOST:?}
         # guard on the scanner services) before selecting the `update` profile,
         # so set a harmless value — the update services don't read it.
@@ -899,6 +932,7 @@ class JobRegistry:
 
         # Re-point every scanner at the extracted directory.
         sc_env = dict(os.environ)
+        _load_dotenv(sc_env, self.repo_root / ".env")
         sc_env["SCAN_TARGET_HOST"] = extracted_host
         sc_env["EXTRACT_INPUT_HOST"] = extracted_host
         sc_env["SYFT_TARGET"] = "/scan-target"

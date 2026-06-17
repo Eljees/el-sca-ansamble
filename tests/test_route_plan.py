@@ -131,7 +131,16 @@ def test_no_route_when_nothing_reachable():
 # --- env rendering -----------------------------------------------------------
 
 
-def test_render_env_sets_http_for_cve_and_socks_for_others():
+def test_render_env_socks_only_host_no_https_proxy():
+    """When trivy/grype are SOCKS-only, HTTP_PROXY/HTTPS_PROXY must NOT be set.
+
+    Go's net/http prefers HTTPS_PROXY over ALL_PROXY.  If HTTPS_PROXY were set to
+    an HTTP-CONNECT URL pointing at a SOCKS5-only port, grype/trivy would try HTTP
+    CONNECT and fail even though ALL_PROXY is correct.  Omitting HTTP_PROXY/HTTPS_PROXY
+    forces Go to fall through to ALL_PROXY (SOCKS5) which works.
+    cve-bin-tool gets CVE_BIN_TOOL_ENRICH_PROXY (its own HTTP bridge) but that must
+    NOT bleed into the global HTTP_PROXY/HTTPS_PROXY.
+    """
     plan = build_plan(_cfg(), prober=_prober_via("host"), opener=_opener_host_socks)
     env_text = render_env(plan)
     parsed = {}
@@ -141,6 +150,9 @@ def test_render_env_sets_http_for_cve_and_socks_for_others():
             parsed[k] = v
     # trivy/grype routed via SOCKS -> ALL_PROXY set.
     assert parsed.get("ALL_PROXY") == "socks5h://host.docker.internal:10808"
+    # HTTPS_PROXY must NOT be set from cve-bin-tool's HTTP transport.
+    assert "HTTPS_PROXY" not in parsed, "HTTPS_PROXY must not be set when grype/trivy are SOCKS-only"
+    assert "HTTP_PROXY" not in parsed, "HTTP_PROXY must not be set when grype/trivy are SOCKS-only"
     # cve-bin-tool stays HTTP-only: no SOCKS leaked into its bridge var.
     assert "CVE_BIN_TOOL_ENRICH_PROXY" not in parsed or parsed["CVE_BIN_TOOL_ENRICH_PROXY"].startswith(
         "http://"

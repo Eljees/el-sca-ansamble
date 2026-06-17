@@ -161,12 +161,64 @@ PY
 
 ---
 
-## Закрытый контур / внутреннее зеркало
+## Обновление баз: VPN, прокси и закрытый контур
 
-Если сервер не достаёт `grype.anchore.io` (CDN режется — признак `Read timed out`):
-встроенный **failover** сам перейдёт к следующему источнику, а свежую базу можно
-раздать с **любой машины, у которой есть доступ** (CI, отдельный сервер — НЕ
-обязательно ваш рабочий ПК):
+### Почему cve-bin-tool обновился, а grype/trivy — нет
+
+Это типичная картина в корпоративных сетях, где `grype.anchore.io` и `ghcr.io` (GitHub)
+заблокированы, но `nvd.nist.gov` / `redhat.com` доступны:
+
+- **cve-bin-tool** скачивает данные с NVD/REDHAT/OSV — государственные и open-source
+  домены, обычно проходят через корпоративный фильтр.
+- **Grype** требует `grype.anchore.io` (или запасной `toolbox-data.anchore.io`).
+- **Trivy** требует `ghcr.io` (GitHub Container Registry) или `public.ecr.aws`.
+
+Встроенный failover пробует оба источника Grype и оба источника Trivy (ECR). Если оба
+недоступны — обновление не проходит.
+
+### Вариант 1: прокси в `.env`
+
+Если на сервере есть HTTP- или SOCKS5-прокси (корпоративный, v2rayN, xray и т.п.),
+пропишите его один раз в `.env` — все три инструмента подхватят автоматически:
+
+```bash
+# В el-sca-ansamble/.env — добавьте нужные строки:
+
+# Корпоративный HTTP-прокси:
+HTTP_PROXY=http://proxy.corp.example.com:3128
+HTTPS_PROXY=http://proxy.corp.example.com:3128
+NO_PROXY=localhost,127.0.0.1
+
+# Или SOCKS5 (v2rayN / xray на хосте):
+ALL_PROXY=socks5h://host.docker.internal:10808
+NO_PROXY=localhost,127.0.0.1
+```
+
+Перезапустите дашборд после изменения `.env`. Теперь «☢ Обновить ВСЁ» использует
+прокси.
+
+> **Важно — SOCKS5 и HTTPS_PROXY не совмещать:**  
+> Если прокси — SOCKS5, указывайте только `ALL_PROXY`, не `HTTPS_PROXY`.
+> Go-бинарники (Grype, Trivy) отдают приоритет `HTTPS_PROXY` перед `ALL_PROXY`,
+> и попытка HTTP CONNECT на SOCKS5-порт приведёт к ошибке.
+> `ALL_PROXY=socks5h://...` без `HTTPS_PROXY` работает правильно.
+
+### Вариант 2: route-doctor (автообнаружение)
+
+Если на хосте запущен любой прокси (v2rayN на порту 10808 или другом стандартном),
+route-doctor обнаружит его при каждом запуске «Обновить ВСЁ» и автоматически
+настроит маршруты. Результат сохраняется в `artifacts/route-plan.env`.
+
+Просмотреть текущий план:
+```bash
+cat artifacts/route-plan.env
+cat artifacts/route-plan.json  # JSON с деталями
+```
+
+### Вариант 3: внутреннее зеркало Grype
+
+Если сервер не достаёт `grype.anchore.io` вообще, раздайте базу с **любой машины,
+у которой есть доступ** (CI, рабочий ПК в другой сети — НЕ обязательно сам сервер):
 
 ```bash
 # на машине С доступом к anchore — скачать свежую v6 и отдать по HTTP:
@@ -194,7 +246,9 @@ python3 -m http.server 8901 --bind 0.0.0.0
 | `git clone`: файлы `bundle/` ~130 байт | git-lfs не подтянул | `git lfs pull` |
 | `deploy_light` не находит образ-тар | очень старый клон | обновить репо или `./scripts/deploy_light.sh bundle` |
 | скан-grype: `database was built … ago` | база Grype старше 5 дней | обновить Grype онлайн (шаг 5) |
-| grype-update: `anchore.io Read timed out` | CDN режется в контуре | failover/внутреннее зеркало |
+| grype-update: `anchore.io Read timed out` | CDN режется в контуре | failover → внутреннее зеркало или прокси в `.env` |
+| grype/trivy не обновились, cve-bin-tool OK | anchore.io/ghcr.io заблокированы, NVD доступен | настроить прокси в `.env` (см. раздел «Обновление баз: VPN, прокси») |
+| `HTTPS_PROXY=socks://...` не работает | Go игнорирует SOCKS в HTTPS_PROXY | использовать `ALL_PROXY=socks5h://...` без `HTTPS_PROXY` |
 | свежий grype не виден сканеру | не импортирован в кэш | `docker compose --profile airgap run --rm grype-db-importer` (или `run-scan --update-db`) |
 | cve-bin: `Database does not exist` (exit 40) | старый образ (исправлено: `HOME=/home/appuser` в compose) | обновить репо; стадия не фатальна — отчёт соберётся |
 | syft: `could not determine source '/scan-target'` | пробел/скобки в имени артефакта | hardlink/переименовать в имя без пробелов |

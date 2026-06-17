@@ -223,8 +223,12 @@ def render_env(plan: dict[str, Any]) -> str:
     """Render the ``route-plan.env`` body the updater containers source.
 
     Variables:
-      * ``HTTP_PROXY`` / ``HTTPS_PROXY`` — the HTTP transport (used by every
-        tool that honours these; safe for cve-bin-tool because it is HTTP).
+      * ``HTTP_PROXY`` / ``HTTPS_PROXY`` — set ONLY when trivy/grype have a
+        verified HTTP transport (e.g. a corporate HTTP-CONNECT proxy or a mixed
+        xray listener).  Must NOT be set from cve-bin-tool's HTTP route when
+        grype/trivy use SOCKS: Go's net/http prefers HTTPS_PROXY over ALL_PROXY,
+        so pointing HTTPS_PROXY at a SOCKS5-only port silently breaks grype/trivy
+        even though ALL_PROXY is correct.
       * ``ALL_PROXY`` — a SOCKS transport, set ONLY when trivy/grype were routed
         through SOCKS (Go honours it; cve-bin-tool's updater explicitly clears
         ALL_PROXY before calling NVD, so this never breaks it).
@@ -240,22 +244,26 @@ def render_env(plan: dict[str, Any]) -> str:
     cve = tools.get("cve_bin_tool", {})
     cve_http = cve.get("proxy_url") if _is_http(cve.get("proxy_url")) else None
 
-    # HTTP_PROXY: prefer cve-bin-tool's HTTP route (it is the strict one); else
-    # any tool's HTTP route.
-    http_url = cve_http
-    if http_url is None:
-        for t in ("trivy", "grype"):
-            u = tools.get(t, {}).get("proxy_url")
-            if _is_http(u):
-                http_url = u
-                break
-
     # ALL_PROXY (SOCKS): from trivy/grype only.
     socks_url = None
     for t in ("trivy", "grype"):
         u = tools.get(t, {}).get("proxy_url")
         if u and not _is_http(u):
             socks_url = u
+            break
+
+    # HTTP_PROXY / HTTPS_PROXY: ONLY from trivy/grype's own HTTP transport.
+    # Do NOT use cve-bin-tool's HTTP transport here: its sources (NVD, OSV) may
+    # be reachable via HTTP-CONNECT on a port that doesn't support HTTPS-CONNECT
+    # for GitHub/Anchore (grype/trivy CDNs).  Go's net/http picks HTTPS_PROXY
+    # over ALL_PROXY, so a wrong HTTPS_PROXY silently prevents SOCKS from working.
+    # When grype/trivy are SOCKS-only, omit HTTP_PROXY/HTTPS_PROXY and let Go
+    # fall through to ALL_PROXY.
+    http_url = None
+    for t in ("trivy", "grype"):
+        u = tools.get(t, {}).get("proxy_url")
+        if _is_http(u):
+            http_url = u
             break
 
     if http_url:
