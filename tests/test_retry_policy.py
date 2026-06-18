@@ -6,6 +6,7 @@ import pytest
 
 from resilient_updates._retry import (
     DEFAULT_BACKOFF_SECONDS,
+    DEFAULT_NON_RETRYABLE_REASONS,
     DEFAULT_RETRY_STATUS_CODES,
     DEFAULT_TIMEOUT_SECONDS,
     RetryPolicy,
@@ -74,7 +75,33 @@ def test_as_attempt_kwargs_shape() -> None:
         "retry_count": 3,
         "backoff_seconds": 2,
         "retry_status_codes": [429],
+        "non_retryable_reasons": DEFAULT_NON_RETRYABLE_REASONS,
     }
+
+
+def test_non_retryable_reasons_default_matches_fallback_constant() -> None:
+    """RetryPolicy defaults must stay in sync with fallback._NON_RETRYABLE_REASONS."""
+    from resilient_updates.fallback import _NON_RETRYABLE_REASONS as _FB
+
+    p = RetryPolicy()
+    # Compare as string sets (StrEnum values equal their string counterparts).
+    assert p.non_retryable_reasons == {str(r.value) for r in _FB}
+
+
+def test_non_retryable_reasons_custom_survives_round_trip() -> None:
+    """A caller can override non_retryable_reasons and it flows through as_attempt_kwargs."""
+    custom = frozenset({"timeout"})
+    p = RetryPolicy(non_retryable_reasons=custom)
+    kw = p.as_attempt_kwargs()
+    assert kw["non_retryable_reasons"] == custom
+
+
+def test_from_yaml_node_does_not_read_non_retryable_reasons() -> None:
+    """non_retryable_reasons is a policy constant, not a YAML-tunable.
+    Specifying it in YAML must not crash; defaults must apply."""
+    p = RetryPolicy.from_yaml_node({"retry_count": 2, "non_retryable_reasons": ["timeout"]})
+    # YAML value is silently ignored; default is preserved.
+    assert p.non_retryable_reasons == DEFAULT_NON_RETRYABLE_REASONS
 
 
 def test_immutable_after_construction() -> None:

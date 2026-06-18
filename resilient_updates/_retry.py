@@ -32,6 +32,19 @@ DEFAULT_BACKOFF_SECONDS = 1
 DEFAULT_TIMEOUT_SECONDS = 10
 DEFAULT_RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 
+# String values of FailureReason entries that are never worth retrying.
+# Mirrors fallback._NON_RETRYABLE_REASONS — kept as plain strings here so
+# this module stays import-free of the heavy ``fallback`` / ``requests``
+# dependency tree.  Since FailureReason is a StrEnum, ``reason in`` comparisons
+# work identically whether the set holds enum members or their string values.
+DEFAULT_NON_RETRYABLE_REASONS: frozenset[str] = frozenset(
+    {
+        "invalid_schema",
+        "auth_failure",
+        "http_4xx_non_retryable",
+    }
+)
+
 
 @dataclass(frozen=True)
 class RetryPolicy:
@@ -40,12 +53,20 @@ class RetryPolicy:
     Frozen so a single instance can be shared safely across threads
     (the scanners themselves are sequential today, but the pre-commit
     hook for type-checking expects immutable shared values).
+
+    ``non_retryable_reasons`` lists the :class:`~fallback.FailureReason`
+    *string values* that should abort the retry loop immediately —
+    regardless of ``retry_status_codes``.  Defaults to auth failures,
+    permanent 4xx, and schema errors, which are never transient.
+    Pass this through ``as_attempt_kwargs()`` so ``attempt_sources`` uses
+    a single, unified policy rather than a separate hard-coded frozenset.
     """
 
     retry_count: int = DEFAULT_RETRY_COUNT
     backoff_seconds: float = DEFAULT_BACKOFF_SECONDS
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     retry_status_codes: tuple[int, ...] = field(default_factory=lambda: DEFAULT_RETRY_STATUS_CODES)
+    non_retryable_reasons: frozenset[str] = field(default_factory=lambda: DEFAULT_NON_RETRYABLE_REASONS)
 
     @classmethod
     def from_yaml_node(cls, node: dict[str, Any] | None) -> RetryPolicy:
@@ -54,6 +75,8 @@ class RetryPolicy:
         Missing keys fall back to defaults so callers never have to
         ``.get(...)`` with their own fallback.  Unknown keys are
         ignored on purpose — forward-compatible.
+        ``non_retryable_reasons`` is intentionally not read from YAML:
+        it is a policy-level constant, not a per-caller tunable.
         """
         if not isinstance(node, dict):
             return cls()
@@ -77,4 +100,5 @@ class RetryPolicy:
             "retry_count": int(self.retry_count),
             "backoff_seconds": int(self.backoff_seconds),
             "retry_status_codes": list(self.retry_status_codes),
+            "non_retryable_reasons": self.non_retryable_reasons,
         }

@@ -110,7 +110,12 @@ def classify_exception(exc: Exception) -> FailureReason:
 # The test ``test_auth_failure_403_is_not_retried`` documents this
 # contract explicitly.  To *actually* retry 401/403 you must also remove
 # AUTH_FAILURE from this set (or don't classify 401/403 as AUTH_FAILURE).
-_NON_RETRYABLE_REASONS = frozenset(
+#
+# N2 (arch): this set is also exposed as ``RetryPolicy.non_retryable_reasons``
+# so callers that use ``policy.as_attempt_kwargs()`` carry a single, unified
+# source of truth.  This module-level constant is kept as the fallback default
+# for call sites that pass kwargs directly (backward-compatible).
+_NON_RETRYABLE_REASONS: frozenset[FailureReason] = frozenset(
     {
         FailureReason.INVALID_SCHEMA,
         FailureReason.AUTH_FAILURE,
@@ -159,7 +164,17 @@ def attempt_sources(
         [str, int, requests.Session | None, dict[str, str] | None], tuple[int, bytes]
     ] = fetch_bytes,
     session: requests.Session | None = None,
+    non_retryable_reasons: frozenset[str] | None = None,
 ) -> tuple[SourceCandidate | None, bytes | None, list[AttemptResult]]:
+    """Try each source in priority order, retrying transient failures.
+
+    ``non_retryable_reasons`` overrides the module-level
+    ``_NON_RETRYABLE_REASONS`` constant.  Pass it via
+    ``RetryPolicy.as_attempt_kwargs()`` to keep retry policy in one place.
+    When ``None`` (the default), falls back to the built-in constant so all
+    existing call sites continue to work unchanged.
+    """
+    _no_retry = non_retryable_reasons if non_retryable_reasons is not None else _NON_RETRYABLE_REASONS
     attempts: list[AttemptResult] = []
     for source in sources:
         headers = {}
@@ -181,7 +196,7 @@ def attempt_sources(
                     AttemptResult(source, False, reason, f"http status {status_code}", status_code)
                 )
                 if (
-                    reason in _NON_RETRYABLE_REASONS
+                    reason in _no_retry
                     or status_code not in retry_status_codes
                     or attempt >= retry_count
                 ):
@@ -189,7 +204,7 @@ def attempt_sources(
             except Exception as exc:  # pragma: no cover - covered via tests on classify result
                 reason = classify_exception(exc)
                 attempts.append(AttemptResult(source, False, reason, str(exc), None))
-                if attempt >= retry_count or reason in _NON_RETRYABLE_REASONS:
+                if attempt >= retry_count or reason in _no_retry:
                     break
             time.sleep(backoff_seconds)
     return None, None, attempts
