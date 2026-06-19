@@ -285,6 +285,57 @@ def classify_cve_db_health(
     return "fresh", {"missing_required": [], "missing_optional": []}
 
 
+def _win_activate_fallback(staging_dir: Path, active_path: Path, previous_path: Path) -> None:
+    """Windows NTFS fallback when ``publish_directory`` raises ``PermissionError``.
+
+    Replaces the original ``shutil.copytree + rmtree + shutil.move`` sequence
+    (D13) with ``os.replace`` (maps to ``MoveFileExW`` on NTFS), which is
+    atomic for same-volume moves.  This eliminates the multi-second gap during
+    which ``active_path`` was absent while a 6 GB DB was being copied.
+
+    Sequence
+    --------
+    1. Clear *previous_path* slot so ``os.replace`` can use it.
+    2. Archive *active_path* → *previous_path* atomically (same-volume) or via
+       copy+rmtree (cross-device fallback).
+    3. Promote *staging_dir* → *active_path* atomically (same-volume) or via
+       ``shutil.move`` (cross-device fallback).
+
+    On any failure in step 3, *active_path* is restored from *previous_path*
+    so the DB directory is never left absent.
+    """
+    # Step 1: clear previous slot — os.replace requires dst to be absent on Windows.
+    if previous_path.exists():
+        shutil.rmtree(previous_path)
+
+    # Step 2: archive active → previous (atomic MoveFileExW, or copy+rmtree cross-device).
+    active_archived = False
+    if active_path.exists():
+        try:
+            os.replace(active_path, previous_path)
+        except OSError:
+            # Cross-device: fall back to copy then remove (non-atomic, but rare).
+            shutil.copytree(active_path, previous_path)
+            shutil.rmtree(active_path)
+        active_archived = True
+
+    # Step 3: promote staging → active (atomic MoveFileExW, or shutil.move cross-device).
+    try:
+        try:
+            os.replace(staging_dir, active_path)
+        except OSError:
+            # Cross-device: shutil.move tries os.rename first, then copy+unlink.
+            shutil.move(str(staging_dir), str(active_path))
+    except Exception:
+        # Roll back: restore active from previous so the DB is never absent.
+        if active_archived and previous_path.exists() and not active_path.exists():
+            try:
+                os.replace(previous_path, active_path)
+            except OSError:
+                shutil.copytree(previous_path, active_path)
+        raise
+
+
 def _policy_allows_status(policy: str, status: str) -> bool:
     if policy not in DB_POLICIES:
         policy = "strict"
@@ -385,17 +436,7 @@ def activate_best_cve_bin_tool_db(
     except PermissionError:
         if os.name != "nt":
             raise
-        if previous_path.exists():
-            shutil.rmtree(previous_path)
-        if active_path.exists():
-            shutil.copytree(active_path, previous_path)
-            shutil.rmtree(active_path)
-        try:
-            shutil.move(str(staging_dir), str(active_path))
-        except Exception:
-            if previous_path.exists() and not active_path.exists():
-                shutil.copytree(previous_path, active_path)
-            raise
+        _win_activate_fallback(staging_dir, active_path, previous_path)
     payload["activation_status"] = selected_health_status
     payload["selected_audit"] = selected_audit
     write_provenance(Path(provenance_path), payload)

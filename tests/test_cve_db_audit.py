@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from resilient_updates.cve_db_audit import (
+    _win_activate_fallback,
     activate_best_cve_bin_tool_db,
     audit_cve_bin_tool_db,
     classify_cve_db_health,
@@ -504,7 +505,7 @@ def test_activate_unknown_db_policy_treated_as_strict(tmp_path: Path):
     temp_root = tmp_path / "tmp"
     provenance_path = tmp_path / "prov.json"
 
-    activated, _payload = activate_best_cve_bin_tool_db(
+    _activated, _payload = activate_best_cve_bin_tool_db(
         candidate_roots=[str(active_root)],
         active_root=active_root,
         previous_root=previous_root,
@@ -517,4 +518,183 @@ def test_activate_unknown_db_policy_treated_as_strict(tmp_path: Path):
         db_policy="not-a-valid-policy",  # triggers line 285 clamping
     )
     # Fresh db passes strict policy
+
+
+# ── D13: _win_activate_fallback tests ──────────────────────────────────────
+# D13: Windows NTFS fallback uses os.replace (atomic MoveFileExW) instead of
+# shutil.copytree+rmtree+shutil.move which created a multi-second gap where
+# active_path was absent.  These tests exercise _win_activate_fallback directly.
+
+
+def _make_tree(root: Path, name: str, content: str = "data") -> Path:
+    """Create a named subdirectory with a single file."""
+    d = root / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "file.txt").write_text(content)
+    return d
+
+
+def test_win_activate_fallback_uses_os_replace(tmp_path, monkeypatch):
+    """Happy path: os.replace succeeds → both renames are atomic, no copytree."""
+    staging = _make_tree(tmp_path, "staging", "new")
+    active = _make_tree(tmp_path, "active", "old")
+    previous = tmp_path / "previous"
+
+    copy_calls: list[str] = []
+    real_replace = __import__("os").replace
+
+    def patched_replace(src, dst):
+        # record but also actually replace so filesystem stays consistent
+        copy_calls.append(f"replace:{Path(src).name}->{Path(dst).name}")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("resilient_updates.cve_db_audit.os.replace", patched_replace)
+    # shutil.copytree must NOT be called
+    monkeypatch.setattr(
+        "resilient_updates.cve_db_audit.shutil.copytree",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("copytree called unexpectedly")),
+    )
+
+    _win_activate_fallback(staging, active, previous)
+
+    # active slot now holds the new data
+    assert (active / "file.txt").read_text() == "new"
+    # previous holds the old active
+    assert (previous / "file.txt").read_text() == "old"
+    # staging is gone
+    assert not staging.exists()
+    # os.replace was called (not copytree)
+    assert any("replace:" in c for c in copy_calls)
+
+
+def test_win_activate_fallback_cross_device_falls_back_to_copy(tmp_path, monkeypatch):
+    """When os.replace raises OSError (EXDEV), falls back to copytree+rmtree."""
+    import errno as _errno
+
+    staging = _make_tree(tmp_path, "staging", "new")
+    active = _make_tree(tmp_path, "active", "old")
+    previous = tmp_path / "previous"
+
+    def raise_exdev(src, dst):
+        raise OSError(_errno.EXDEV, "cross-device link")
+
+    monkeypatch.setattr("resilient_updates.cve_db_audit.os.replace", raise_exdev)
+
+    _win_activate_fallback(staging, active, previous)
+
+    assert (active / "file.txt").read_text() == "new"
+    assert (previous / "file.txt").read_text() == "old"
+
+
+def test_win_activate_fallback_restores_active_on_staging_move_failure(tmp_path, monkeypatch):
+    """If staging→active fails, active is restored from previous (never absent)."""
+    import errno as _errno
+
+    staging = _make_tree(tmp_path, "staging", "new")
+    active = _make_tree(tmp_path, "active", "old")
+    previous = tmp_path / "previous"
+
+    call_count = {"n": 0}
+
+    real_replace = __import__("os").replace
+
+    def selective_replace(src, dst):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First call: archive active→previous — let it succeed.
+            real_replace(src, dst)
+        else:
+            # Second call: staging→active — fail.
+            raise OSError(_errno.EXDEV, "cross-device")
+
+    monkeypatch.setattr("resilient_updates.cve_db_audit.os.replace", selective_replace)
+
+    # shutil.move (cross-device fallback for step 3) also fails
+    monkeypatch.setattr(
+        "resilient_updates.cve_db_audit.shutil.move",
+        lambda src, dst: (_ for _ in ()).throw(OSError("move failed")),
+    )
+    # shutil.copytree used in rollback — allow it
+    import shutil as _shutil
+
+    monkeypatch.setattr("resilient_updates.cve_db_audit.shutil.copytree", _shutil.copytree)
+    monkeypatch.setattr("resilient_updates.cve_db_audit.shutil.rmtree", _shutil.rmtree)
+
+    with pytest.raises(OSError):
+        _win_activate_fallback(staging, active, previous)
+
+    # active must be restored — never absent after the exception
+    assert active.exists(), "active was not restored after staging move failed"
+    assert (active / "file.txt").read_text() == "old"
+
+
+def test_win_activate_fallback_no_active_no_error(tmp_path):
+    """When active_path doesn't exist, staging is still promoted cleanly."""
+    staging = _make_tree(tmp_path, "staging", "new")
+    active = tmp_path / "active"  # doesn't exist
+    previous = tmp_path / "previous"
+
+    _win_activate_fallback(staging, active, previous)
+
+    assert (active / "file.txt").read_text() == "new"
+    assert not previous.exists()
+
+
+def test_activate_best_windows_permission_error_uses_fallback(tmp_path, monkeypatch):
+    """PermissionError from publish_directory on Windows routes to _win_activate_fallback."""
+    import resilient_updates.cve_db_audit as _mod
+
+    fallback_calls: list[tuple[Path, Path, Path]] = []
+
+    def fake_fallback(staging, active, previous):
+        fallback_calls.append((staging, active, previous))
+        # actually move so the function can finish
+        import shutil
+
+        if active.exists():
+            shutil.rmtree(previous, ignore_errors=True)
+            shutil.copytree(active, previous)
+            shutil.rmtree(active)
+        shutil.copytree(staging, active)
+
+    monkeypatch.setattr(_mod, "_win_activate_fallback", fake_fallback)
+    monkeypatch.setattr(
+        _mod, "publish_directory", lambda *a, **kw: (_ for _ in ()).throw(PermissionError("locked"))
+    )
+    monkeypatch.setattr(_mod.os, "name", "nt")
+
+    # Build a minimal valid DB in candidate_root so audit passes
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    active = tmp_path / "active"
+    active.mkdir()
+    previous = tmp_path / "previous"
+    temp = tmp_path / "temp"
+    prov = tmp_path / "prov.json"
+
+    import sqlite3 as _sqlite3
+
+    db = candidate / "cve.db"
+    con = _sqlite3.connect(db)
+    con.execute("CREATE TABLE cve_range (id INTEGER, data_source TEXT)")
+    con.execute("CREATE TABLE cve_severity (id INTEGER, data_source TEXT)")
+    con.execute("CREATE TABLE purl2cpe (id INTEGER)")
+    con.execute("CREATE TABLE cve_metrics (id INTEGER)")
+    con.commit()
+    con.close()
+
+    activated, _payload = activate_best_cve_bin_tool_db(
+        candidate_roots=[candidate],
+        active_root=active,
+        previous_root=previous,
+        temp_root=temp,
+        provenance_path=prov,
+        required_sources=[],
+        min_entries={},
+        max_cache_age="999h",
+        declared_sources=[],
+        db_policy="lkg-ok",
+    )
+
     assert activated is True
+    assert len(fallback_calls) == 1
