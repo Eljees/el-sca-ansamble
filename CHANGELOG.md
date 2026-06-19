@@ -6,6 +6,31 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `RetryPolicy`: добавлено поле `non_retryable_reasons: frozenset[str]` и константа
+  `DEFAULT_NON_RETRYABLE_REASONS`; `as_attempt_kwargs()` теперь включает это поле —
+  `attempt_sources(**policy.as_attempt_kwargs())` передаёт единую политику без дублирования.
+  `_NON_RETRYABLE_REASONS` в `fallback.py` сохранён как backward-compatible fallback.
+  (`bd27371`)
+- `attempt_sources`: добавлен параметр `non_retryable_reasons: frozenset[str] | None = None`,
+  позволяющий переопределить список неповторяемых причин без правки модуля fallback. (`bd27371`)
+- `vex.py`: `fetch_vex` использует `**retry.as_attempt_kwargs()` вместо ручного
+  перечисления полей — `non_retryable_reasons` передаётся автоматически. (этот коммит)
+- `cli.py` / `healthcheck.py`: `_health_summary` и `_probe_layer` получили параметр
+  `non_retryable_reasons` и передают его в `attempt_sources`; все вызовы обновлены. (этот коммит)
+- `cli.py` `update_grype`: передаёт `non_retryable_reasons=grype_retry.non_retryable_reasons`
+  в `attempt_sources`. (этот коммит)
+
+### Tests
+
+- `test_retry_policy.py`: +3 теста (`default_matches_fallback_constant`,
+  `custom_survives_round_trip`, `yaml_does_not_read_non_retryable_reasons`). (`bd27371`)
+- `test_fallback_core.py`: +3 теста (`custom_stops_retry`, `empty_allows_retry`,
+  `none_falls_back_to_module_default`). (`bd27371`)
+- `test_docker_mcp_server.py`: +3 теста платформенных путей `run_scan_async`
+  (win32 PS1 args, win32 all optional flags, linux bash args). (`f3dc338`)
+
 ## [0.1.4] - 2026-06-17
 
 ### Fixed
@@ -746,7 +771,8 @@ Internal release (see `docs/status-and-roadmap.md` Phase 1):
 - Initial proxy support (flat env / yaml form).
 - cve-bin-tool scan timeout wrapper.
 
-[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.0...v0.1.1

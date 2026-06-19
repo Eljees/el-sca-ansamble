@@ -26,6 +26,7 @@ artifacts/internal/*
 artifacts/reports/*
 artifacts/provenance/*
 artifacts/sbom/*
+artifacts/uploads/*
 # DB bundle export staging (db-exporter) and import staging (db-importer).
 # These hold multi-GB vulnerability-DB tarballs and must never be committed.
 artifacts/db-image/

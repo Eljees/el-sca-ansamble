@@ -65,6 +65,7 @@ def _load_dotenv(env: dict[str, str], dotenv_path: Path) -> None:
     except OSError:
         pass
 
+
 # ── Stage pipelines ─────────────────────────────────────────────────────────
 # Each entry: (stage_key, human_label, [compose service names feeding it]).
 # Order is the visual left-to-right pipeline shown in the GUI.

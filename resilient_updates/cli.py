@@ -216,6 +216,7 @@ def _health_summary(
     retry_count: int,
     backoff_seconds: int,
     retry_codes: list[int],
+    non_retryable_reasons: frozenset[str] | None = None,
     session: requests.Session | None = None,
 ) -> tuple[int, dict[str, Any]]:
     source, _payload, attempts = attempt_sources(
@@ -224,6 +225,7 @@ def _health_summary(
         retry_count=retry_count,
         backoff_seconds=backoff_seconds,
         retry_status_codes=retry_codes,
+        non_retryable_reasons=non_retryable_reasons,
         session=session,
     )
     payload = {
@@ -379,6 +381,7 @@ def update_grype(config: dict[str, Any], session: requests.Session | None = None
             retry_count=grype_retry.retry_count,
             backoff_seconds=int(grype_retry.backoff_seconds),
             retry_status_codes=retry_codes,
+            non_retryable_reasons=grype_retry.non_retryable_reasons,
             session=session,
         )
         attempts.extend(source_attempts)
@@ -983,6 +986,7 @@ def main() -> int:
                 retry_count=trivy_retry.retry_count,
                 backoff_seconds=int(trivy_retry.backoff_seconds),
                 retry_codes=list(trivy_retry.retry_status_codes),
+                non_retryable_reasons=trivy_retry.non_retryable_reasons,
                 session=_session,
             )
             print(json.dumps(payload, indent=2))
@@ -999,6 +1003,7 @@ def main() -> int:
             retry_count=int(config["cve_bin_tool"]["source_health_policy"]["retry_count"]),
             backoff_seconds=int(cve_retry.backoff_seconds),
             retry_codes=list(cve_retry.retry_status_codes),
+            non_retryable_reasons=cve_retry.non_retryable_reasons,
             session=_session,
         )
         print(json.dumps(payload, indent=2))

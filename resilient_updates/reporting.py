@@ -214,7 +214,17 @@ def _markdown_table(findings: list[dict[str, Any]]) -> str:
     ):
         cells = {key: str(value).replace("|", "\\|") for key, value in item.items()}
         # Provide blank defaults so .format() never raises KeyError.
-        for fallback in ("tool", "id", "severity", "score", "vendor", "product", "version", "fixed", "source"):
+        for fallback in (
+            "tool",
+            "id",
+            "severity",
+            "score",
+            "vendor",
+            "product",
+            "version",
+            "fixed",
+            "source",
+        ):
             cells.setdefault(fallback, "")
         if has_enrichment:
             epss_raw = item.get("epss", "")

@@ -248,6 +248,7 @@ def test_update_db_only_source_rejected_for_all(server):
 
 # N5-1: platform-specific argument construction tests for run_scan_async
 
+
 def test_run_scan_async_windows_ps1_args(server, monkeypatch):
     """On win32, run_scan_async delegates to powershell.exe + run-scan.ps1."""
     import subprocess as _subprocess
@@ -260,7 +261,9 @@ def test_run_scan_async_windows_ps1_args(server, monkeypatch):
     monkeypatch.setattr(_subprocess, "Popen", lambda args, **kw: captured.append(list(args)) or _FakeProc())
     monkeypatch.setattr(server.sys, "platform", "win32")
 
-    result = server.run_scan_async(r"D:\scans\firmware.bin", tool="trivy", update_db=True, sbom_scan=False, resume=False)
+    result = server.run_scan_async(
+        r"D:\scans\firmware.bin", tool="trivy", update_db=True, sbom_scan=False, resume=False
+    )
 
     assert result["ok"] is True
     args = captured[0]

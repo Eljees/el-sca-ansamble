@@ -114,10 +114,7 @@ def fetch_vex(config: dict[str, Any], *, session: requests.Session | None = None
     for source in sources:
         candidate, payload, attempts = attempt_sources(
             [source],
-            timeout=int(retry.timeout_seconds),
-            retry_count=retry.retry_count,
-            backoff_seconds=int(retry.backoff_seconds),
-            retry_status_codes=list(retry.retry_status_codes),
+            **retry.as_attempt_kwargs(),
             session=session,
         )
         for a in attempts:

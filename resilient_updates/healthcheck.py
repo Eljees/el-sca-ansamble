@@ -16,7 +16,8 @@ def _probe_layer(
     retry_count: int,
     backoff_seconds: int,
     retry_status_codes: list[int],
-    session,
+    non_retryable_reasons: frozenset[str] | None = None,
+    session=None,
 ) -> dict[str, Any]:
     """Run attempt_sources against one (tool, layer), return a compact health record."""
     sources = build_sources(config, tool, layer)
@@ -33,6 +34,7 @@ def _probe_layer(
         retry_count=retry_count,
         backoff_seconds=backoff_seconds,
         retry_status_codes=retry_status_codes,
+        non_retryable_reasons=non_retryable_reasons,
         session=session,
     )
     failures = [
@@ -83,6 +85,7 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
         "retry_count": trivy_retry.retry_count,
         "backoff_seconds": int(trivy_retry.backoff_seconds),
         "retry_status_codes": list(trivy_retry.retry_status_codes),
+        "non_retryable_reasons": trivy_retry.non_retryable_reasons,
         "session": session,
     }
     for layer in ("trivy-db", "trivy-java-db", "trivy-checks", "trivy-vex"):
@@ -101,6 +104,7 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
         retry_count=grype_retry.retry_count,
         backoff_seconds=int(grype_retry.backoff_seconds),
         retry_status_codes=list(grype_retry.retry_status_codes),
+        non_retryable_reasons=grype_retry.non_retryable_reasons,
         session=session,
     )
 
@@ -118,6 +122,7 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
         retry_count=int(cve_health["retry_count"]),
         backoff_seconds=int(cve_retry.backoff_seconds),
         retry_status_codes=list(cve_retry.retry_status_codes),
+        non_retryable_reasons=cve_retry.non_retryable_reasons,
         session=session,
     )
 
