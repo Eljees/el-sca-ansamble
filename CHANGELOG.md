@@ -30,6 +30,20 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `none_falls_back_to_module_default`). (`bd27371`)
 - `test_docker_mcp_server.py`: +3 теста платформенных путей `run_scan_async`
   (win32 PS1 args, win32 all optional flags, linux bash args). (`f3dc338`)
+- `test_cve_db_audit.py`: +5 тестов Windows atomic rename — happy path (`os.replace`
+  вызван, `copytree` нет), EXDEV → copytree fallback, rollback active при сбое promotion,
+  нет active → staging промотируется чисто, PermissionError → _win_activate_fallback. (`2d801a0`)
+- `tests/pester/Import-RoutePlan.Tests.ps1`: +10 Pester-тестов для PowerShell-функции
+  `Import-RoutePlan` — no-op при уже установленном прокси, отсутствие `route-plan.env`
+  без ошибки, загрузка HTTP_PROXY/ALL_PROXY/multi-var/comments/`=` в значении,
+  `-RunDoctor` (missing/fresh/stale/без флага). (`2d801a0`)
+
+### Fixed (continued)
+
+- `cve_db_audit._win_activate_fallback`: атомарное переключение активной DB на Windows
+  через `os.replace` (`MoveFileExW`) — устраняет окно отсутствия `active/` при ротации
+  базы. Fallback на `shutil.copytree`+`rmtree` только при `OSError`/`EXDEV`
+  (cross-device). (`2d801a0`)
 
 ## [0.1.4] - 2026-06-17
 
