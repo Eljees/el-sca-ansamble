@@ -27,7 +27,7 @@ x-proxy-env: &proxy-env
 
 services:
   stack-info:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -83,7 +83,7 @@ services:
     networks: [scanner-net]
 
   grype-updater:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -189,7 +189,7 @@ services:
     networks: [scanner-net]
 
   artifact-extractor:
-    image: elariaphd/el-sca-extractor:0.1.1
+    image: elariaphd/el-sca-extractor:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.extractor
@@ -226,7 +226,7 @@ services:
     networks: [scanner-net]
 
   cve-bin-tool-updater:
-    image: elariaphd/el-sca-cve-bin-tool:0.1.1
+    image: elariaphd/el-sca-cve-bin-tool:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.cve-bin-tool
@@ -273,7 +273,7 @@ services:
     networks: [scanner-net]
 
   cve-bin-tool-scanner:
-    image: elariaphd/el-sca-cve-bin-tool:0.1.1
+    image: elariaphd/el-sca-cve-bin-tool:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.cve-bin-tool
@@ -371,7 +371,7 @@ services:
     networks: [scanner-net]
 
   db-admin:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -404,7 +404,7 @@ services:
   # Add the docker-compose.route-doctor.yml override to also retarget the xray
   # sidecar's upstream at the live host proxy (--write-xray).
   route-doctor:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -430,7 +430,7 @@ services:
   #   python -m resilient_updates.cli dashboard --repo-root . --port 8080
   # Published on loopback only.
   dashboard:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -446,7 +446,7 @@ services:
     networks: [scanner-net]
 
   mock-feed-server:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -459,7 +459,7 @@ services:
     networks: [scanner-net]
 
   report-collector:
-    image: elariaphd/el-sca-resilient-updater:0.1.1
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.resilient-updater
@@ -485,7 +485,7 @@ services:
   # ── Specialized format analyzers ──────────────────────────────────────────
 
   apk-analyzer:
-    image: elariaphd/el-sca-apk-analyzer:0.1.1
+    image: elariaphd/el-sca-apk-analyzer:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.apk-analyzer
@@ -508,7 +508,7 @@ services:
     networks: [scanner-net]
 
   win-analyzer:
-    image: elariaphd/el-sca-win-analyzer:0.1.1
+    image: elariaphd/el-sca-win-analyzer:${EL_SCA_VERSION:-0.1.4}
     build:
       context: .
       dockerfile: Dockerfile.win-analyzer
