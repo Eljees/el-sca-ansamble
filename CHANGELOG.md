@@ -45,6 +45,12 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   базы. Fallback на `shutil.copytree`+`rmtree` только при `OSError`/`EXDEV`
   (cross-device). (`2d801a0`)
 
+### Changed
+
+- `docker-compose.yml`: все 12 образов `elariaphd/el-sca-*` переведены с захардкоженного
+  `:0.1.1` на `${EL_SCA_VERSION:-0.1.4}` — `docker compose --env-file versions.env` теперь
+  автоматически подхватывает актуальную версию; деплой устаревшего образа невозможен. (`816fb45`)
+
 ## [0.1.4] - 2026-06-17
 
 ### Fixed

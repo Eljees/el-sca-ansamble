@@ -140,6 +140,30 @@ jobs:
           }
 
   # ─────────────────────────────────────────────────────────────────────
+  # Version consistency: versions.env ↔ pyproject.toml ↔ docker-compose.yml
+  # Prevents tag drift where a version bump in one file misses the others.
+  # ─────────────────────────────────────────────────────────────────────
+  lint-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version consistency
+        run: |
+          ENV_VER=$(grep '^EL_SCA_VERSION=' versions.env | cut -d= -f2)
+          PY_VER=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          DC_VER=$(grep -oP '\$\{EL_SCA_VERSION:-\K[^}]+' docker-compose.yml | head -1)
+          echo "versions.env:       $ENV_VER"
+          echo "pyproject.toml:     $PY_VER"
+          echo "docker-compose.yml: $DC_VER (fallback)"
+          if [ "$ENV_VER" != "$PY_VER" ]; then
+            echo "ERROR: versions.env ($ENV_VER) != pyproject.toml ($PY_VER)" >&2; exit 1
+          fi
+          if [ "$ENV_VER" != "$DC_VER" ]; then
+            echo "ERROR: versions.env ($ENV_VER) != docker-compose.yml fallback ($DC_VER)" >&2; exit 1
+          fi
+          echo "OK: all three sources agree on $ENV_VER"
+
+  # ─────────────────────────────────────────────────────────────────────
   # Compose schema check — catches typos in profiles, missing volumes, etc.
   # ─────────────────────────────────────────────────────────────────────
   compose-config:
@@ -219,8 +243,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # requirements.txt is the canonical lockfile (produced by `make lock`).
-          # Keep this consistent with the smoke job; do not branch on the stale
-          # requirements.lock placeholder.
           pip install -r requirements.txt
           pip install "pytest>=8" "pytest-cov>=5"
       - name: pytest with coverage gate

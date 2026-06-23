@@ -1,7 +1,7 @@
 > [!WARNING]
 > Snapshot of 2026-05-25 and is OUTDATED as a defect register: D1-D18 are all closed
 > (D13 closed in commit 2d801a0), the suite has grown to 868 tests. For current state see
-> the latest NNN-analysis/NNN-fixups in docs/audit/ (now: 410-analysis-2026-06-21.md).
+> the latest `NNN-analysis-*.md` file in docs/audit/.
 
 # Audit 2026-05-25 — Конкретные дефекты
 
