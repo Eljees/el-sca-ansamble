@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from resilient_updates._retry import RetryPolicy
 from resilient_updates.fallback import AttemptResult, FailureReason
 from resilient_updates.healthcheck import _probe_layer, run_healthcheck
 from resilient_updates.source_policy import SourceCandidate
@@ -77,9 +78,7 @@ def test_probe_layer_no_sources_returns_no_sources_configured():
         tool="grype",
         layer="grype-db",
         timeout=1,
-        retry_count=1,
-        backoff_seconds=0,
-        retry_status_codes=[],
+        retry=RetryPolicy(retry_count=1, backoff_seconds=0, retry_status_codes=()),
         session=MagicMock(),
     )
     assert result["status"] == "no-sources-configured"
@@ -102,9 +101,7 @@ def test_probe_layer_all_failed_returns_all_sources_failed():
             tool="trivy",
             layer="trivy-db",
             timeout=1,
-            retry_count=1,
-            backoff_seconds=0,
-            retry_status_codes=[],
+            retry=RetryPolicy(retry_count=1, backoff_seconds=0, retry_status_codes=()),
             session=MagicMock(),
         )
 
@@ -131,9 +128,7 @@ def test_probe_layer_success_returns_ok():
             tool="trivy",
             layer="trivy-db",
             timeout=1,
-            retry_count=1,
-            backoff_seconds=0,
-            retry_status_codes=[],
+            retry=RetryPolicy(retry_count=1, backoff_seconds=0, retry_status_codes=()),
             session=MagicMock(),
         )
 

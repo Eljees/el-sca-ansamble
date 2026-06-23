@@ -6,6 +6,8 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-24
+
 ### Fixed
 
 - `RetryPolicy`: добавлено поле `non_retryable_reasons: frozenset[str]` и константа
@@ -21,6 +23,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `non_retryable_reasons` и передают его в `attempt_sources`; все вызовы обновлены. (этот коммит)
 - `cli.py` `update_grype`: передаёт `non_retryable_reasons=grype_retry.non_retryable_reasons`
   в `attempt_sources`. (этот коммит)
+- `healthcheck._probe_layer`: принимает `retry: RetryPolicy` вместо четырёх
+  отдельных параметров (`retry_count`, `backoff_seconds`, `retry_status_codes`,
+  `non_retryable_reasons`). Callers в `run_healthcheck` упрощены: trivy и grype
+  теперь передают единый объект; cve-bin-tool строит `RetryPolicy` с переопределённым
+  `retry_count` из `source_health_policy`. (этот коммит, A_OBS-1)
 
 ### Tests
 
@@ -791,7 +798,8 @@ Internal release (see `docs/status-and-roadmap.md` Phase 1):
 - Initial proxy support (flat env / yaml form).
 - cve-bin-tool scan timeout wrapper.
 
-[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/Eljees/el-sca-ansamble/compare/v0.1.1...v0.1.2

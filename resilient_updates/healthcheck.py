@@ -13,13 +13,18 @@ def _probe_layer(
     tool: str,
     layer: str,
     timeout: int,
-    retry_count: int,
-    backoff_seconds: int,
-    retry_status_codes: list[int],
-    non_retryable_reasons: frozenset[str] | None = None,
+    retry: RetryPolicy,
     session=None,
 ) -> dict[str, Any]:
-    """Run attempt_sources against one (tool, layer), return a compact health record."""
+    """Run attempt_sources against one (tool, layer), return a compact health record.
+
+    ``timeout`` is kept separate because it comes from ``source_health_policy``
+    (a per-tool probe budget), while the remaining retry parameters come from
+    ``retry_backoff_policy`` and are captured in ``retry``.  This keeps the
+    caller from scattering four individual retry fields across every call site.
+
+    See docs/audit/10-defects.md A_OBS-1.
+    """
     sources = build_sources(config, tool, layer)
     if not sources:
         return {
@@ -31,10 +36,10 @@ def _probe_layer(
     source, _payload, attempts = attempt_sources(
         sources,
         timeout=timeout,
-        retry_count=retry_count,
-        backoff_seconds=backoff_seconds,
-        retry_status_codes=retry_status_codes,
-        non_retryable_reasons=non_retryable_reasons,
+        retry_count=retry.retry_count,
+        backoff_seconds=int(retry.backoff_seconds),
+        retry_status_codes=list(retry.retry_status_codes),
+        non_retryable_reasons=retry.non_retryable_reasons,
         session=session,
     )
     failures = [
@@ -82,10 +87,7 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
     trivy_retry = RetryPolicy.from_tool_config(config, "trivy")
     trivy_kwargs = {
         "timeout": int(trivy_health["healthcheck_timeout_seconds"]),
-        "retry_count": trivy_retry.retry_count,
-        "backoff_seconds": int(trivy_retry.backoff_seconds),
-        "retry_status_codes": list(trivy_retry.retry_status_codes),
-        "non_retryable_reasons": trivy_retry.non_retryable_reasons,
+        "retry": trivy_retry,
         "session": session,
     }
     for layer in ("trivy-db", "trivy-java-db", "trivy-checks", "trivy-vex"):
@@ -101,10 +103,7 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
         "grype",
         "grype-db",
         timeout=grype_timeout,
-        retry_count=grype_retry.retry_count,
-        backoff_seconds=int(grype_retry.backoff_seconds),
-        retry_status_codes=list(grype_retry.retry_status_codes),
-        non_retryable_reasons=grype_retry.non_retryable_reasons,
+        retry=grype_retry,
         session=session,
     )
 
@@ -114,15 +113,21 @@ def run_healthcheck(config_path: str) -> dict[str, Any]:
     # returns defaults for backoff and retry_status_codes when the key is absent.
     cve_health = config["cve_bin_tool"]["source_health_policy"]
     cve_retry = RetryPolicy.from_tool_config(config, "cve_bin_tool")
+    # cve_bin_tool overrides retry_count from source_health_policy (it has no
+    # retry_backoff_policy section); the remaining retry fields use the defaults
+    # returned by RetryPolicy.from_tool_config.
+    cve_retry_with_count = RetryPolicy(
+        retry_count=int(cve_health["retry_count"]),
+        backoff_seconds=cve_retry.backoff_seconds,
+        retry_status_codes=cve_retry.retry_status_codes,
+        non_retryable_reasons=cve_retry.non_retryable_reasons,
+    )
     result["cve-bin-tool-mirror"] = _probe_layer(
         config,
         "cve_bin_tool",
         "cve-bin-tool-mirror",
         timeout=int(cve_health["source_timeout_seconds"]),
-        retry_count=int(cve_health["retry_count"]),
-        backoff_seconds=int(cve_retry.backoff_seconds),
-        retry_status_codes=list(cve_retry.retry_status_codes),
-        non_retryable_reasons=cve_retry.non_retryable_reasons,
+        retry=cve_retry_with_count,
         session=session,
     )
 
