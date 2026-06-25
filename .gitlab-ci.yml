@@ -80,6 +80,28 @@ lint-yaml:
   script:
     - yamllint -s -c .yamllint .
 
+lint-versions:
+  stage: lint
+  image: python:3.12-slim
+  # ── Version consistency: versions.env ↔ pyproject.toml ↔ docker-compose.yml ──
+  # Prevents tag drift where a version bump in one file misses the others.
+  # Mirrors the same-named job in .github/workflows/ci.yml.
+  script:
+    - |
+      ENV_VER=$(grep '^EL_SCA_VERSION=' versions.env | cut -d= -f2)
+      PY_VER=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+      DC_VER=$(grep -oP '\$\{EL_SCA_VERSION:-\K[^}]+' docker-compose.yml | head -1)
+      echo "versions.env:       $ENV_VER"
+      echo "pyproject.toml:     $PY_VER"
+      echo "docker-compose.yml: $DC_VER (fallback)"
+      if [ "$ENV_VER" != "$PY_VER" ]; then
+        echo "ERROR: versions.env ($ENV_VER) != pyproject.toml ($PY_VER)" >&2; exit 1
+      fi
+      if [ "$ENV_VER" != "$DC_VER" ]; then
+        echo "ERROR: versions.env ($ENV_VER) != docker-compose.yml fallback ($DC_VER)" >&2; exit 1
+      fi
+      echo "OK: all three sources agree on $ENV_VER"
+
 lint-shell:
   stage: lint
   image: koalaman/shellcheck-alpine:stable

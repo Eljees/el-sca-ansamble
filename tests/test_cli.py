@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from resilient_updates._retry import RetryPolicy
 from resilient_updates.cli import (
     EXIT_ALL_SOURCES_FAILED,
     EXIT_VALIDATION_FAILED,
@@ -44,9 +45,7 @@ def test_trivy_health_summary_returns_failure_payload_without_nameerror(tmp_path
         "trivy",
         "trivy-db",
         timeout=1,
-        retry_count=1,
-        backoff_seconds=0,
-        retry_codes=[429, 500, 502, 503, 504],
+        retry=RetryPolicy(retry_count=1, backoff_seconds=0, retry_status_codes=(429, 500, 502, 503, 504)),
     )
 
     assert code == EXIT_ALL_SOURCES_FAILED

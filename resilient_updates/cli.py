@@ -213,19 +213,22 @@ def _health_summary(
     tool: str,
     layer: str,
     timeout: int,
-    retry_count: int,
-    backoff_seconds: int,
-    retry_codes: list[int],
-    non_retryable_reasons: frozenset[str] | None = None,
+    retry: RetryPolicy,
     session: requests.Session | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    """Run a health probe against one (tool, layer) and return an exit code + payload.
+
+    ``timeout`` is kept separate because it comes from ``source_health_policy``
+    (a per-tool probe budget), while the remaining retry parameters are captured
+    in ``retry``.  See docs/audit/10-defects.md A_OBS-2.
+    """
     source, _payload, attempts = attempt_sources(
         _health_probe_sources(build_sources(config, tool, layer)),
         timeout=timeout,
-        retry_count=retry_count,
-        backoff_seconds=backoff_seconds,
-        retry_status_codes=retry_codes,
-        non_retryable_reasons=non_retryable_reasons,
+        retry_count=retry.retry_count,
+        backoff_seconds=int(retry.backoff_seconds),
+        retry_status_codes=list(retry.retry_status_codes),
+        non_retryable_reasons=retry.non_retryable_reasons,
         session=session,
     )
     payload = {
@@ -983,27 +986,28 @@ def main() -> int:
                 "trivy",
                 "trivy-db",
                 timeout=int(config["trivy"]["source_health_policy"]["healthcheck_timeout_seconds"]),
-                retry_count=trivy_retry.retry_count,
-                backoff_seconds=int(trivy_retry.backoff_seconds),
-                retry_codes=list(trivy_retry.retry_status_codes),
-                non_retryable_reasons=trivy_retry.non_retryable_reasons,
+                retry=trivy_retry,
                 session=_session,
             )
             print(json.dumps(payload, indent=2))
             return code
-        # cve_bin_tool: retry_count lives in source_health_policy; backoff and
-        # status codes come from the shared RetryPolicy defaults (same values
-        # as the previous hardcoded 1 / 429,500,502,503,504).
+        # cve_bin_tool has no retry_backoff_policy section; retry_count lives in
+        # source_health_policy.  Build a RetryPolicy with the override so that
+        # _health_summary receives a single object (same pattern as healthcheck.py).
         cve_retry = RetryPolicy.from_tool_config(config, "cve_bin_tool")
+        cve_health = config["cve_bin_tool"]["source_health_policy"]
+        cve_retry_with_count = RetryPolicy(
+            retry_count=int(cve_health["retry_count"]),
+            backoff_seconds=cve_retry.backoff_seconds,
+            retry_status_codes=cve_retry.retry_status_codes,
+            non_retryable_reasons=cve_retry.non_retryable_reasons,
+        )
         code, payload = _health_summary(
             config,
             "cve_bin_tool",
             "cve-bin-tool-mirror",
-            timeout=int(config["cve_bin_tool"]["source_health_policy"]["source_timeout_seconds"]),
-            retry_count=int(config["cve_bin_tool"]["source_health_policy"]["retry_count"]),
-            backoff_seconds=int(cve_retry.backoff_seconds),
-            retry_codes=list(cve_retry.retry_status_codes),
-            non_retryable_reasons=cve_retry.non_retryable_reasons,
+            timeout=int(cve_health["source_timeout_seconds"]),
+            retry=cve_retry_with_count,
             session=_session,
         )
         print(json.dumps(payload, indent=2))
