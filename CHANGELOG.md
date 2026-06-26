@@ -6,6 +6,18 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Refactored
+
+- `cli.py` `_health_summary`: принимает `retry: RetryPolicy` вместо четырёх отдельных
+  параметров (`retry_count`, `backoff_seconds`, `retry_codes`, `non_retryable_reasons`).
+  Аналогично закрытому A_OBS-1 (`_probe_layer`). (`6202c1f`)
+
+### Changed
+
+- `versions.env`: обновлён комментарий к CI — lint-versions уже реализован в CI начиная
+  с `12395c9`. (`6202c1f`)
+- `.gitlab-ci.yml`: добавлен job `lint-versions` (паритет с GitHub Actions). (`6202c1f`)
+
 ## [0.1.5] - 2026-06-24
 
 ### Fixed
