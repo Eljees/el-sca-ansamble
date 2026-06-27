@@ -26,12 +26,12 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 
 | Модуль | Что делает |
 |---|---|
-| `cli.py` | Точка входа, все команды CLI |
+| `cli.py` | Точка входа, все команды CLI; `_probe_layer` принимает `RetryPolicy` напрямую (A_OBS-1) |
 | `fallback.py` | HTTP-запросы с fallback по источникам, retry, классификация ошибок, прокси |
 | `config.py` | Загрузка и валидация `feed_sources.yaml` |
 | `source_policy.py` | Построение приоритетного списка источников для каждого инструмента |
 | `reporting.py` | Сборка финального Markdown-отчёта из raw JSON |
-| `healthcheck.py` | Проверка доступности источников |
+| `healthcheck.py` | Проверка доступности источников; `_health_summary` принимает `RetryPolicy` напрямую (A_OBS-2) |
 | `provenance.py` | Запись provenance JSON |
 | `atomic_publish.py` | Атомарная активация новой DB (rename, не copy) |
 | `artifact_store.py` | Управление last-known-good снапшотами |
@@ -191,6 +191,38 @@ Docker-сети `scanner-net` и не нуждаются в прокси.
 
 См. `docs/audit/40-tooling-docs.md` section 3 — там зафиксирована
 история, что эта таблица раньше показывала только 6 профилей из 12.
+
+---
+
+## CI/CD
+
+Конвейер описан в `.github/workflows/ci.yml` (GitHub Actions) и `.gitlab-ci.yml` (GitLab CI).
+GitLab зеркалирует GitHub: те же jobs, те же правила блокировки. Ниже — список jobs и их назначение.
+
+### GitHub Actions / GitLab CI — jobs
+
+| Job | Стадия | Инструмент | Блокирует сборку |
+|---|---|---|---|
+| `pre-commit` | lint | pre-commit (все хуки разом) | ✅ да |
+| `lint-python` | lint | ruff check + ruff format --check + compileall | ✅ да |
+| `bandit` | lint | bandit ≥ MEDIUM в `resilient_updates/` + `tools/` | ✅ да |
+| `lint-shell` | lint | shellcheck ≥ warning (исключая `scripts/windows/`) | ✅ да |
+| `lint-docker` | lint | hadolint по каждому `Dockerfile.*` (матрица 6) | ✅ да |
+| `lint-yaml` | lint | yamllint strict | ✅ да |
+| `lint-powershell` | lint | PSScriptAnalyzer (Error-severity) для `scripts/windows/` | ✅ да |
+| `lint-versions` | lint | версии `versions.env` = `pyproject.toml` = `docker-compose.yml` fallback | ✅ да |
+| `compose-config` | build | `docker compose config -q` (base + windows overlay) | ✅ да |
+| `docker-build` | build | `docker compose build` (матрица 5 сервисов) | ✅ да (needs lint-docker) |
+| `smoke` | test | pytest -m smoke | ✅ да (needs lint-python) |
+| `pytest` | test | pytest -m "not integration" + coverage ≥ 88% на py3.12 | ✅ да (needs smoke) |
+
+Матрица `docker-build` охватывает сервисы: `resilient-updater`, `extractor`, `cve-bin-tool`,
+`apk-analyzer`, `win-analyzer` (без `db-data` — нестандартный build context).
+
+Матрица `pytest` охватывает Python 3.10 (без coverage gate) и 3.12 (gate 88%).
+
+Покрытие загружается как артефакт (`coverage.xml`); в GitLab CI настроен `coverage_report`
+с форматом Cobertura.
 
 ---
 
