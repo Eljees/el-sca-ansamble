@@ -17,6 +17,9 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `versions.env`: обновлён комментарий к CI — lint-versions уже реализован в CI начиная
   с `12395c9`. (`6202c1f`)
 - `.gitlab-ci.yml`: добавлен job `lint-versions` (паритет с GitHub Actions). (`6202c1f`)
+- `docs/architecture.md`: добавлен раздел CI/CD (12 jobs, 3 stages: lint/build/test);
+  обновлена таблица модулей — `cli.py` (`_probe_layer`, A_OBS-1) и `healthcheck.py`
+  (`_health_summary`, A_OBS-2) принимают `RetryPolicy` напрямую. (`8358aa1`)
 
 ## [0.1.5] - 2026-06-24
 
