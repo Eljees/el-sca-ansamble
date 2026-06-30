@@ -1,7 +1,9 @@
 > [!WARNING]
-> Snapshot of 2026-05-25 and is OUTDATED as a defect register: D1-D18 are all closed
-> (D13 closed in commit 2d801a0), the suite has grown to 868 tests. For current state see
-> the latest `NNN-analysis-*.md` file in docs/audit/.
+> Snapshot of 2026-05-25. Superseded as a live defect register — see the latest
+> `NNN-analysis-*.md` in `docs/audit/` for current state.  Status notes below
+> reflect fixes verified on 2026-06-30: **D1 remains open** (NVD key rotation —
+> manual action required on nvd.nist.gov).  D2–D20 are all closed, worked around,
+> or accepted by design.
 
 # Audit 2026-05-25 — Конкретные дефекты
 
@@ -13,7 +15,7 @@
 
 ## 1. Секреты в `.env`
 
-**SECURITY**, фаза A.
+**SECURITY**, фаза A. **→ OPEN**: ключи не ротированы — требуется ручное действие на nvd.nist.gov (B9).
 
 `.env` в рабочей копии:
 
@@ -51,7 +53,7 @@ CVE_BIN_TOOL_DB_POLICY=lkg-ok
 
 ## 3. `proxy_chain._probe_chain` классифицирует 4xx как «ok»
 
-**BUG**, фаза A.
+**BUG**, фаза A. **→ FIXED**: `< 400` с подробным комментарием (proxy_chain.py); `status="degraded"` для 4xx, `status="down"` на исключение.
 
 `resilient_updates/proxy_chain.py:356` — после `requests.get(healthcheck_url, ...)`:
 
@@ -66,7 +68,7 @@ status = "ok" if response.status_code < 500 else "down"
 
 ## 4. `fallback.file://` URL на Windows
 
-**BUG**, фаза A.
+**BUG**, фаза A. **→ FIXED**: `url2pathname(parsed.path)` из `urllib.request` (fallback.py); тест в `test_fallback_order.py`.
 
 `resilient_updates/fallback.py:111` — обработка URL со схемой `file://`:
 
@@ -93,7 +95,7 @@ else:
 
 ## 5. Нет `configs/wireguard/`
 
-**BUG**, фаза A.
+**BUG**, фаза A. **→ FIXED**: `configs/wireguard/wg0.conf.example` добавлен.
 
 `docker-compose.yml:479`:
 
@@ -112,7 +114,7 @@ config -q`, но при `docker compose --profile vpn up` Docker пишет
 
 ## 6. Дубль cve-bin-tool pinning
 
-**SMELL → BUG потенциально**, фаза A.
+**SMELL → BUG потенциально**, фаза A. **→ FIXED**: `ARG CVE_BIN_TOOL_VERSION` + constraint-file approach; хешированный lockfile + unhashed constraints в одном шаге (Dockerfile.cve-bin-tool).
 
 `Dockerfile.cve-bin-tool` — слой install:
 
@@ -143,7 +145,7 @@ pip install cve-bin-tool==3.4
 
 ## 8. `update_trivy.sh` — `$FLAGS` без массива
 
-**BUG потенциально**, фаза B.
+**BUG потенциально**, фаза B. **→ WORKAROUND**: `set -- $FLAGS` + `"$@"` (update_trivy.sh); `shellcheck disable=SC2086` остаётся только на строке split, все вызовы trivy используют `"$@"`.
 
 `scripts/update_trivy.sh:31`:
 
@@ -168,7 +170,7 @@ trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "${FLAGS_ARR[@]}" ...
 
 ## 9. Все `Dockerfile.*` запускаются от root
 
-**SECURITY**, фаза B/F.
+**SECURITY**, фаза B/F. **→ FIXED**: `USER appuser` (uid 1001) добавлен во все 5 Dockerfile.*; `/home/appuser` и кэш-директории созданы с правильными владельцами.
 
 Ни в одном из пяти `Dockerfile.*` нет директивы `USER`. Контейнеры
 запускаются от root. Для `cve-bin-tool` и `resilient-updater` это
@@ -182,7 +184,7 @@ trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "${FLAGS_ARR[@]}" ...
 
 ## 10. `_NON_RETRYABLE_REASONS` vs `retry_status_codes`
 
-**INCONSISTENT**, фаза B.
+**INCONSISTENT**, фаза B. **→ ACCEPTED DESIGN**: конфликт задокументирован design-note (fallback.py); `RetryPolicy.non_retryable_reasons` — единый источник правды для call-sites через `policy.as_attempt_kwargs()`. Модульный константный хардкод сохранён для backward-compatibility с явным объяснением в комментарии (N2).
 
 `resilient_updates/fallback.py:96` — `_NON_RETRYABLE_REASONS` —
 хардкод `frozenset({...})` с HTTP-кодами 4xx. Но `attempt_sources`
@@ -196,7 +198,7 @@ config один раз, передаётся в `attempt_sources` явно. Ха
 
 ## 11. `extractor` — `shlex_quote` свой вместо стандартного
 
-**SMELL**, фаза B.
+**SMELL**, фаза B. **→ FIXED**: `from shlex import quote as _shquote` (extractor.py).
 
 `resilient_updates/extractor.py:273` — пользовательская функция
 `shlex_quote`, missing edge-cases (newline в имени файла,
@@ -206,7 +208,7 @@ double-quote). Стандартный `shlex.quote()` уже умеет всё.
 
 ## 12. `Path.stem` для archive-name unreliable
 
-**SMELL**, фаза B.
+**SMELL**, фаза B. **→ FIXED**: `_strip_archive_suffix` итерирует `ARCHIVE_SUFFIXES` tuple (`.tar.gz`, `.tar.bz2`, `.tar.xz`, …); `Path.stem` — только fallback для неизвестных расширений (extractor.py:202–207).
 
 `resilient_updates/extractor.py:143` — для `.tar.gz`/`.tar.bz2`/`.tar.xz`
 `Path.stem` отрезает только последнее расширение → имя `foo.tar`. В
@@ -217,7 +219,7 @@ double-quote). Стандартный `shlex.quote()` уже умеет всё.
 
 ## 13. `cve_db_audit._activate` Windows-fallback на race
 
-**SMELL**, фаза B.
+**SMELL**, фаза B. **→ FIXED**: `os.replace`-style rename + `active.bak` async cleanup (commit `2d801a0`, v0.1.5).
 
 `resilient_updates/cve_db_audit.py:330-352` — Windows-fallback на atomic publish:
 
@@ -237,7 +239,7 @@ rename (атомарный в Windows на одном томе), потом уд
 
 ## 14. Дублирующиеся `_sha256_file/_sha512_file`
 
-**SMELL / DUP**, фаза B.
+**SMELL / DUP**, фаза B. **→ FIXED**: `resilient_updates/_io.py` создан; `sha256_file`, `sha512_file`, `read_json`, `read_json_recursive` вынесены туда; все модули переключены.
 
 Три модуля содержат свою копию:
 
@@ -250,7 +252,7 @@ rename (атомарный в Windows на одном томе), потом уд
 
 ## 15. `cli._dedup_attempted_sources` теряет статус ретрая
 
-**SMELL**, фаза B.
+**SMELL**, фаза B. **→ FIXED**: `_dedup_attempted_sources` накапливает `outcomes` list + `retry_count` + `succeeded` flag (cli.py:49–71); все attempts сохраняются.
 
 `resilient_updates/cli.py:35-39` — дедуп по `item.source.name`
 сохраняет только **последний** attempt. Если у одного source было
@@ -262,7 +264,7 @@ rename (атомарный в Windows на одном томе), потом уд
 
 ## 16. `enrichment.date_value` — float как «дата»
 
-**BUG**, фаза D (тестом).
+**BUG**, фаза D (тестом). **→ FIXED**: `datetime.datetime.fromtimestamp(..., tz=_UTC).isoformat()` (enrichment.py:193).
 
 `resilient_updates/enrichment.py:81`:
 
@@ -276,7 +278,7 @@ JSON-ом как число, но в Markdown-вывод попадает «ка
 
 ## 17. `windows.override.yml` — асимметричный tmpfs без объяснения
 
-**SMELL**, фаза C/E.
+**SMELL**, фаза C/E. **→ FIXED**: комментарий добавлен в `docker-compose.windows.override.yml` («4 GB covers all realistic single-archive Go monoliths»).
 
 `docker-compose.windows.override.yml` — `cve-bin-tool-scanner` имеет
 `tmpfs:/tmp:size=4g`, `cve-bin-tool-updater` — `size=2g`. Никакого
@@ -288,7 +290,7 @@ scan'ов; см. docs/runbook.md §3.4», либо параметризоват�
 
 ## 18. `Dockerfile.apk-analyzer` — hardcoded `JAVA_TOOL_OPTIONS=-Xmx512m`
 
-**SMELL**, фаза E.
+**SMELL**, фаза E. **→ FIXED**: `ARG JAVA_XMX=512m` → `ENV JAVA_TOOL_OPTIONS="-Xmx${JAVA_XMX}"`; переопределяется через `--build-arg JAVA_XMX=1g` (Dockerfile.apk-analyzer).
 
 `Dockerfile.apk-analyzer` — `ENV JAVA_TOOL_OPTIONS="-Xmx512m"`. На
 hosts с памятью >8 GB это слишком мало; на маленьких — может быть много.
@@ -304,7 +306,7 @@ apk-analyzer:
 
 ## 19. `clean_generated.sh` — дубль `git clean -fdX`
 
-**DEAD**, фаза E.
+**DEAD**, фаза E. **→ FIXED**: комментарий «for non-git checkouts» добавлен; скрипт сохранён как алиас для окружений без git (commit 29b6a07).
 
 ```sh
 find . -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -317,7 +319,7 @@ rm -rf .pytest_cache
 
 ## 20. Tracked временные каталоги
 
-**SMELL**, фаза A.
+**SMELL**, фаза A. **→ FIXED**: `git ls-files` пуст для всех паттернов; временные файлы удалены через `git rm --cached` или изначально не попали в tracking.
 
 В рабочей копии есть `--exps/`, `-prompts/`, `comands.txt`,
 `deep-research-report(4).md`, `_el_cvebt_source_research/`. Все они в `.gitignore`, но если когда-то были добавлены — удалить из tracking через `git rm --cached`.

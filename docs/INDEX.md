@@ -49,20 +49,14 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/350-analysis-2026-06-17.md` — **latest**: все P1 из 340 закрыты, 11 коммитов: cve-bin-tool HOME+soft-fail, grype failover, «Fixed in» колонка; CRLF-артефакт run-scan.ps1; план: v0.1.4 + тесты N5-1/N6-2 (2026-06-17).
-7. `audit/340-analysis-2026-06-15.md` — D-RUFF-1/2 CI blockers fixed (SIM115+format), mcp.run() bug fixed, 330+340 analysis committed, CHANGELOG filled, scan.sh comment fixed, stale docs archived (2026-06-15).
-7. `audit/330-analysis-2026-06-14.md` — 845 tests, CHANGELOG gap, scan.sh disclaimer, workspace.md/session docs → archive candidates, N2 RetryPolicy carry-forward (2026-06-14).
-7. `audit/320-analysis-2026-06-14.md` — 845 tests, N1 --checkers docs, N2 RetryPolicy dual-truth, N3 schema_version guard, pipeline_state fix, orchestrator mock tests, network-design route-doctor section (2026-06-14).
-8. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, gitignore session debris, monitor.py 100% coverage, artifacts cleanup (2026-06-13).
-8. `audit/300-fixups-2026-06-12.md` — pyproject version, CI link, CHANGELOG links, CONTRIBUTING markers, scripts/README, orchestrator tests, architecture.md (2026-06-12).
-9. `audit/290-analysis-2026-06-12.md` — deploy-hardening recap, gitignore gaps, docker-compose pre-mkdir (2026-06-12).
-10. `audit/280-analysis-2026-06-12.md` — ruff format fix, deprecation docstring, CHANGELOG unreleased, run-scan.sh chmod fix (2026-06-12).
-11. `audit/270-analysis-2026-06-11.md` — full analysis pass (2026-06-11): D-NEW-1 gitkeep deletions, D-NEW-2 runtime proxy config, phased plan.
-12. `audit/260-fixups-2026-06-11.md` — fix pass: README cleanup, proxy-chain tests, gitignore, nvd-feeds untrack.
-13. `audit/250-fixups-2026-06-09.md` — proxy healthcheck + CVE source isolation.
-14. `audit/240-analysis-2026-06-08.md` — full analysis pass (2026-06-08).
-15. `audit/archive/` — superseded planning notes (`PLAN_2026-05-1x.md`).
-16. `../CHANGELOG.md` — release notes (Keep a Changelog).
+6. `audit/530-analysis-2026-06-30.md` — **latest**: D1–D20 все закрыты/WORKAROUND/accepted-design (D1=OPEN, нужна ротация NVD); v0.1.5, 868 тестов, 95% покрытие, GitHub синхронизирован (2026-06-30).
+7. `audit/520-analysis-2026-06-29.md` — CI/CD раздел в architecture.md, RetryPolicy в таблице модулей (2026-06-29).
+8. `audit/350-analysis-2026-06-17.md` — все P1 из 340 закрыты, 11 коммитов: cve-bin-tool HOME+soft-fail, grype failover, «Fixed in» колонка; v0.1.4 (2026-06-17).
+9. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, monitor.py 100% coverage (2026-06-13).
+10. `audit/270-analysis-2026-06-11.md` — full analysis pass (2026-06-11): D-NEW-1/2, phased plan.
+11. `audit/240-analysis-2026-06-08.md` — full analysis pass (2026-06-08).
+12. `audit/archive/` — superseded planning notes and older analysis files.
+13. `../CHANGELOG.md` — release notes (Keep a Changelog).
 
 ## Architectural decisions
 
@@ -79,3 +73,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 - `failure-modes.md` — failure classification used by `fallback.py`.
 - `reproducibility.md` — what "reproducible" means here.
 - `custom-sources.md` — how to declare your own upstream sources.
+
+## Tools
+
+- `../tools/docker-mcp/` — MCP server exposing compose stack control (scan, update-db, monitor, route-plan) to Claude / other LLM agents. See `tools/docker-mcp/README.md`.
