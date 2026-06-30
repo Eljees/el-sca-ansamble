@@ -11,6 +11,34 @@
 
 ---
 
+## Схема развёртывания (обзор)
+
+```mermaid
+flowchart TD
+  A([Чистая Ubuntu]) --> B[0. Зависимости:<br/>docker · git-lfs · python3]
+  B --> C[1. git clone + LFS-бандл ~4.3 ГБ<br/>GitHub или GitLab]
+  C --> D[2. ./scripts/deploy_light.sh<br/>офлайн-база из бандла<br/>docker load + тома Grype/Trivy/cve-bin]
+  D --> E[3. GUI-дашборд<br/>--host 0.0.0.0 --port 8088]
+  E --> F[4. Проверка баз /api/tools<br/>Grype/Trivy active · cve-bin NVD+REDHAT]
+  F --> G{5. Онлайн-обновление баз<br/>«☢ Обновить ВСЁ»}
+  G -->|прямой интернет| H[6. Скан артефакта<br/>run-scan.sh -t ARTIFACT]
+  G -->|закрытый контур| P[Прокси в .env ИЛИ<br/>route-doctor ИЛИ<br/>внутреннее зеркало Grype]
+  P --> H
+  H --> I([7. Отчёт *_report_*.md / .html<br/>+ per-tool · колонка «Fixed in»])
+
+  H -. имя без пробелов → hardlink .-> H
+  H -. бандл с вложенными архивами → --extract-max-depth 4 .-> H
+
+  classDef warn fill:#fff3cd,stroke:#d39e00,color:#663c00;
+  class P warn;
+```
+
+> Текстом тот же поток: **зависимости → клон+бандл → `deploy_light` → GUI → проверка
+> баз → онлайн-обновление (при закрытом контуре — прокси/зеркало) → скан → отчёт.**
+> Подробности каждого шага — ниже.
+
+---
+
 ## 0. Требования и установка зависимостей
 
 **Железо/ОС:** Ubuntu 20.04+ (или Linux x86_64), 4 ГБ RAM (лучше 8+), 2 ядра (лучше
