@@ -1,7 +1,7 @@
 > [!WARNING]
-> Snapshot of 2026-05-25 and is OUTDATED as a defect register: D1-D18 are closed (except D13),
-> the suite has grown to 829 tests. For current state see the latest NNN-analysis/NNN-fixups
-> in docs/audit/ (now: 310-analysis-2026-06-13.md).
+> Snapshot of 2026-05-25. Outdated as a defect register: suite has grown to **868 tests** (Windows),
+> `healthcheck.py` now at **100%** coverage, `normalize_severity` gap in `_io.py` closed 2026-07-01.
+> For current state see the latest `NNN-analysis-*.md` in `docs/audit/` (now: `540-analysis-2026-06-30.md`).
 
 # Audit 2026-05-25 — Тесты и покрытие
 

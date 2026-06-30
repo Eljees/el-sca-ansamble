@@ -8,6 +8,7 @@ from resilient_updates._io import (
     collect_json,
     first_json,
     hash_pair,
+    normalize_severity,
     read_json,
     sha1_file,
     sha256_dir,
@@ -110,3 +111,32 @@ def test_collect_json_preserves_order(tmp_path: Path) -> None:
     (tmp_path / "b.json").write_text('{"i": 2}')
     out = collect_json(tmp_path, ["b.json", "a.json"])
     assert out == [{"i": 2}, {"i": 1}]
+
+
+# ---------------------------------------------------------------------------
+# normalize_severity
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_severity_uppercases() -> None:
+    assert normalize_severity("critical") == "CRITICAL"
+    assert normalize_severity("High") == "HIGH"
+    assert normalize_severity("MEDIUM") == "MEDIUM"
+
+
+def test_normalize_severity_none_returns_unknown() -> None:
+    assert normalize_severity(None) == "UNKNOWN"
+
+
+def test_normalize_severity_empty_string_returns_unknown() -> None:
+    assert normalize_severity("") == "UNKNOWN"
+
+
+def test_normalize_severity_zero_returns_unknown() -> None:
+    # Any falsy value should map to UNKNOWN
+    assert normalize_severity(0) == "UNKNOWN"
+
+
+def test_normalize_severity_non_string_input() -> None:
+    # Non-string truthy values are str()'d and uppercased
+    assert normalize_severity(3) == "3"
