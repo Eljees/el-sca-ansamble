@@ -12,6 +12,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   параметров (`retry_count`, `backoff_seconds`, `retry_codes`, `non_retryable_reasons`).
   Аналогично закрытому A_OBS-1 (`_probe_layer`). (`6202c1f`)
 
+### Tests
+
+- `tests/test_io.py`: `normalize_severity` теперь импортирована и покрыта тестами — 5 новых
+  параметрических кейсов (uppercase passthrough, `None`/`""`/`0`/truthy-int → `"UNKNOWN"`). (`85743ff`)
+
 ### Changed
 
 - `versions.env`: обновлён комментарий к CI — lint-versions уже реализован в CI начиная

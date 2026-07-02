@@ -83,6 +83,10 @@ temp/
 # Root-level per-run scanner output files (e.g. output.cve-bin-tool.*.json)
 output.*.json
 
+# Root-level scan-report directory written by run-scan.ps1 / run-scan.sh.
+# Contains per-case HTML/MD scan reports — runtime output, never commit.
+_SCA_reports/
+
 # Container image bundle staging (docker save) — multi-GB, never commit.
 artifacts/image-bundle/
 incoming/images.tar
