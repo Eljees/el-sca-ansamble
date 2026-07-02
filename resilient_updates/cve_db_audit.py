@@ -285,6 +285,12 @@ def classify_cve_db_health(
     return "fresh", {"missing_required": [], "missing_optional": []}
 
 
+def _is_windows() -> bool:
+    """Return True when running on Windows.  Extracted so tests can patch it without
+    touching ``os.name`` globally (patching ``os.name`` breaks ``Path()`` on Linux)."""
+    return os.name == "nt"
+
+
 def _win_activate_fallback(staging_dir: Path, active_path: Path, previous_path: Path) -> None:
     """Windows NTFS fallback when ``publish_directory`` raises ``PermissionError``.
 
@@ -434,7 +440,7 @@ def activate_best_cve_bin_tool_db(
     try:
         publish_directory(staging_dir, active_path, previous_path)
     except PermissionError:
-        if os.name != "nt":
+        if not _is_windows():
             raise
         _win_activate_fallback(staging_dir, active_path, previous_path)
     payload["activation_status"] = selected_health_status

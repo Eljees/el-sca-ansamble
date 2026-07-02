@@ -661,7 +661,9 @@ def test_activate_best_windows_permission_error_uses_fallback(tmp_path, monkeypa
     monkeypatch.setattr(
         _mod, "publish_directory", lambda *a, **kw: (_ for _ in ()).throw(PermissionError("locked"))
     )
-    monkeypatch.setattr(_mod.os, "name", "nt")
+    # Patch _is_windows() instead of os.name — patching os.name globally breaks
+    # pathlib.Path() on Linux (WindowsPath cannot be instantiated on POSIX).
+    monkeypatch.setattr(_mod, "_is_windows", lambda: True)
 
     # Build a minimal valid DB in candidate_root so audit passes
     candidate = tmp_path / "candidate"
