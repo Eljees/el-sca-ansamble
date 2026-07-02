@@ -8,8 +8,9 @@ need to do; each section is ordered by depth (read top-to-bottom).
 1. `../README.md` — what the project is and how the pipeline flows.
 2. `../QUICK_START.md` — fastest path from clone to a first scan.
 3. `operations.md` — exact commands for full and partial cycles.
-4. `windows-powershell.md` — Windows-specific notes.
-5. `airgap.md` — running without any internet access.
+4. `agent-artifact-intake.md` — AI-agent runbook: intake (mail/browser) → uploads → async scan → report + health-watch.
+5. `windows-powershell.md` — Windows-specific notes.
+6. `airgap.md` — running without any internet access.
 
 ## I need to deploy or operate it (DevOps)
 
