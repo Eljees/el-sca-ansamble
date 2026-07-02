@@ -6,6 +6,25 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `docker-compose.yml` `dashboard`: смонтирован `./configs:/workspace/configs:ro` —
+  контейнер падал с `FileNotFoundError: configs/feed_sources.yaml`, потому что
+  `cli.py` грузит конфиг безусловно, а в `/workspace` монтировался только
+  `artifacts/`. (этот коммит)
+- `docker-compose.yml` `dashboard`: host-порт параметризован —
+  `127.0.0.1:${DASHBOARD_PORT:-8080}:8080` (на хостах, где 8080 занят, задаётся
+  `DASHBOARD_PORT` в `.env`). (этот коммит)
+
+### Removed
+
+- SCRIPTS-CLEANUP (аудит 520 §5, подтверждено 2026-07-02): удалены one-off
+  скрипты `scripts/reproduce-cybersec-11531.sh`,
+  `scripts/windows/reproduce-cybersec-11531.ps1`, `scripts/windows/commit-fixes.ps1`,
+  `scripts/windows/extract-projects.ps1`, `scripts/update_grype.sh` (thin shim,
+  не используется compose). `docs/reproducibility.md` переведён на штатный
+  `run-scan.{sh,ps1}`; `scripts/README.md` обновлён. (этот коммит)
+
 ### Refactored
 
 - `cli.py` `_health_summary`: принимает `retry: RetryPolicy` вместо четырёх отдельных

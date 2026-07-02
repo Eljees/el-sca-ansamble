@@ -440,9 +440,10 @@ services:
     environment:
       EL_SCA_DASHBOARD_ACTIVE: "0"
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${DASHBOARD_PORT:-8080}:8080"
     volumes:
       - ./artifacts:/workspace/artifacts:ro
+      - ./configs:/workspace/configs:ro
     networks: [scanner-net]
 
   mock-feed-server:
