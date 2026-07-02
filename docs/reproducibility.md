@@ -47,49 +47,41 @@
 
 ---
 
-## 3. Запуск репродьюсера
+## 3. Запуск репродукции
+
+> Специальные скрипты `reproduce-cybersec-11531.{sh,ps1}` удалены при чистке
+> 2026-07-02 (SCRIPTS-CLEANUP, см. `docs/audit/520-analysis-2026-06-29.md` §5):
+> это был one-off репродьюсер. Всё воспроизводится штатным пайплайном —
+> экспортируйте пины из §2 (через `.env` или окружение) и запустите скан цели.
 
 ### Linux/macOS
 
 ```sh
-# Базовый (быстрый) прогон через SBOM + Go injection.
-./scripts/reproduce-cybersec-11531.sh
+# Базовый прогон через SBOM + Go injection (пины из §2 — в окружении/.env).
+./scripts/run-scan.sh -t --exps/prometheus-3.11.0.linux-amd64.tar.gz
 
 # То же, но сначала обновить cve-bin-tool DB:
-./scripts/reproduce-cybersec-11531.sh --update-db
-
-# Если уже распаковано — пропустить шаг extract:
-./scripts/reproduce-cybersec-11531.sh --skip-extract
-
-# Тот самый "точный" путь, что использовался для эталона 2026-04-29 —
-# binary scan, без SBOM fast-path.  Долго, но даёт несколько находок.
-./scripts/reproduce-cybersec-11531.sh --binary-scan
+./scripts/run-scan.sh -t --exps/prometheus-3.11.0.linux-amd64.tar.gz --update-db
 ```
 
 ### Windows / PowerShell
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\reproduce-cybersec-11531.ps1
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\reproduce-cybersec-11531.ps1 -UpdateDb
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\reproduce-cybersec-11531.ps1 -SkipExtract
-pwsh -ExecutionPolicy Bypass -File .\scripts\windows\reproduce-cybersec-11531.ps1 -BinaryScan
+.\scripts\windows\run-scan.ps1 -Target ..\--exps\prometheus-3.11.0.linux-amd64.tar.gz
 ```
 
-Скрипт сам:
+Пайплайн при этом (то, что раньше автоматизировал скрипт):
 
-1. Проверяет SHA-256 цели.
-2. Опционально обновляет БД (`cve-bin-tool-updater`).
-3. Распаковывает архив (`artifact-extractor`).
-4. В SBOM-режиме — поднимает `syft-sbom` (нужен для fast-path); в `--binary-scan` режиме шаг пропускается.
-5. Запускает `cve-bin-tool-scanner` с зафиксированными переменными.
-6. Сравнивает результат с **approximate** эталоном:
-   - **≥ 1** находка,
-   - **≥ 1** CRITICAL или HIGH,
-   - `CVE-2024-3566` обязательно присутствует среди именованных находок.
-7. Возвращает exit code:
-   - `0` — сигнал воспроизведён,
-   - `5` — drift (что-то ниже минимума, пайплайн чем-то сломан),
-   - `4` — отчёт пуст / scan не прошёл.
+1. Опционально обновляет БД (`cve-bin-tool-updater`).
+2. Распаковывает архив (`artifact-extractor`).
+3. Поднимает `syft-sbom` (SBOM fast-path) и запускает `cve-bin-tool-scanner`
+   с зафиксированными переменными из §2.
+
+Acceptance проверяется вручную по отчёту (**approximate** эталон):
+
+- **≥ 1** находка,
+- **≥ 1** CRITICAL или HIGH,
+- `CVE-2024-3566` обязательно присутствует среди именованных находок.
 
 Точный эталон (3 findings, 2 CRITICAL + 1 UNKNOWN) теперь достижим **обоими** путями при условии, что в Prometheus-сборке действительно живут две разных Go-версии. С Phase 5.7 SBOM-путь:
 
@@ -119,7 +111,6 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\reproduce-cybersec-11531.ps
 - SBOM есть, но Go-injection отключён ⇒ проверить `CVE_BIN_TOOL_INJECT_GO_RUNTIME=1` и что в `artifacts/sbom/cyclonedx.json` появился компонент `golang:go`;
 - скан упал в таймаут ⇒ `artifacts/reports/cve-bin-tool/timeout.flag`, см. `docs/runbook.md` §3.2.
 
-Скрипт об этом сразу сообщит и завершится с exit 5.
 
 ---
 
@@ -150,7 +141,6 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\windows\reproduce-cybersec-11531.ps
 …пересоберите эталон вручную: запустите прогон, проверьте набор по существу (что это релевантные находки), и обновите ожидания в:
 
 1. `--exps/high_critical_report_2026-04-29_ru.md` или его наследнике.
-2. Константы в `scripts/reproduce-cybersec-11531.sh` (блок `expected_minimum`) и `.ps1` (переменные `$expectedTotal/$expectedCritical/$expectedUnknown/$requiredCve`).
-3. Эта таблица.
+2. Эта таблица (§4).
 
 Не меняйте константы «чтобы пайплайн зелёный» — каждый сдвиг должен быть подкреплён ручной валидацией нового набора.
