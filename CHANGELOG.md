@@ -8,6 +8,10 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `cve_db_audit.py`: извлечён `_is_windows() -> bool` хелпер; тест
+  `test_activate_best_windows_permission_error_uses_fallback` патчит его вместо
+  `os.name` глобально. Исправляет `INTERNALERROR` в pytest на Linux
+  (CI ubuntu-latest), присутствовавший с `2d801a0` (2026-06-20). (`38c04dd`)
 - `docker-compose.yml` `dashboard`: смонтирован `./configs:/workspace/configs:ro` —
   контейнер падал с `FileNotFoundError: configs/feed_sources.yaml`, потому что
   `cli.py` грузит конфиг безусловно, а в `/workspace` монтировался только
