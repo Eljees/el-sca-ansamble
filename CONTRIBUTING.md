@@ -105,6 +105,41 @@ Keep commit messages short; details belong in PR description and the
 - [ ] Public API changes reflected in `docs/architecture.md`
 - [ ] New CLI subcommands documented there too
 
+## Known dev-environment gotchas
+
+### FUSE / cloud-sync stale `.pyc` (Windows + YandexDisk / OneDrive)
+
+If you work from a folder mounted through a FUSE driver (e.g. YandexDisk,
+OneDrive, or any cloud-sync FUSE bridge) you may see tests pass in your IDE
+but silently load **stale bytecode** in the terminal, producing confusing
+failures or wrong coverage numbers.
+
+Root cause: FUSE mounts often do not propagate `mtime` updates for writes
+made through the Windows host side.  Python's import machinery compares
+`mtime` of the `.py` source against the cached `.pyc` in `__pycache__/`;
+if the FUSE layer reports an unchanged `mtime`, Python loads the old `.pyc`
+even though the source was just edited.
+
+**Workaround options (pick one):**
+
+1. **Work directly from the non-synced path** — clone or copy the repo to a
+   local (non-synced) directory like `D:\dev\el-sca-ansamble` and run tests
+   from there.  Symlink or manually copy files to the sync folder only when
+   you want to push.
+
+2. **Delete `__pycache__` before running tests** — forces a full recompile:
+   ```sh
+   find . -type d -name __pycache__ | xargs rm -rf
+   pytest -q ...
+   ```
+
+3. **Use Desktop Commander or a native shell** for `git` and `pytest` calls
+   instead of a sandboxed bash session that reads files through the FUSE
+   mount.  The native shell sees real `mtime` values.
+
+This limitation does **not** affect CI (GitHub Actions / GitLab CI always
+clone to a local runner disk).
+
 ## Reporting bugs / security issues
 
 - Bugs: open an issue with reproduction steps and logs.

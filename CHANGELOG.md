@@ -12,6 +12,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `test_activate_best_windows_permission_error_uses_fallback` патчит его вместо
   `os.name` глобально. Исправляет `INTERNALERROR` в pytest на Linux
   (CI ubuntu-latest), присутствовавший с `2d801a0` (2026-06-20). (`38c04dd`)
+
+### Documentation
+
+- `CONTRIBUTING.md`: добавлена секция "Known dev-environment gotchas" —
+  описание FUSE/stale-mount проблемы (mtime не обновляется через FUSE,
+  Python грузит stale `.pyc`) и три варианта обхода. (FUSE-DOCS)
+- `docs/INDEX.md`: удалены 4 битые ссылки на архивные файлы
+  (`audit/350/310/270/240-analysis-*.md` были в `archive/`, INDEX указывал
+  на несуществующие пути); нумерация скорректирована.
+- `docs/audit/`: 10 файлов серии 400–490 (2026-06-20 – 2026-06-26) перемещены
+  в `docs/audit/archive/` (AUDIT-ARCHIVE).
 - `docker-compose.yml` `dashboard`: смонтирован `./configs:/workspace/configs:ro` —
   контейнер падал с `FileNotFoundError: configs/feed_sources.yaml`, потому что
   `cli.py` грузит конфиг безусловно, а в `/workspace` монтировался только
