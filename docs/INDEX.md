@@ -50,17 +50,18 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/590-analysis-2026-07-03.md` — **latest**: CI-LINUX-INTERNALERROR исправлен (`_is_windows()` хелпер, тест патчит хелпер вместо `os.name`); 873 тестов ✅ (2026-07-03).
-7. `audit/580-analysis-2026-07-02.md` — `.gitignore` + 3 stale-docs фиксы; 873 теста, 95% покрытие; `scanner-diff` CLI подтверждён (570 ошибался) (2026-07-02).
-8. `audit/570-analysis-2026-07-02.md` — чекап-only: NEW-1 `_SCA_reports/`, flaky-тест мониторить; 873 теста (2026-07-02).
-8. `audit/530-analysis-2026-06-30.md` — D1–D20 все закрыты/WORKAROUND/accepted-design (D1=OPEN, нужна ротация NVD); v0.1.5, 868 тестов, 95% покрытие, GitHub синхронизирован (2026-06-30).
-9. `audit/520-analysis-2026-06-29.md` — CI/CD раздел в architecture.md, RetryPolicy в таблице модулей (2026-06-29).
-8. `audit/350-analysis-2026-06-17.md` — все P1 из 340 закрыты, 11 коммитов: cve-bin-tool HOME+soft-fail, grype failover, «Fixed in» колонка; v0.1.4 (2026-06-17).
-9. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, monitor.py 100% coverage (2026-06-13).
-10. `audit/270-analysis-2026-06-11.md` — full analysis pass (2026-06-11): D-NEW-1/2, phased plan.
-11. `audit/240-analysis-2026-06-08.md` — full analysis pass (2026-06-08).
-12. `audit/archive/` — superseded planning notes and older analysis files.
-13. `../CHANGELOG.md` — release notes (Keep a Changelog).
+6. `audit/600-analysis-2026-07-03.md` — **latest**: checkup-only, 0 новых дефектов; план: AUDIT-ARCHIVE, DOCS-INDEX-NUM, FUSE-DOCS (2026-07-03).
+7. `audit/590-analysis-2026-07-03.md` — CI-LINUX-INTERNALERROR исправлен (`_is_windows()` хелпер, тест патчит хелпер вместо `os.name`); 873 тестов ✅ (2026-07-03).
+8. `audit/580-analysis-2026-07-02.md` — `.gitignore` + 3 stale-docs фиксы; 873 теста, 95% покрытие; `scanner-diff` CLI подтверждён (570 ошибался) (2026-07-02).
+9. `audit/570-analysis-2026-07-02.md` — чекап-only: NEW-1 `_SCA_reports/`, flaky-тест мониторить; 873 теста (2026-07-02).
+10. `audit/530-analysis-2026-06-30.md` — D1–D20 все закрыты/WORKAROUND/accepted-design (D1=OPEN, нужна ротация NVD); v0.1.5, 868 тестов, 95% покрытие, GitHub синхронизирован (2026-06-30).
+11. `audit/520-analysis-2026-06-29.md` — CI/CD раздел в architecture.md, RetryPolicy в таблице модулей (2026-06-29).
+12. `audit/350-analysis-2026-06-17.md` — все P1 из 340 закрыты, 11 коммитов: cve-bin-tool HOME+soft-fail, grype failover, «Fixed in» колонка; v0.1.4 (2026-06-17).
+13. `audit/310-analysis-2026-06-13.md` — 835 tests, v0.1.3 bump, monitor.py 100% coverage (2026-06-13).
+14. `audit/270-analysis-2026-06-11.md` — full analysis pass (2026-06-11): D-NEW-1/2, phased plan.
+15. `audit/240-analysis-2026-06-08.md` — full analysis pass (2026-06-08).
+16. `audit/archive/` — superseded planning notes and older analysis files.
+17. `../CHANGELOG.md` — release notes (Keep a Changelog).
 
 ## Architectural decisions
 
