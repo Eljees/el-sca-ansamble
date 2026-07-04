@@ -50,15 +50,16 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/610-analysis-2026-07-04.md` — **latest**: FUSE-DOCS закрыт (CONTRIBUTING.md); AUDIT-ARCHIVE закрыт (400–490 → archive); стale INDEX links удалены; 873 тестов ✅ (2026-07-04).
-7. `audit/600-analysis-2026-07-03.md` — checkup-only, 0 новых дефектов; план: AUDIT-ARCHIVE, DOCS-INDEX-NUM, FUSE-DOCS (2026-07-03).
-8. `audit/590-analysis-2026-07-03.md` — CI-LINUX-INTERNALERROR исправлен (`_is_windows()` хелпер, тест патчит хелпер вместо `os.name`); 873 тестов ✅ (2026-07-03).
-9. `audit/580-analysis-2026-07-02.md` — `.gitignore` + 3 stale-docs фиксы; 873 теста, 95% покрытие; `scanner-diff` CLI подтверждён (570 ошибался) (2026-07-02).
-10. `audit/570-analysis-2026-07-02.md` — чекап-only: NEW-1 `_SCA_reports/`, flaky-тест мониторить; 873 теста (2026-07-02).
-11. `audit/530-analysis-2026-06-30.md` — D1–D20 все закрыты/WORKAROUND/accepted-design (D1=OPEN, нужна ротация NVD); v0.1.5, 868 тестов, 95% покрытие, GitHub синхронизирован (2026-06-30).
-12. `audit/520-analysis-2026-06-29.md` — CI/CD раздел в architecture.md, RetryPolicy в таблице модулей (2026-06-29).
-13. `audit/archive/` — superseded planning notes and older analysis files (≤ 490-series).
-14. `../CHANGELOG.md` — release notes (Keep a Changelog).
+6. `audit/620-analysis-2026-07-04.md` — **latest**: SCANNER-DIFF-CLI закрыт (ложный carry-forward); 3 стейл-документ. находки; план Фаза 1–4 согласован (2026-07-04).
+7. `audit/610-analysis-2026-07-04.md` — FUSE-DOCS закрыт (CONTRIBUTING.md); AUDIT-ARCHIVE закрыт (400–490 → archive); стale INDEX links удалены; 873 тестов ✅ (2026-07-04).
+8. `audit/600-analysis-2026-07-03.md` — checkup-only, 0 новых дефектов; план: AUDIT-ARCHIVE, DOCS-INDEX-NUM, FUSE-DOCS (2026-07-03).
+9. `audit/590-analysis-2026-07-03.md` — CI-LINUX-INTERNALERROR исправлен (`_is_windows()` хелпер, тест патчит хелпер вместо `os.name`); 873 тестов ✅ (2026-07-03).
+10. `audit/580-analysis-2026-07-02.md` — `.gitignore` + 3 stale-docs фиксы; 873 теста, 95% покрытие; `scanner-diff` CLI подтверждён (570 ошибался) (2026-07-02).
+11. `audit/570-analysis-2026-07-02.md` — чекап-only: NEW-1 `_SCA_reports/`, flaky-тест мониторить; 873 теста (2026-07-02).
+12. `audit/530-analysis-2026-06-30.md` — D1–D20 все закрыты/WORKAROUND/accepted-design (D1=OPEN, нужна ротация NVD); v0.1.5, 868 тестов, 95% покрытие, GitHub синхронизирован (2026-06-30).
+13. `audit/520-analysis-2026-06-29.md` — CI/CD раздел в architecture.md, RetryPolicy в таблице модулей (2026-06-29).
+14. `audit/archive/` — superseded planning notes and older analysis files (≤ 490-series).
+15. `../CHANGELOG.md` — release notes (Keep a Changelog).
 
 ## Architectural decisions
 
