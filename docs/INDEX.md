@@ -50,8 +50,9 @@ need to do; each section is ordered by depth (read top-to-bottom).
 3. `audit/20-architecture.md` — architectural themes.
 4. `audit/30-tests.md` — test coverage map.
 5. `audit/40-tooling-docs.md` — CI, pre-commit, doc gaps.
-6. `audit/620-analysis-2026-07-04.md` — **latest**: SCANNER-DIFF-CLI закрыт (ложный carry-forward); 3 стейл-документ. находки; план Фаза 1–4 согласован (2026-07-04).
-7. `audit/610-analysis-2026-07-04.md` — FUSE-DOCS закрыт (CONTRIBUTING.md); AUDIT-ARCHIVE закрыт (400–490 → archive); стale INDEX links удалены; 873 тестов ✅ (2026-07-04).
+6. `audit/630-analysis-2026-07-05.md` — **latest**: FUSE-TRUNC (5 файлов) восстановлены; stale lock удалён; STALE-30-BANNER+STALE-DEFENDER-README+LOGGING-FORMAT(A002) исправлены и закоммичены (2026-07-05).
+7. `audit/620-analysis-2026-07-04.md` — SCANNER-DIFF-CLI закрыт (ложный carry-forward); 3 стейл-документ. находки; план Фаза 1–4 согласован (2026-07-04).
+8. `audit/610-analysis-2026-07-04.md` — FUSE-DOCS закрыт (CONTRIBUTING.md); AUDIT-ARCHIVE закрыт (400–490 → archive); стale INDEX links удалены; 873 тестов ✅ (2026-07-04).
 8. `audit/600-analysis-2026-07-03.md` — checkup-only, 0 новых дефектов; план: AUDIT-ARCHIVE, DOCS-INDEX-NUM, FUSE-DOCS (2026-07-03).
 9. `audit/590-analysis-2026-07-03.md` — CI-LINUX-INTERNALERROR исправлен (`_is_windows()` хелпер, тест патчит хелпер вместо `os.name`); 873 тестов ✅ (2026-07-03).
 10. `audit/580-analysis-2026-07-02.md` — `.gitignore` + 3 stale-docs фиксы; 873 теста, 95% покрытие; `scanner-diff` CLI подтверждён (570 ошибался) (2026-07-02).
