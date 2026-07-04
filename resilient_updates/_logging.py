@@ -99,7 +99,7 @@ class JsonFormatter(logging.Formatter):
 
 def setup_logging(
     level: str | None = None,
-    format: str | None = None,
+    log_format: str | None = None,
     stream=None,
 ) -> None:
     """Configure the root logger.  Idempotent.
@@ -107,7 +107,7 @@ def setup_logging(
     Parameters override env vars; both default to environment lookup.
     """
     chosen_level = (level or os.environ.get("LOG_LEVEL") or "INFO").upper()
-    chosen_format = (format or os.environ.get("LOG_FORMAT") or "text").lower()
+    chosen_format = (log_format or os.environ.get("LOG_FORMAT") or "text").lower()
     chosen_stream = stream or sys.stderr
 
     root = logging.getLogger()

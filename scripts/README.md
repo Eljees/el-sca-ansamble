@@ -31,6 +31,7 @@
 | `smoke_test.sh` | Local smoke test (`validate-config`, basic CLI commands). | Yes | `windows/smoke-test.ps1` |
 | `analyze_apk.py` | APK analyzer (extract, identify libs, synthesize SBOM). Runs inside `apk-analyzer` container. | Inside container | — |
 | `analyze_win_installer.py` | Windows MSI/NSIS analyzer (extract, PE metadata, synthesize SBOM). Runs inside `win-analyzer` container. | Inside container | — |
+| `windows/setup-defender-exclusions.ps1` | Idempotent Windows Defender exclusions for project root, Docker VHDX, WSL paths; writes provenance to `artifacts/provenance/`. | No | — |
 
 ## Why two scripts that look like `run scan`?
 
@@ -46,4 +47,4 @@ The default mode is `auto`: save next to the source artifact when possible, othe
 
 PowerShell mirrors live under [`scripts/windows/`](./windows/). They take the same arguments as their POSIX twins so cross-platform documentation stays straightforward.
 
-A planned Phase-3 helper script — `windows/setup-defender-exclusions.ps1` — will register the project and its hot cache paths with Windows Defender so per-file scan overhead drops sharply on `artifacts/extracted/...` and the Docker Desktop VHDX. Not yet committed.
+See `windows/setup-defender-exclusions.ps1` in the table above; register it once per machine before running large scans.

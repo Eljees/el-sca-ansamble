@@ -21,7 +21,7 @@ def _reset_root_logger() -> None:
 def test_setup_logging_text_format_emits_one_line(monkeypatch) -> None:
     _reset_root_logger()
     buf = io.StringIO()
-    setup_logging(level="DEBUG", format="text", stream=buf)
+    setup_logging(level="DEBUG", log_format="text", stream=buf)
     logging.getLogger("t").info("hello")
     output = buf.getvalue()
     assert "INFO" in output
@@ -31,7 +31,7 @@ def test_setup_logging_text_format_emits_one_line(monkeypatch) -> None:
 def test_setup_logging_json_format_is_valid_json(monkeypatch) -> None:
     _reset_root_logger()
     buf = io.StringIO()
-    setup_logging(level="INFO", format="json", stream=buf)
+    setup_logging(level="INFO", log_format="json", stream=buf)
     logging.getLogger("t.module").info("msg", extra={"run_id": "abc"})
     line = buf.getvalue().strip()
     payload = json.loads(line)
@@ -44,7 +44,7 @@ def test_setup_logging_json_format_is_valid_json(monkeypatch) -> None:
 def test_json_formatter_includes_traceback() -> None:
     _reset_root_logger()
     buf = io.StringIO()
-    setup_logging(format="json", stream=buf)
+    setup_logging(log_format="json", stream=buf)
     try:
         raise ValueError("boom")
     except ValueError:
@@ -57,9 +57,9 @@ def test_json_formatter_includes_traceback() -> None:
 def test_setup_is_idempotent_no_handler_stacking() -> None:
     _reset_root_logger()
     buf = io.StringIO()
-    setup_logging(format="text", stream=buf)
-    setup_logging(format="text", stream=buf)
-    setup_logging(format="text", stream=buf)
+    setup_logging(log_format="text", stream=buf)
+    setup_logging(log_format="text", stream=buf)
+    setup_logging(log_format="text", stream=buf)
     logging.getLogger("t").info("once")
     output = buf.getvalue()
     # Without idempotency, message would appear thrice.
