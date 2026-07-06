@@ -402,6 +402,43 @@ def test_start_scan_registers_run_dir_and_log(tmp_path: Path, monkeypatch):
     assert job.log_path.is_file()
 
 
+def test_publish_results_if_enabled_calls_s3_publisher(tmp_path: Path, monkeypatch):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    run_dir = tmp_path / "_SCA_reports" / "app-20260707-120000"
+    run_dir.mkdir(parents=True)
+    job = Job("scan", SCAN_STAGES, artifacts_dir=tmp_path / "artifacts", run_dir=run_dir)
+    monkeypatch.setenv("EL_SCA_RESULTS_TO_S3", "1")
+    calls: list[tuple[Path, Path, list[str]]] = []
+
+    def fake_publish(selected, *, repo_root, compose):
+        calls.append((Path(selected), Path(repo_root), list(compose)))
+        return {"prefixes": ["scans/app-20260707-120000", "scans/latest"]}
+
+    monkeypatch.setattr("resilient_updates.s3_publish.publish_results", fake_publish)
+
+    reg._publish_results_if_enabled(job)
+
+    assert calls == [(run_dir, tmp_path, ["docker", "compose"])]
+    assert any("scans/latest" in line for line in job.log)
+
+
+def test_publish_results_if_enabled_is_best_effort(tmp_path: Path, monkeypatch):
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    run_dir = tmp_path / "_SCA_reports" / "app-20260707-120000"
+    run_dir.mkdir(parents=True)
+    job = Job("scan", SCAN_STAGES, artifacts_dir=tmp_path / "artifacts", run_dir=run_dir)
+    monkeypatch.setenv("EL_SCA_RESULTS_TO_S3", "1")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("s3 down")
+
+    monkeypatch.setattr("resilient_updates.s3_publish.publish_results", boom)
+
+    reg._publish_results_if_enabled(job)
+
+    assert any("WARN publish failed" in line for line in job.log)
+
+
 # ---------------------------------------------------------------------------
 # sse_stream — keep-alive heartbeat
 # ---------------------------------------------------------------------------
@@ -813,3 +850,22 @@ def test_update_unknown_tool_treated_as_all(tmp_path):
     assert "grype-updater" in calls
     assert "cve-bin-tool-updater" in calls
     assert job.status == "done"
+
+
+def test_prune_update_logs_keeps_newest(tmp_path, monkeypatch):
+    log_dir = tmp_path / "artifacts" / "db_status" / "updates"
+    log_dir.mkdir(parents=True)
+    old = log_dir / "old.log"
+    new = log_dir / "new.log"
+    old.write_text("old", encoding="utf-8")
+    new.write_text("new", encoding="utf-8")
+    import os
+
+    os.utime(old, (1_700_000_000, 1_700_000_000))
+    os.utime(new, (1_700_000_100, 1_700_000_100))
+    monkeypatch.setenv("EL_SCA_UPDATE_LOG_KEEP", "1")
+
+    JobRegistry._prune_update_logs(log_dir)
+
+    assert not old.exists()
+    assert new.exists()

@@ -28,7 +28,7 @@
 #       --no-auto-route     Disable egress auto-discovery (use .env/direct as-is)
 #       --timeout N         cve-bin-tool scan timeout in seconds (default: 1800)
 #       --checkers LIST     Comma-separated cve-bin-tool checker list (default: all enabled)
-#       --artifact-mode M   Save run snapshot: artifacts|near-source|auto (default: auto)
+#       --artifact-mode M   Save run snapshot: host|artifacts|near-source|auto (default: host)
 #
 # Requires: docker, docker compose, bash >= 4
 set -euo pipefail
@@ -48,7 +48,7 @@ HEARTBEAT="${EL_SCA_HEARTBEAT_SECONDS:-30}"
 SBOM_SCAN=0
 CBT_TIMEOUT=1800
 CBT_CHECKERS=""
-ARTIFACT_MODE="${EL_SCA_ARTIFACT_MODE:-auto}"
+ARTIFACT_MODE="${EL_SCA_ARTIFACT_MODE:-host}"
 # Auto-route: when updating DBs, run route-doctor first to pick a live egress
 # (any tunnel/proxy/VPN) and source its plan before the updaters. On by default
 # for --update-db runs; disable with --no-auto-route or EL_SCA_AUTO_ROUTE=0.
@@ -342,11 +342,22 @@ REPORT_MD="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.md"
 REPORT_HTML="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.html"
 ARTIFACTS_DIR="$(pwd)/artifacts"
 
-# Mirror all pipeline output to a log file so a non-interactive caller (the MCP
-# bridge) can inspect progress/errors even when its own request times out.
-# One log per run; previous run kept as .1 (simple two-slot rotation, no growth).
+# Mirror all pipeline output to a log file so a non-interactive caller can
+# inspect progress/errors even when its own request times out.
+# Rotated locally: run-scan.log -> .1 -> .2 ... up to EL_SCA_LOG_BACKUP_COUNT.
 mkdir -p "$ARTIFACTS_DIR"
-{ [ -f "$ARTIFACTS_DIR/run-scan.log" ] && mv -f "$ARTIFACTS_DIR/run-scan.log" "$ARTIFACTS_DIR/run-scan.log.1" 2>/dev/null; } || true
+LOG_BACKUPS="${EL_SCA_LOG_BACKUP_COUNT:-5}"
+if [[ "$LOG_BACKUPS" =~ ^[0-9]+$ && "$LOG_BACKUPS" -gt 0 ]]; then
+  rm -f "$ARTIFACTS_DIR/run-scan.log.$LOG_BACKUPS" 2>/dev/null || true
+  for ((i=LOG_BACKUPS-1; i>=1; i--)); do
+    if [[ -f "$ARTIFACTS_DIR/run-scan.log.$i" ]]; then
+      mv -f "$ARTIFACTS_DIR/run-scan.log.$i" "$ARTIFACTS_DIR/run-scan.log.$((i+1))" 2>/dev/null || true
+    fi
+  done
+  if [[ -f "$ARTIFACTS_DIR/run-scan.log" ]]; then
+    mv -f "$ARTIFACTS_DIR/run-scan.log" "$ARTIFACTS_DIR/run-scan.log.1" 2>/dev/null || true
+  fi
+fi
 exec > >(tee "$ARTIFACTS_DIR/run-scan.log") 2>&1
 echo "[run-scan] $(date -u +%Y-%m-%dT%H:%M:%SZ) start  py=$PYTHON_BIN tool=$TOOL target=$TARGET"
 
@@ -641,8 +652,8 @@ echo "[stage] report-html (host $PYTHON_BIN)"
 
 # ── Archive run history ───────────────────────────────────────────────────────
 # Snapshot per-run evidence into a project-timestamp directory.  By default the
-# helper tries to place it near the source artifact and falls back to
-# artifacts/runs/ when that is not possible.  Best-effort: never fails the scan.
+# helper places it under _SCA_reports/ on the scanner host.  Best-effort: never
+# fails the scan.
 {
   archive_args=(
     -m resilient_updates.cli archive-run

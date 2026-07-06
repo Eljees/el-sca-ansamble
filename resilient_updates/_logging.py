@@ -11,6 +11,9 @@ Environment knobs picked up by :func:`setup_logging`:
 
 - ``LOG_LEVEL`` (default ``INFO``) - any value ``logging`` accepts.
 - ``LOG_FORMAT`` (default ``text``) - either ``text`` or ``json``.
+- ``LOG_FILE`` (optional) - also write logs to this file.
+- ``LOG_MAX_BYTES`` (default ``10485760``) - rotate file logs after this size.
+- ``LOG_BACKUP_COUNT`` (default ``5``) - number of rotated file logs to keep.
 
 The function is idempotent: re-calling it on an already-configured root
 logger is a no-op so unit tests can call it freely.
@@ -22,6 +25,7 @@ import json
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 
 try:
     from datetime import UTC  # py3.11+
@@ -30,6 +34,7 @@ except ImportError:
 
     UTC = _tz.utc  # noqa: UP017
 from datetime import datetime
+from pathlib import Path
 from typing import Any, ClassVar
 
 _LEVELS = {
@@ -101,6 +106,7 @@ def setup_logging(
     level: str | None = None,
     log_format: str | None = None,
     stream=None,
+    file_path: str | os.PathLike[str] | None = None,
 ) -> None:
     """Configure the root logger.  Idempotent.
 
@@ -109,6 +115,7 @@ def setup_logging(
     chosen_level = (level or os.environ.get("LOG_LEVEL") or "INFO").upper()
     chosen_format = (log_format or os.environ.get("LOG_FORMAT") or "text").lower()
     chosen_stream = stream or sys.stderr
+    chosen_file = file_path or os.environ.get("LOG_FILE")
 
     root = logging.getLogger()
     # Idempotency guard: if a handler with our sentinel attribute is already
@@ -119,18 +126,38 @@ def setup_logging(
             root.setLevel(_LEVELS.get(chosen_level, logging.INFO))
             return
 
-    handler = logging.StreamHandler(chosen_stream)
+    formatter: logging.Formatter
     if chosen_format == "json":
-        handler.setFormatter(JsonFormatter())
+        formatter = JsonFormatter()
     else:
-        handler.setFormatter(
-            logging.Formatter(
-                fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
-                datefmt="%Y-%m-%dT%H:%M:%S%z",
-            )
+        formatter = logging.Formatter(
+            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S%z",
         )
+    handler = logging.StreamHandler(chosen_stream)
+    handler.setFormatter(formatter)
     handler._resilient_updates_sentinel = True
     root.addHandler(handler)
+    if chosen_file:
+        try:
+            max_bytes = int(os.environ.get("LOG_MAX_BYTES", "10485760") or "10485760")
+        except ValueError:
+            max_bytes = 10 * 1024 * 1024
+        try:
+            backup_count = int(os.environ.get("LOG_BACKUP_COUNT", "5") or "5")
+        except ValueError:
+            backup_count = 5
+        path = Path(chosen_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            path,
+            maxBytes=max(1024, max_bytes),
+            backupCount=max(0, backup_count),
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        file_handler._resilient_updates_sentinel = True
+        root.addHandler(file_handler)
     root.setLevel(_LEVELS.get(chosen_level, logging.INFO))
 
 

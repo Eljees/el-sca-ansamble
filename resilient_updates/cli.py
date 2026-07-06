@@ -716,8 +716,8 @@ def main() -> int:
     archive_run.add_argument("--case-id", default=None)
     archive_run.add_argument(
         "--mode",
-        choices=["artifacts", "near-source", "auto"],
-        default="artifacts",
+        choices=["host", "artifacts", "near-source", "auto"],
+        default="host",
         help="where to create the run directory",
     )
     archive_run.add_argument(
@@ -725,8 +725,20 @@ def main() -> int:
         action="store_true",
         help="also copy artifacts/extracted/current (can be very large)",
     )
+    archive_run.add_argument(
+        "--publish-s3",
+        action="store_true",
+        help="after archiving, publish the run snapshot to stack-local S3",
+    )
     archive_run.add_argument("--stage", default="archive")
     archive_run.add_argument("--status", default="archived")
+
+    s3_results = subparsers.add_parser(
+        "s3-results-push",
+        help="publish a saved scan run to stack-local S3 (newest _SCA_reports run by default)",
+    )
+    s3_results.add_argument("run_dir", nargs="?", default=None)
+    s3_results.add_argument("--repo-root", default=".")
 
     scanner_diff = subparsers.add_parser(
         "scanner-diff",
@@ -781,6 +793,10 @@ def main() -> int:
         "--watch", type=int, default=0, metavar="N", help="redraw every N seconds (0 = print once)"
     )
     args = parser.parse_args()
+
+    if args.command == "dashboard" and not os.environ.get("LOG_FILE"):
+        _root = Path(args.repo_root) if args.repo_root else Path(args.artifacts_dir).resolve().parent
+        os.environ["LOG_FILE"] = str(_root / "artifacts" / "logs" / "dashboard.log")
 
     # Configure the root logger before any module does work.  LOG_LEVEL and
     # LOG_FORMAT (text|json) are read from environment.  See
@@ -1047,6 +1063,7 @@ def main() -> int:
         return EXIT_SUCCESS
     if args.command == "archive-run":
         from .run_layout import archive_current_run
+        from .s3_publish import env_enabled, publish_results
 
         payload = archive_current_run(
             artifacts_dir=args.artifacts_dir,
@@ -1058,6 +1075,15 @@ def main() -> int:
             stage=args.stage,
             status=args.status,
         )
+        s3_payload = None
+        if args.publish_s3 or env_enabled("EL_SCA_RESULTS_TO_S3"):
+            try:
+                s3_payload = publish_results(
+                    payload["run_dir"],
+                    repo_root=Path(args.artifacts_dir).resolve().parent,
+                )
+            except Exception as exc:  # pragma: no cover - depends on Docker/S3 availability
+                s3_payload = {"status": "error", "error": str(exc)}
         print(
             json.dumps(
                 {
@@ -1065,11 +1091,18 @@ def main() -> int:
                     "run_dir": payload["run_dir"],
                     "run_id": payload["manifest"].get("run_id"),
                     "copied": payload["copied"],
+                    "s3": s3_payload,
                 },
                 indent=2,
                 ensure_ascii=False,
             )
         )
+        return EXIT_SUCCESS
+    if args.command == "s3-results-push":
+        from .s3_publish import publish_results
+
+        payload = publish_results(args.run_dir, repo_root=args.repo_root)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS
     if args.command == "scanner-diff":
         from .scanner_diff import diff_runs, to_markdown

@@ -103,17 +103,21 @@ make s3-db-pull SLOT=previous
 
 ## Результаты сканирования
 
-`run-scan.sh` уже сохраняет per-run snapshot в `artifacts/runs/<run-id>/`.
+`run-scan.sh` уже сохраняет per-run snapshot в
+`_SCA_reports/<run-id>/` на хосте, где запущен сканер.
 Опубликовать последний snapshot:
 
 ```sh
 make s3-results-push
+# или без make/bash-обвязки:
+python -m resilient_updates.cli s3-results-push
 ```
 
 Или явно:
 
 ```sh
-make s3-results-push RUN=artifacts/runs/my-run-id
+make s3-results-push RUN=_SCA_reports/my-run-id
+python -m resilient_updates.cli s3-results-push _SCA_reports/my-run-id
 ```
 
 Снимок появляется в двух местах:
@@ -121,8 +125,15 @@ make s3-results-push RUN=artifacts/runs/my-run-id
 - `scans/<run-id>/` — постоянная ссылка на конкретный прогон;
 - `scans/latest/` — последний опубликованный прогон.
 
-Завтра на этом месте можно добавить простой HTTP index/дашборд, чтобы открывать
-`report.html` и `MANIFEST.json` прямо с сервера.
+Автоматическая публикация после скана включается флагом окружения:
+
+```sh
+EL_SCA_RESULTS_TO_S3=1 ./scripts/run-scan.sh /path/to/artifact
+```
+
+Для GUI задайте `EL_SCA_RESULTS_TO_S3=1` перед запуском dashboard. Если S3
+недоступен, скан не падает: локальный snapshot уже сохранён, в log появится
+warning.
 
 ## Ubuntu smoke без ручного копирования
 

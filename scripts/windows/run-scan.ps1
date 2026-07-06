@@ -57,9 +57,9 @@
   # "go,rust,python,javascript" = custom comma-separated list
   [string]$CveBinToolCheckers = "",
 
-  # Save a per-run snapshot: artifacts | near-source | auto
-  [ValidateSet("artifacts","near-source","auto")]
-  [string]$ArtifactMode = $(if ($env:EL_SCA_ARTIFACT_MODE) { $env:EL_SCA_ARTIFACT_MODE } else { "auto" })
+  # Save a per-run snapshot: host | artifacts | near-source | auto
+  [ValidateSet("host","artifacts","near-source","auto")]
+  [string]$ArtifactMode = $(if ($env:EL_SCA_ARTIFACT_MODE) { $env:EL_SCA_ARTIFACT_MODE } else { "host" })
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +75,44 @@ function Import-LocalEnv {
     $parts = $line -split "=", 2
     if ($parts.Count -ne 2) { continue }
     [Environment]::SetEnvironmentVariable($parts[0].Trim(), $parts[1].Trim(), "Process")
+  }
+}
+
+function Rotate-RunLog {
+  param(
+    [Parameter(Mandatory=$true)][string]$LogPath,
+    [int]$Keep = $(if ($env:EL_SCA_LOG_BACKUP_COUNT) { [int]$env:EL_SCA_LOG_BACKUP_COUNT } else { 5 })
+  )
+  if ($Keep -le 0) { return }
+  $oldest = "$LogPath.$Keep"
+  if (Test-Path $oldest) { Remove-Item -Force $oldest -ErrorAction SilentlyContinue }
+  for ($i = $Keep - 1; $i -ge 1; $i--) {
+    $src = "$LogPath.$i"
+    $dst = "$LogPath.$($i + 1)"
+    if (Test-Path $src) { Move-Item -Force $src $dst -ErrorAction SilentlyContinue }
+  }
+  if (Test-Path $LogPath) { Move-Item -Force $LogPath "$LogPath.1" -ErrorAction SilentlyContinue }
+}
+
+function Start-RunTranscript {
+  param([Parameter(Mandatory=$true)][string]$ArtifactsDir)
+  New-Item -ItemType Directory -Force -Path $ArtifactsDir | Out-Null
+  $logPath = Join-Path $ArtifactsDir "run-scan.log"
+  Rotate-RunLog -LogPath $logPath
+  try {
+    Start-Transcript -Path $logPath -Force | Out-Null
+    $script:RunTranscriptStarted = $true
+  } catch {
+    Write-Warning "failed to start transcript log: $($_.Exception.Message)"
+  }
+}
+
+function Stop-RunTranscriptSafe {
+  if (-not $script:RunTranscriptStarted) { return }
+  try {
+    Stop-Transcript | Out-Null
+  } catch {
+    # Best-effort: the scan result must not depend on transcript shutdown.
   }
 }
 
@@ -376,6 +414,9 @@ function Show-DbFreshnessBanner {
 
 # ── Pre-flight checks ─────────────────────────────────────────────────────────
 
+$ArtifactsDir = Join-Path (Get-Location).Path "artifacts"
+Start-RunTranscript -ArtifactsDir $ArtifactsDir
+
 docker --version     | Out-Null
 docker compose version | Out-Null
 Import-LocalEnv
@@ -424,7 +465,6 @@ foreach ($ext in $knownExts) {
 $Date       = Get-Date -Format "yyyy-MM-dd"
 $ReportMd   = Join-Path $TargetDir "${BaseName}_report_${Date}.md"
 $ReportHtml = Join-Path $TargetDir "${BaseName}_report_${Date}.html"
-$ArtifactsDir = Join-Path (Get-Location).Path "artifacts"
 
 # Compose renders the whole file even for db-admin helper calls. Seed harmless
 # placeholders early so the pre-scan DB freshness banner can render reliably.
@@ -792,8 +832,8 @@ if ($LASTEXITCODE -ne 0) {
   Write-Warning "HTML report generation failed — skipping"
 }
 
-# Snapshot per-run evidence into a project-timestamp directory.  Default `auto`
-# saves next to the source when possible and falls back to artifacts\runs.
+# Snapshot per-run evidence into a project-timestamp directory.  Default `host`
+# saves under _SCA_reports on the scanner host.
 $archiveArgs = @(
   "-m", "resilient_updates.cli", "archive-run",
   "--artifacts-dir", $ArtifactsDir,
@@ -828,3 +868,4 @@ Write-Host ""
 
 # Re-show DB freshness AFTER the scan so the final state stays on screen.
 Show-DbFreshnessBanner -Title 'DATABASE FRESHNESS (POST-SCAN)'
+Stop-RunTranscriptSafe

@@ -594,7 +594,7 @@ def test_manifest_subcommand_writes_manifest_json(tmp_path, monkeypatch, capsys)
 
 
 def test_archive_run_subcommand_writes_snapshot(tmp_path, monkeypatch, capsys):
-    """archive-run snapshots current artifacts into artifacts/runs."""
+    """archive-run snapshots current artifacts into the selected run directory."""
     from resilient_updates.cli import main
 
     artifacts = tmp_path / "artifacts"
@@ -626,6 +626,64 @@ def test_archive_run_subcommand_writes_snapshot(tmp_path, monkeypatch, capsys):
     assert result["status"] == "ok"
     assert (run_dir / "MANIFEST.json").is_file()
     assert (run_dir / "checkpoint.json").is_file()
+
+
+def test_archive_run_publish_s3_flag(tmp_path, monkeypatch, capsys):
+    from resilient_updates.cli import main
+
+    artifacts = tmp_path / "artifacts"
+    _seed_minimal_artifacts(artifacts)
+    target = tmp_path / "input.tar.gz"
+    target.write_bytes(b"input")
+    published: list[tuple[str, Path]] = []
+
+    def fake_publish(run_dir, *, repo_root):
+        published.append((run_dir, Path(repo_root)))
+        return {"status": "ok", "prefixes": ["scans/run", "scans/latest"]}
+
+    monkeypatch.setattr("resilient_updates.s3_publish.publish_results", fake_publish)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "cli",
+            "--config",
+            _CFG,
+            "archive-run",
+            "--artifacts-dir",
+            str(artifacts),
+            "--target-host",
+            str(target),
+            "--publish-s3",
+        ],
+    )
+    rc = main()
+    result = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert result["s3"]["status"] == "ok"
+    assert published
+    assert published[0][1] == tmp_path
+
+
+def test_s3_results_push_subcommand(tmp_path, monkeypatch, capsys):
+    from resilient_updates.cli import main
+
+    run_dir = tmp_path / "_SCA_reports" / "run"
+    run_dir.mkdir(parents=True)
+
+    def fake_publish(selected, *, repo_root):
+        assert Path(selected) == run_dir
+        assert Path(repo_root) == tmp_path
+        return {"status": "ok", "run_id": "run"}
+
+    monkeypatch.setattr("resilient_updates.s3_publish.publish_results", fake_publish)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["cli", "--config", _CFG, "s3-results-push", str(run_dir), "--repo-root", str(tmp_path)],
+    )
+
+    assert main() == 0
+    assert json.loads(capsys.readouterr().out)["run_id"] == "run"
 
 
 # ---------------------------------------------------------------------------

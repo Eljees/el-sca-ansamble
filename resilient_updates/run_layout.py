@@ -81,12 +81,13 @@ def resolve_run_dir(
     artifacts_dir: str | Path = "artifacts",
     target_host: str | None = None,
     case_id: str | None = None,
-    mode: str = "artifacts",
+    mode: str = "host",
     timestamp: float | None = None,
 ) -> Path:
     """Return the desired per-run directory.
 
     ``mode``:
+    - ``host``: ``<repo>/_SCA_reports/<project>-<timestamp>``
     - ``artifacts``: ``<artifacts_dir>/runs/<project>-<timestamp>``
     - ``near-source``: sibling directory next to the scanned source path
     - ``auto``: try ``near-source`` when target exists, otherwise ``artifacts``
@@ -94,9 +95,12 @@ def resolve_run_dir(
     artifacts_root = Path(artifacts_dir)
     project = project_name_from_target(target_host, case_id)
     name = run_dir_name(project, ts=timestamp)
-    chosen = (mode or "artifacts").strip().lower()
-    if chosen not in {"artifacts", "near-source", "auto"}:
-        chosen = "artifacts"
+    chosen = (mode or "host").strip().lower()
+    if chosen not in {"host", "artifacts", "near-source", "auto"}:
+        chosen = "host"
+
+    if chosen == "host":
+        return artifacts_root.parent / "_SCA_reports" / name
 
     if chosen in {"near-source", "auto"} and target_host:
         target = Path(target_host)
@@ -218,7 +222,7 @@ def archive_current_run(
     target_host: str | None = None,
     target_container: str | None = None,
     case_id: str | None = None,
-    mode: str = "artifacts",
+    mode: str = "host",
     include_extracted_tree: bool = False,
     stage: str | None = "archive",
     status: str = "archived",

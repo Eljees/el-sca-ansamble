@@ -83,7 +83,7 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `monitor` | Статус контейнеров + текущий этап + DB-свежесть; `--watch N` — автообновление, `--json` |
 | `scanner-diff` | Сравнение двух `artifacts/` директорий |
 | `manifest` | Сборка корневого `MANIFEST.json` со ссылками на все артефакты прогона |
-| `archive-run` | Копирование артефактов прогона в per-run директорию (`artifacts/runs/<name>/`) |
+| `archive-run` | Копирование артефактов прогона в per-run директорию (`_SCA_reports/<name>/` по умолчанию) |
 
 ---
 
@@ -249,7 +249,7 @@ artifacts/
 │   ├── cve-bin-tool/        # raw JSON cve-bin-tool
 │   └── final/               # итоговые Markdown-отчёты
 ├── provenance/              # provenance JSON по каждому инструменту
-├── runs/                    # сохранённые per-run snapshots (`<project>-<timestamp>/`)
+├── runs/                    # legacy/fallback per-run snapshots
 ├── pipeline_state.json      # checkpoint состояния этапов для resume/monitor
 └── extracted/
     └── current/             # результат распаковки + extraction_manifest.json
@@ -257,8 +257,9 @@ artifacts/
 
 При dashboard/host-run checkpoints пишутся не только в `pipeline_state.json`,
 но и в per-run директорию: `checkpoint.json` + сохранённые evidence файлы в
-`artifacts/runs/<project>-<timestamp>/` или рядом с исходным артефактом в
-режиме `near-source` / `auto`.
+`_SCA_reports/<target-name>-<timestamp>/` на хосте сканера. Режимы
+`artifacts`, `near-source` и `auto` остаются для совместимости и специальных
+запусков.
 
 ---
 

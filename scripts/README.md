@@ -2,7 +2,7 @@
 
 | Script | Purpose | Runs Docker? | Mirror on Windows |
 |---|---|---|---|
-| `run-scan.sh` *(dash)* | Full SCA pipeline: extract → scan (syft/trivy/grype/cve-bin-tool) → MD + HTML report + per-run snapshot (`--artifact-mode artifacts\|near-source\|auto`). Recommended entry point on Linux/macOS. | Yes (`docker compose`) | `windows/run-scan.ps1` |
+| `run-scan.sh` *(dash)* | Full SCA pipeline: extract → scan (syft/trivy/grype/cve-bin-tool) → MD + HTML report + per-run snapshot (`--artifact-mode host\|artifacts\|near-source\|auto`). Recommended entry point on Linux/macOS. | Yes (`docker compose`) | `windows/run-scan.ps1` |
 | `update-db.sh` | Refresh scanner vulnerability DBs WITHOUT running a scan. Updates one tool or all; probes egress via route-doctor (ADR-0007) before each updater. Usage: `./scripts/update-db.sh [all\|trivy\|grype\|cve-bin-tool] [--no-auto-route]`. | Yes (`docker compose run --rm`) | `windows/update-db.ps1` |
 | `scan.sh` | Thin wrapper over the unified `cli scan` orchestrator (ADR-0005). Supersedes the per-OS run-scan scripts; forwards all arguments unchanged. | Yes (delegates) | — |
 | `batch-scan.sh` | Run `run-scan.sh` against multiple `{case, target}` pairs in one go. Loads jobs from `--case/--target`, `--jobs-json`, or `--jobs-csv`; tolerates per-job failures; prints SUMMARY; exit 2 if any job failed. | Yes (delegates) | `windows/batch-scan.ps1` |
@@ -40,9 +40,11 @@ The dash/underscore variants exist on purpose. They sit in the same folder and l
 
 ## Per-run artifacts
 
-`run-scan.sh` and `windows/run-scan.ps1` keep the human MD/HTML reports next to the scanned source file. They also call `python -m resilient_updates.cli archive-run` to save a machine-readable snapshot with `MANIFEST.json` and `checkpoint.json`.
+`run-scan.sh` and `windows/run-scan.ps1` call `python -m resilient_updates.cli archive-run` to save a machine-readable snapshot with `MANIFEST.json` and `checkpoint.json`.
 
-The default mode is `auto`: save next to the source artifact when possible, otherwise use `artifacts/runs/<project>-<timestamp>/`. Override with `--artifact-mode artifacts|near-source|auto` on POSIX or `-ArtifactMode artifacts|near-source|auto` on Windows. Set `EL_SCA_ARCHIVE_EXTRACTED_TREE=1` only when you intentionally want to copy the full extracted tree.
+The default mode is `host`: save under `_SCA_reports/<target-name>-<timestamp>/` on the host running the scanner. Override with `--artifact-mode host|artifacts|near-source|auto` on POSIX or `-ArtifactMode host|artifacts|near-source|auto` on Windows. Set `EL_SCA_ARCHIVE_EXTRACTED_TREE=1` only when you intentionally want to copy the full extracted tree.
+
+Set `EL_SCA_RESULTS_TO_S3=1` to publish the saved snapshot to stack-local S3 after a scan. `artifacts/run-scan.log` is rotated as `run-scan.log.1`, `.2`, ... up to `EL_SCA_LOG_BACKUP_COUNT` (default 5). The active dashboard writes its Python log to `artifacts/logs/dashboard.log` with `LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` rotation.
 
 ## Windows-specific notes
 

@@ -36,15 +36,16 @@ FastAPI-приложение поверх `artifacts/` с двумя режим�
   поэтому `POST /api/scan` и `POST /api/update-db` честно возвращают 403.
 
 Источник правды остаётся файловым: текущий прогон живёт в `artifacts/`, история
-прогонов — в `artifacts/runs/<project>-<timestamp>/` или рядом с исходным
-артефактом, если runner запущен с режимом `near-source`/`auto`.
+прогонов по умолчанию — в `_SCA_reports/<target-name>-<timestamp>/` на хосте
+сканера. Режимы `artifacts`, `near-source` и `auto` сохранены для совместимости.
 
 ### Компонент 1 — App (`resilient_updates/dashboard.py`)
 
 FastAPI-приложение, фабрика `create_app(artifacts_dir: Path) -> FastAPI`:
 
 - `GET /healthz` — liveness;
-- `GET /api/runs` — список текущего и сохранённых прогонов (`artifacts/runs/*`);
+- `GET /api/runs` — список текущего и сохранённых прогонов (`_SCA_reports/*`,
+  legacy `artifacts/runs/*`);
 - `GET /api/runs/{id}` — детали: provenance по каждому tool/layer, summary,
   `scanner_diff`, статус свежести БД/EPSS (через `enrichment.source_freshness`);
 - `GET /api/freshness` — текущий вердикт `evaluate_enrichment_policy`;

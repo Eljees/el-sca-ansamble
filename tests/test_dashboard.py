@@ -68,6 +68,18 @@ def test_list_runs_includes_saved_run_directories(tmp_path: Path):
     assert detail["checkpoint"]["stage"] == "final"
 
 
+def test_list_runs_includes_host_report_directories(tmp_path: Path):
+    artifacts = tmp_path / "artifacts"
+    saved = tmp_path / "_SCA_reports" / "app-20260707-120000"
+    _populate(saved)
+    (saved / "checkpoint.json").write_text(json.dumps({"stage": "final"}), encoding="utf-8")
+    runs = list_runs(artifacts)
+    assert [r["id"] for r in runs] == ["app-20260707-120000"]
+    detail = run_detail(artifacts, "app-20260707-120000")
+    assert detail is not None
+    assert detail["checkpoint"]["stage"] == "final"
+
+
 # --- endpoints (skip when fastapi/httpx absent) -----------------------------
 
 

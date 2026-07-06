@@ -215,8 +215,8 @@ s3-db-push:  ## Export current DB volumes and publish them to S3 latest/previous
 s3-db-pull:  ## Restore DB volumes from S3. SLOT=latest|previous (default latest).
 	./scripts/s3_storage.sh db-pull $(or $(SLOT),latest)
 
-s3-results-push:  ## Publish the latest archived scan run to S3. RUN=artifacts/runs/<id> optional.
-	./scripts/s3_storage.sh results-push $(RUN)
+s3-results-push:  ## Publish latest scan run to S3. RUN=_SCA_reports/<id>|artifacts/runs/<id> optional.
+	python -m resilient_updates.cli s3-results-push $(RUN)
 
 .PHONY: images-export images-import
 images-export:  ## Build/pull ALL images and save to artifacts/image-bundle/images.tar.

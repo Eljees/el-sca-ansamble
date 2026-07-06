@@ -60,7 +60,8 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
     """Return the available runs.
 
     The live layout exposes ``id="current"``.  Saved runs live under
-    ``artifacts/runs/<run-name>/`` and mirror the same artifact structure.
+    ``_SCA_reports/<run-name>/`` by default, with legacy snapshots still
+    discoverable under ``artifacts/runs/<run-name>/``.
     """
     out: list[dict[str, Any]] = []
     prov = _provenance(artifacts_dir)
@@ -77,28 +78,57 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
             }
         )
 
-    runs_root = artifacts_dir / "runs"
-    if runs_root.is_dir():
-        for run_dir in sorted((p for p in runs_root.iterdir() if p.is_dir()), reverse=True):
-            run_prov = _provenance(run_dir)
-            run_manifest = _safe_read_json(run_dir / "MANIFEST.json")
-            run_reports = _reports(run_dir)
-            out.append(
-                {
-                    "id": run_dir.name,
-                    "path": str(run_dir),
-                    "manifest_present": run_manifest is not None,
-                    "provenance_tools": sorted(run_prov.keys()),
-                    "report_count": len(run_reports),
-                }
-            )
+    for run_dir in _saved_run_dirs(artifacts_dir):
+        run_prov = _provenance(run_dir)
+        run_manifest = _safe_read_json(run_dir / "MANIFEST.json")
+        run_reports = _reports(run_dir)
+        out.append(
+            {
+                "id": run_dir.name,
+                "path": str(run_dir),
+                "manifest_present": run_manifest is not None,
+                "provenance_tools": sorted(run_prov.keys()),
+                "report_count": len(run_reports),
+            }
+        )
     return out
+
+
+def _saved_run_dirs(artifacts_dir: Path) -> list[Path]:
+    roots = (artifacts_dir.parent / "_SCA_reports", artifacts_dir / "runs")
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for run_dir in root.iterdir():
+            if not run_dir.is_dir():
+                continue
+            key = run_dir.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(run_dir)
+    return sorted(candidates, key=lambda p: p.name, reverse=True)
+
+
+def _resolve_run_dir(artifacts_dir: Path, run_id: str) -> Path | None:
+    if run_id == "current":
+        return artifacts_dir
+    for run_dir in _saved_run_dirs(artifacts_dir):
+        if run_dir.name == run_id:
+            return run_dir
+    return None
 
 
 def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
     """Full detail for a run, or ``None`` if unknown/absent."""
-    root = artifacts_dir if run_id == "current" else artifacts_dir / "runs" / run_id
-    if not root.is_dir() or not any(item["id"] == run_id for item in list_runs(artifacts_dir)):
+    root = _resolve_run_dir(artifacts_dir, run_id)
+    if (
+        root is None
+        or not root.is_dir()
+        or not any(item["id"] == run_id for item in list_runs(artifacts_dir))
+    ):
         return None
     return {
         "id": run_id,

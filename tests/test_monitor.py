@@ -88,8 +88,9 @@ def test_tail_log(tmp_path: Path):
 
 
 def test_latest_run_snapshot_reads_newest_checkpoint(tmp_path: Path):
-    old = tmp_path / "runs" / "old-20260706-100000"
-    new = tmp_path / "runs" / "new-20260706-110000"
+    artifacts = tmp_path / "artifacts"
+    old = artifacts / "runs" / "old-20260706-100000"
+    new = artifacts / "runs" / "new-20260706-110000"
     old.mkdir(parents=True)
     new.mkdir(parents=True)
     (old / "checkpoint.json").write_text(
@@ -102,12 +103,28 @@ def test_latest_run_snapshot_reads_newest_checkpoint(tmp_path: Path):
     )
     (new / "MANIFEST.json").write_text("{}", encoding="utf-8")
 
-    out = monitor.latest_run_snapshot(tmp_path)
+    out = monitor.latest_run_snapshot(artifacts)
 
     assert out is not None
     assert out["id"] == new.name
     assert out["checkpoint"]["stage"] == "report"
     assert out["manifest_present"] is True
+
+
+def test_latest_run_snapshot_reads_host_reports_dir(tmp_path: Path):
+    artifacts = tmp_path / "artifacts"
+    saved = tmp_path / "_SCA_reports" / "app-20260707-120000"
+    saved.mkdir(parents=True)
+    (saved / "checkpoint.json").write_text(
+        json.dumps({"stage": "report", "status": "done", "updated_at_utc": "2026-07-07T12:00:00Z"}),
+        encoding="utf-8",
+    )
+
+    out = monitor.latest_run_snapshot(artifacts)
+
+    assert out is not None
+    assert out["id"] == saved.name
+    assert out["checkpoint"]["stage"] == "report"
 
 
 # --- gather_status + render_text -----------------------------------------------

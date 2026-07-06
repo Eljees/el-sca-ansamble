@@ -84,3 +84,18 @@ def test_get_logger_returns_named_logger() -> None:
 
     logger = get_logger("test.el_sca")  # line 139
     assert logger.name == "test.el_sca"
+
+
+def test_setup_logging_file_rotation(tmp_path, monkeypatch) -> None:
+    _reset_root_logger()
+    monkeypatch.setenv("LOG_MAX_BYTES", "1024")
+    monkeypatch.setenv("LOG_BACKUP_COUNT", "2")
+    log_file = tmp_path / "logs" / "app.log"
+    buf = io.StringIO()
+    setup_logging(level="INFO", log_format="text", stream=buf, file_path=log_file)
+
+    logging.getLogger("t").info("file-line")
+
+    text = log_file.read_text(encoding="utf-8")
+    assert "file-line" in text
+    assert "file-line" in buf.getvalue()

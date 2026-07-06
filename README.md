@@ -36,6 +36,8 @@
   карточки показывают версии и время обновления баз, есть кнопка разового
   обновления баз. Запуск: `python -m resilient_updates.cli dashboard
   --repo-root . --port 8080` (см. секцию 5.1).
+- **Операторская инструкция GitHub/GitLab → GUI → update DB → scan → S3/logs:**
+  [`docs/operator-quickstart-ru.md`](docs/operator-quickstart-ru.md).
 - **Выгрузка проекта с базами на GitLab/Docker.** Текущие базы пакуются в
   data-образ и едут в Container Registry; на целевой машине разворачиваются
   одной командой. Скрипты `scripts/export_db_image.sh` /

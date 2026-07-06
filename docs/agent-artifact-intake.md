@@ -44,9 +44,10 @@ run_scan_async(target="D:\\dev\\el-sca-ansamble\\artifacts\\uploads\\<case>\\<fi
   Внимание: `pipeline_state.json` остаётся от ПОСЛЕДНЕГО запуска; `status=error`
   со старым `started_utc` — это история, а не текущая авария (сверяй даты).
 - `compose_logs(service=...)` — если стадия подозрительно долгая.
-- Отчёты: рядом с источником (artifact-mode `auto`/`near-source`) или
-  `artifacts/reports/final/`; сводные по кейсам — `_SCA_reports/<case>/`
-  (пишет run-scan.{sh,ps1}; в git не попадает).
+- Отчёты: основной snapshot — `_SCA_reports/<target-name>-<timestamp>/` на
+  хосте сканера (`artifact-mode host`, default); текущие рабочие отчёты также
+  остаются в `artifacts/reports/final/`. Режимы `auto`/`near-source` доступны
+  для специальных запусков.
 - В резюме для человека: total/critical/high per tool + расхождения между
   сканерами + ссылка на HTML.
 

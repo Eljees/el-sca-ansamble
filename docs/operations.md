@@ -112,7 +112,7 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 | `-Clean` | switch | off | Удалить предыдущие артефакты |
 | `-SbomScan` | switch | off | cve-bin-tool читает `cyclonedx.json` вместо бинарного скана |
 | `-CveBinToolTimeout` | int | `1800` | Таймаут cve-bin-tool в секундах |
-| `-ArtifactMode` | ValidateSet | `auto` | Куда сохранять snapshot прогона: `artifacts`, `near-source`, `auto` |
+| `-ArtifactMode` | ValidateSet | `host` | Куда сохранять snapshot прогона: `host`, `artifacts`, `near-source`, `auto` |
 
 Если `-CaseId` / `--case-id` не задан, runner пытается взять номер из пути к цели по
 шаблону `CYBERSEC-\d+`. Если такого фрагмента нет, в отчёте будет `CYBERSEC-UNKNOWN`;
@@ -144,7 +144,7 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 
 - MD/HTML отчёты остаются рядом с исходным файлом;
 - `MANIFEST.json`, `checkpoint.json`, SBOM, raw reports, provenance и логи
-  копируются в `<project>-<timestamp>/`;
+  копируются в `_SCA_reports/<target-name>-<timestamp>/` на хосте сканера;
 - режим `auto` пишет рядом с исходником, если это возможно, иначе в
   `artifacts/runs/`;
 - полный `artifacts/extracted/current` не копируется по умолчанию; включайте

@@ -95,6 +95,7 @@ incoming/images.tar
 
 # Per-run scan log + DB status snapshots (runtime output, not source).
 artifacts/run-scan.log
+artifacts/logs/
 artifacts/db_status/
 
 # Session build/bootstrap log files (bootstrap.sh, update-db.sh write these here).

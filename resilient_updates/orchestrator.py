@@ -509,9 +509,9 @@ class JobRegistry:
         # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
         # resume = skip stages already completed for the SAME target+tools
         # (artifacts/pipeline_state.json — written by every previous run).
-        # "auto" tries near-source (sibling dir named <pkg>-<timestamp>) when the
-        # target path exists on disk; falls back to artifacts/runs/ otherwise.
-        mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "auto")
+        # "host" saves into _SCA_reports/<target>-<timestamp> on the scanner
+        # host; operators can still opt into "auto"/"near-source"/"artifacts".
+        mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "host")
         run_dir = resolve_run_dir(
             artifacts_dir=self.artifacts_dir,
             target_host=target_host,
@@ -582,6 +582,7 @@ class JobRegistry:
         log_path = self.repo_root / "artifacts" / "db_status" / "updates" / f"{ts}_{safe}.log"
         job.attach_log(log_path, header=self._update_log_header(tgt, env))
         job.feed_line(f"# лог пишется в {log_path}")
+        self._prune_update_logs(log_path.parent)
 
         # Each updater runs as its own SEQUENTIAL `compose run --rm` step.
         # NOT `up --abort-on-container-exit` of the whole profile: that aborts
@@ -736,6 +737,22 @@ class JobRegistry:
             "# " + ("NVD_API_KEY=set" if env.get("NVD_API_KEY") else "NVD_API_KEY=(unset)"),
             "# ----------------------------",
         ]
+
+    @staticmethod
+    def _prune_update_logs(log_dir: Path) -> None:
+        try:
+            keep = int(os.environ.get("EL_SCA_UPDATE_LOG_KEEP", "50") or "50")
+        except ValueError:
+            keep = 50
+        if keep <= 0:
+            return
+        try:
+            logs = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            return
+        for old in logs[keep:]:
+            with contextlib.suppress(OSError):
+                old.unlink()
 
     def _run_stream(self, job: Job, cmd: list[str], env: dict[str, str]) -> int:
         """Run one command to completion, streaming stdout into the job log;
@@ -1001,6 +1018,7 @@ class JobRegistry:
             self._checkpoint(job, key, "done" if rc in ok_codes else "error")
 
         self._checkpoint(job, "final", "done")
+        self._publish_results_if_enabled(job)
         # Stop the lingering grype-static dependency container (best effort).
         self._run_stream(job, [*compose, "--profile", "scan", "down", "--remove-orphans"], sc_env)
         job.finalize()
@@ -1035,6 +1053,20 @@ class JobRegistry:
             job.feed_line(f"checkpoint {stage}:{status} -> {job.run_dir / 'checkpoint.json'}")
         except Exception as exc:  # pragma: no cover - defensive
             job.feed_line(f"WARN: checkpoint failed: {exc!r}")
+
+    def _publish_results_if_enabled(self, job: Job) -> None:
+        if not job.run_dir:
+            return
+        from .s3_publish import env_enabled, publish_results
+
+        if not env_enabled("EL_SCA_RESULTS_TO_S3"):
+            return
+        job.feed_line("# s3: публикую snapshot результатов…")
+        try:
+            payload = publish_results(job.run_dir, repo_root=self.repo_root, compose=self.compose)
+            job.feed_line("# s3: опубликовано — " + ", ".join(payload["prefixes"]))
+        except Exception as exc:  # pragma: no cover - docker/S3 dependent
+            job.feed_line(f"# s3: WARN publish failed: {exc}")
 
 
 def sse_stream(job: Job, poll_timeout: float = 1.0) -> Iterator[str]:

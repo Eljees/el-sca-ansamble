@@ -7,7 +7,7 @@
 #   ./scripts/s3_storage.sh db-push
 #   ./scripts/s3_storage.sh db-pull [latest|previous]
 #   ./scripts/s3_storage.sh cve-source-push <nvd|osv|gad|redhat|epss|purl2cpe|rsd> <path>
-#   ./scripts/s3_storage.sh results-push [artifacts/runs/<run-id>]
+#   ./scripts/s3_storage.sh results-push [_SCA_reports/<run-id>|artifacts/runs/<run-id>]
 #   ./scripts/s3_storage.sh ls [prefix]
 set -euo pipefail
 
@@ -208,11 +208,12 @@ mc mirror --overwrite --remove \"/workspace/$stage\" \"\$EL_SCA_S3_ALIAS/\$EL_SC
 }
 
 newest_run_dir() {
-  if [[ ! -d artifacts/runs ]]; then
-    return 1
-  fi
-  find artifacts/runs -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null \
-    | sort -nr | awk 'NR==1 {print $2}'
+  {
+    for root in _SCA_reports artifacts/runs; do
+      [[ -d "$root" ]] || continue
+      find "$root" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null || true
+    done
+  } | sort -nr | awk 'NR==1 {print $2}'
 }
 
 results_push() {
@@ -221,7 +222,7 @@ results_push() {
     run_dir="$(newest_run_dir || true)"
   fi
   [[ -n "$run_dir" && -d "$run_dir" ]] || {
-    echo "No run directory found. Pass artifacts/runs/<run-id> explicitly." >&2
+    echo "No run directory found. Pass _SCA_reports/<run-id> or artifacts/runs/<run-id> explicitly." >&2
     exit 2
   }
 

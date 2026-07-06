@@ -90,6 +90,31 @@ def test_archive_current_run_artifacts_mode(tmp_path: Path) -> None:
     assert (run_dir / "MANIFEST.json").is_file()
 
 
+def test_resolve_run_dir_host_mode_uses_scanner_host_reports_dir(tmp_path: Path) -> None:
+    run_dir = resolve_run_dir(
+        artifacts_dir=tmp_path / "artifacts",
+        target_host=str(tmp_path / "input" / "some app.tar.gz"),
+        case_id=None,
+        mode="host",
+        timestamp=0,
+    )
+    assert run_dir.parent == tmp_path / "_SCA_reports"
+    assert run_dir.name.startswith("some-app.tar-19700101-")
+
+
+def test_archive_current_run_default_is_host_reports_dir(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    _seed_artifacts(artifacts)
+    result = archive_current_run(
+        artifacts_dir=artifacts,
+        target_host=str(tmp_path / "input.zip"),
+        case_id="CASE-1",
+    )
+    run_dir = Path(result["run_dir"])
+    assert run_dir.parent == tmp_path / "_SCA_reports"
+    assert (run_dir / "MANIFEST.json").is_file()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # project_name_from_target — no target_host (line 69)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,20 +125,19 @@ def test_project_name_from_target_none_returns_scan() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# resolve_run_dir — invalid mode clamped to artifacts (line 99),
-# near-source with nonexistent target (lines 105-106)
+# resolve_run_dir — invalid mode clamped to host,
+# near-source with nonexistent target
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_resolve_run_dir_invalid_mode_falls_back_to_artifacts(tmp_path: Path) -> None:
+def test_resolve_run_dir_invalid_mode_falls_back_to_host(tmp_path: Path) -> None:
     run_dir = resolve_run_dir(
         artifacts_dir=tmp_path / "artifacts",
         target_host=None,
         mode="INVALID-MODE",  # line 99 clamped
         timestamp=0,
     )
-    assert run_dir.parent.name == "runs"
-    assert run_dir.parent.parent == tmp_path / "artifacts"
+    assert run_dir.parent == tmp_path / "_SCA_reports"
 
 
 def test_resolve_run_dir_near_source_nonexistent_target_returns_parent(tmp_path: Path) -> None:

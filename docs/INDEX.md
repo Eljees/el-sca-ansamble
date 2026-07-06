@@ -6,12 +6,13 @@ need to do; each section is ordered by depth (read top-to-bottom).
 ## I need to scan an artefact (operator)
 
 1. `../README.md` — what the project is and how the pipeline flows.
-2. `../QUICK_START.md` — fastest path from clone to a first scan.
-3. `operations.md` — exact commands for full and partial cycles.
-4. `operations-guide.md` — Russian operator walkthrough with troubleshooting notes.
-5. `agent-artifact-intake.md` — AI-agent runbook: intake (mail/browser) → uploads → async scan → report + health-watch.
-6. `windows-powershell.md` — Windows-specific notes.
-7. `airgap.md` — running without any internet access.
+2. `operator-quickstart-ru.md` — Russian operator path: clone GitHub/GitLab → GUI → DB update → scan → S3/logs.
+3. `../QUICK_START.md` — fastest path from clone to a first scan.
+4. `operations.md` — exact commands for full and partial cycles.
+5. `operations-guide.md` — Russian operator walkthrough with troubleshooting notes.
+6. `agent-artifact-intake.md` — AI-agent runbook: intake (mail/browser) → uploads → async scan → report + health-watch.
+7. `windows-powershell.md` — Windows-specific notes.
+8. `airgap.md` — running without any internet access.
 
 ## I need to deploy or operate it (DevOps)
 
@@ -23,10 +24,11 @@ need to do; each section is ordered by depth (read top-to-bottom).
 6. `runbook.md` — what to do when things break.
 7. `proxy.md` — quick reference for proxy configuration.
 8. `s3-storage.md` — SeaweedFS/S3 MVP for DB snapshots and scan result publishing.
-9. `deployment-example.md` — worked example of one org's full
+9. `operator-quickstart-ru.md` — user-facing GitHub/GitLab + GUI + S3/logging runbook.
+10. `deployment-example.md` — worked example of one org's full
    deployment (host-specific values — treat as a template, not canon).
-10. `remote-analysis.md` — exact repeatable remote-machine sequence for DB refresh + full scan + GUI check.
-11. `ubuntu-from-github.md` — the clean GitHub/Docker Hub install path on Ubuntu, without bundled databases.
+11. `remote-analysis.md` — exact repeatable remote-machine sequence for DB refresh + full scan + GUI check.
+12. `ubuntu-from-github.md` — the clean GitHub/Docker Hub install path on Ubuntu, without bundled databases.
 
 ## I need to review security posture
 

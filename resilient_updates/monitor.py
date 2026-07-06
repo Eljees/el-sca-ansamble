@@ -112,16 +112,16 @@ def tail_log(artifacts_dir: str | Path, lines: int = _LOG_TAIL_LINES) -> list[st
 
 
 def latest_run_snapshot(artifacts_dir: str | Path) -> dict[str, Any] | None:
-    """Newest saved run snapshot under ``artifacts/runs``.
+    """Newest saved run snapshot.
 
-    Near-source snapshots intentionally live outside ``artifacts/`` and cannot
-    be discovered globally; dashboard-launched and POSIX/PowerShell fallback
-    snapshots under ``artifacts/runs`` are listed here for the monitor panel.
+    Host snapshots live under ``_SCA_reports`` next to ``artifacts/``.  Legacy
+    snapshots under ``artifacts/runs`` are still listed for compatibility.
     """
-    runs_root = Path(artifacts_dir) / "runs"
-    if not runs_root.is_dir():
-        return None
-    candidates = [p for p in runs_root.iterdir() if p.is_dir()]
+    artifacts = Path(artifacts_dir)
+    candidates: list[Path] = []
+    for runs_root in (artifacts.parent / "_SCA_reports", artifacts / "runs"):
+        if runs_root.is_dir():
+            candidates.extend(p for p in runs_root.iterdir() if p.is_dir())
     if not candidates:
         return None
     latest = max(candidates, key=lambda p: p.stat().st_mtime)
