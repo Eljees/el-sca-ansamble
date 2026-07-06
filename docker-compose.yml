@@ -569,6 +569,59 @@ services:
       - ./artifacts:/workspace/artifacts
     networks: [scanner-net]
 
+  # ── Internal S3-compatible storage (MVP) ─────────────────────────────────
+  #
+  # SeaweedFS gives the stack one lightweight S3-compatible bucket for scanner
+  # DB snapshots and scan results.  This is intentionally independent from the
+  # scanner update flow: scripts/s3_storage.sh publishes/pulls already-validated
+  # DB bundles and archived scan runs through the S3 API.
+  #
+  #   docker compose --profile storage up -d seaweedfs
+  #   ./scripts/s3_storage.sh init
+  #   ./scripts/s3_storage.sh db-push
+  #   ./scripts/s3_storage.sh results-push
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}
+    profiles: ["storage"]
+    restart: unless-stopped
+    command:
+      [
+        "server",
+        "-dir=/data",
+        "-s3",
+        "-s3.port=8333",
+        "-s3.config=/etc/seaweedfs/s3.json",
+        "-ip=seaweedfs",
+        "-ip.bind=0.0.0.0",
+      ]
+    ports:
+      - "127.0.0.1:${EL_SCA_S3_PORT:-8333}:8333"
+    volumes:
+      - ./configs/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      - seaweedfs-data:/data
+    networks: [scanner-net]
+
+  s3-client:
+    image: minio/mc:${MINIO_MC_VERSION:-latest}
+    profiles: ["storage-tools"]
+    depends_on:
+      seaweedfs:
+        condition: service_started
+    working_dir: /workspace
+    entrypoint: ["/bin/sh", "-lc"]
+    environment:
+      EL_SCA_S3_ENDPOINT: ${EL_SCA_S3_ENDPOINT:-http://seaweedfs:8333}
+      EL_SCA_S3_BUCKET: ${EL_SCA_S3_BUCKET:-el-sca}
+      EL_SCA_S3_ACCESS_KEY: ${EL_SCA_S3_ACCESS_KEY:-el-sca}
+      EL_SCA_S3_SECRET_KEY: ${EL_SCA_S3_SECRET_KEY:-el-sca-secret}
+      EL_SCA_S3_ALIAS: ${EL_SCA_S3_ALIAS:-elsca}
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+      - ./incoming:/workspace/incoming
+    networks: [scanner-net]
+
   # ── Network sidecars (opt-in, profile "proxy") ───────────────────────────
   #
   # See docs/network-design.md.  These sidecars form the chain
@@ -708,6 +761,7 @@ volumes:
   grype-cache:
   cve-bin-tool-cache:
   internal-mirror-data:
+  seaweedfs-data:
 
 networks:
   scanner-net:

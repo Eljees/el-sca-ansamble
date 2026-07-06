@@ -22,10 +22,11 @@ need to do; each section is ordered by depth (read top-to-bottom).
 5. `distribution.md` — image distribution / receiver setup.
 6. `runbook.md` — what to do when things break.
 7. `proxy.md` — quick reference for proxy configuration.
-8. `deployment-example.md` — worked example of one org's full
+8. `s3-storage.md` — SeaweedFS/S3 MVP for DB snapshots and scan result publishing.
+9. `deployment-example.md` — worked example of one org's full
    deployment (host-specific values — treat as a template, not canon).
-9. `remote-analysis.md` — exact repeatable remote-machine sequence for DB refresh + full scan + GUI check.
-10. `ubuntu-from-github.md` — the clean GitHub/Docker Hub install path on Ubuntu, without bundled databases.
+10. `remote-analysis.md` — exact repeatable remote-machine sequence for DB refresh + full scan + GUI check.
+11. `ubuntu-from-github.md` — the clean GitHub/Docker Hub install path on Ubuntu, without bundled databases.
 
 ## I need to review security posture
 
@@ -80,6 +81,7 @@ need to do; each section is ordered by depth (read top-to-bottom).
 - `failure-modes.md` — failure classification used by `fallback.py`.
 - `reproducibility.md` — what "reproducible" means here.
 - `custom-sources.md` — how to declare your own upstream sources.
+- `s3-storage.md` — internal object storage layout for DB bundles and scan results.
 
 ## Tools
 

@@ -27,6 +27,8 @@ artifacts/reports/*
 artifacts/provenance/*
 artifacts/sbom/*
 artifacts/uploads/*
+# S3 publish/pull staging. Contains DB archives and copied run bundles.
+artifacts/s3-staging/
 # DB bundle export staging (db-exporter) and import staging (db-importer).
 # These hold multi-GB vulnerability-DB tarballs and must never be committed.
 artifacts/db-image/

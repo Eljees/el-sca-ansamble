@@ -205,6 +205,19 @@ db-push-image:  ## Export + push the DB data image to the registry (DB_IMAGE=reg
 db-import-image:  ## Pull the DB data image and restore volumes (DB_IMAGE=registry/.../db-data:tag).
 	./scripts/import_db_image.sh
 
+.PHONY: s3-init s3-db-push s3-db-pull s3-results-push
+s3-init:  ## Start SeaweedFS and create the S3 bucket.
+	./scripts/s3_storage.sh init
+
+s3-db-push:  ## Export current DB volumes and publish them to S3 latest/previous.
+	./scripts/s3_storage.sh db-push
+
+s3-db-pull:  ## Restore DB volumes from S3. SLOT=latest|previous (default latest).
+	./scripts/s3_storage.sh db-pull $(or $(SLOT),latest)
+
+s3-results-push:  ## Publish the latest archived scan run to S3. RUN=artifacts/runs/<id> optional.
+	./scripts/s3_storage.sh results-push $(RUN)
+
 .PHONY: images-export images-import
 images-export:  ## Build/pull ALL images and save to artifacts/image-bundle/images.tar.
 	./scripts/export_images.sh

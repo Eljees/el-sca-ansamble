@@ -20,6 +20,7 @@
 | `deploy_light.sh` | Deploy a light bundle on a Linux target: load images, restore DBs, set strict offline mode. Requires NO network. | Yes | — |
 | `export_db_image.sh` | Snapshot current scanner DB volumes into a data image (`Dockerfile.db-data`). With `--push` also pushes to registry. Used by `make db-export-image`. | Yes | — |
 | `import_db_image.sh` | Restore scanner DB volumes from a data image on a fresh host. Used by `make db-import-image`. | Yes | — |
+| `s3_storage.sh` | SeaweedFS/S3 MVP: create bucket, publish/pull DB snapshots (`latest`/`previous`), publish archived scan runs, and upload per-source cve-bin-tool feeds. | Yes | — |
 | `cvebt_export_bundle.sh` | Export cve-bin-tool DB cache into `artifacts/cve-bin-tool-bundles/` (`.tar.zst` + manifest + sha256) for offline transport. | Yes | — |
 | `cvebt_import_bundle.sh` | Import a previously exported cve-bin-tool DB bundle, verify sha256, and activate via DB audit policy. | Yes | — |
 | `diagnose_cvebt_update.sh` | Capability and optional network diagnostics for cve-bin-tool update modes (`api2/json-mirror/json-nvd`). | Yes | — |
