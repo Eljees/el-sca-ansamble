@@ -150,6 +150,13 @@ Offline mode depends on prewarmed caches or internal mirrors. For Grype, that me
 - полный `artifacts/extracted/current` не копируется по умолчанию; включайте
   `EL_SCA_ARCHIVE_EXTRACTED_TREE=1` только для тяжёлого debug/resume-сценария.
 
+Для длинных прогонов есть и периодические checkpoints: dashboard/host runner
+по `EL_SCA_CHECKPOINT_INTERVAL_SECONDS` (по умолчанию 3600) пересохраняет
+`checkpoint.json` и актуальный snapshot evidence в `run_dir`. Монитор
+(`python -m resilient_updates.cli monitor`, `GET /api/monitor`, GUI-панель
+«Монитор · контейнеры и прогресс») показывает текущий этап, контейнеры и
+последний сохранённый snapshot.
+
 ### Linux / Shell (legacy)
 
 ```sh

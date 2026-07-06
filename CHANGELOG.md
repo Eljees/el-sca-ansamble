@@ -6,6 +6,23 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `AGENTS.md`: зафиксированы команды проверки, cleanup policy для runtime
+  артефактов и правило держать GitHub/GitLab sync отдельным проходом.
+
+### Changed
+
+- `monitor.py` / dashboard GUI: `GET /api/monitor` теперь включает
+  `latest_run`, а панель «Монитор · контейнеры и прогресс» показывает
+  последний сохранённый snapshot/checkpoint текущего контура.
+- `orchestrator.py`: периодический checkpoint dashboard/host scan больше не
+  ограничивается записью `checkpoint.json`; теперь он сохраняет реальный
+  per-run snapshot evidence через `snapshot_artifacts()`.
+- `docs/INDEX.md`, `docs/audit/00-overview.md`, `docs/audit/30-tests.md`,
+  `docs/architecture.md`, `docs/operations.md`: актуализированы текущие
+  указатели, test-count и описания snapshot/monitor/CI overlay behaviour.
+
 ### Fixed
 
 - `cve_db_audit.py`: извлечён `_is_windows() -> bool` хелпер; тест

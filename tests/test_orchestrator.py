@@ -583,14 +583,18 @@ def test_job_maybe_periodic_checkpoint_noop_without_run_dir():
 
 
 def test_job_maybe_periodic_checkpoint_writes_when_interval_elapsed(tmp_path):
-    """With run_dir + elapsed interval → writes checkpoint.json."""
+    """With run_dir + elapsed interval → snapshots evidence and writes checkpoint.json."""
     run_dir = tmp_path / "run"
     run_dir.mkdir()
+    (tmp_path / "reports" / "final").mkdir(parents=True)
+    (tmp_path / "reports" / "final" / "report.md").write_text("# partial", encoding="utf-8")
     job = Job("scan", SCAN_STAGES, artifacts_dir=tmp_path, run_dir=run_dir)
     job.begin_stage("grype")
     job._last_checkpoint_at = 0.0  # force interval elapsed
     job.maybe_periodic_checkpoint()
     assert (run_dir / "checkpoint.json").exists()
+    assert (run_dir / "reports" / "final" / "report.md").exists()
+    assert job.snapshot()["checkpoint_count"] == 1
 
 
 # ---------------------------------------------------------------------------

@@ -54,7 +54,7 @@ el-sca-ansamble — контейнерный оркестратор для SCA (
 | `vex.py` | Получение VEX-документов через fallback-pipeline и атомарная публикация в кэш Trivy (ADR-0003) |
 | `run_layout.py` | Per-run артефактная директория, `checkpoint.json`, периодические снапшоты в ходе скана |
 | `pipeline_state.py` | Атомарный чекпоинт `artifacts/pipeline_state.json`: begin/stage-start/stage-end/finish; resume-логика (`completed_stages`, `should_skip`); `summarize` для монитора |
-| `monitor.py` | Монитор комплекса: `gather_status` (compose ps + pipeline + DB + лог), `render_text`; consumer'ы — CLI `monitor`, `GET /api/monitor`, MCP `monitor` |
+| `monitor.py` | Монитор комплекса: `gather_status` (compose ps + pipeline + DB + лог + latest saved run snapshot), `render_text`; consumer'ы — CLI `monitor`, `GET /api/monitor`, MCP `monitor` |
 
 #### CLI subcommands
 
@@ -211,7 +211,7 @@ GitLab зеркалирует GitHub: те же jobs, те же правила �
 | `lint-yaml` | lint | yamllint strict | ✅ да |
 | `lint-powershell` | lint | PSScriptAnalyzer (Error-severity) для `scripts/windows/` | ✅ да |
 | `lint-versions` | lint | версии `versions.env` = `pyproject.toml` = `docker-compose.yml` fallback | ✅ да |
-| `compose-config` | build | `docker compose config -q` (base + windows overlay) | ✅ да |
+| `compose-config` | build | `docker compose config -q` (base + windows + linux + offline overlays) | ✅ да |
 | `docker-build` | build | `docker compose build` (матрица 5 сервисов) | ✅ да (needs lint-docker) |
 | `smoke` | test | pytest -m smoke | ✅ да (needs lint-python) |
 | `pytest` | test | pytest -m "not integration" + coverage ≥ 88% на py3.12 | ✅ да (needs smoke) |
@@ -249,9 +249,16 @@ artifacts/
 │   ├── cve-bin-tool/        # raw JSON cve-bin-tool
 │   └── final/               # итоговые Markdown-отчёты
 ├── provenance/              # provenance JSON по каждому инструменту
+├── runs/                    # сохранённые per-run snapshots (`<project>-<timestamp>/`)
+├── pipeline_state.json      # checkpoint состояния этапов для resume/monitor
 └── extracted/
     └── current/             # результат распаковки + extraction_manifest.json
 ```
+
+При dashboard/host-run checkpoints пишутся не только в `pipeline_state.json`,
+но и в per-run директорию: `checkpoint.json` + сохранённые evidence файлы в
+`artifacts/runs/<project>-<timestamp>/` или рядом с исходным артефактом в
+режиме `near-source` / `auto`.
 
 ---
 

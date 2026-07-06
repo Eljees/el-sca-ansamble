@@ -1,7 +1,7 @@
 > [!WARNING]
 > Snapshot of 2026-05-25 and is OUTDATED as a defect register: D1-D18 are closed (except D13),
-> the suite has grown to 829 tests. For current state see the latest NNN-analysis/NNN-fixups
-> in docs/audit/ (now: 310-analysis-2026-06-13.md).
+> the suite has grown to 873 tests. For current state see the latest NNN-analysis/NNN-fixups
+> in docs/audit/ (now: 640-analysis-2026-07-05.md).
 
 # Audit 2026-05-25 — Архитектура и связность
 
@@ -12,10 +12,11 @@
 - `resilient_updates/reporting.py:26-39` — `_sha256_file`, `_sha512_file`, `_read_json`.
 - `resilient_updates/run_summary.py:57-63` — собственная `_short_hash` + parsing JSON.
 - `resilient_updates/extractor.py` — `_sha256_member`, `_strip_archive_suffix`.
-- `resilient_updates/scanner_diff.py:38` — комментарий «mirror reporting._read_json», но реально функция переписана независимо.
 
 Любое изменение алгоритма хеширования или формата манифестов нужно
-делать в трёх местах. Это уже один раз привело к расхождению: `scanner_diff.py` парсит JSON-структуру не идентично `reporting.py`, и для одного и того же артефакта результаты могут различаться.
+делать в нескольких местах. Часть DRY-долга уже закрыта: `scanner_diff.py` теперь
+использует общий `_io.first_json` и `normalize_severity` (см. аудит 640), но
+оставшиеся локальные hash/path helpers всё ещё стоит свести к `_io.py`.
 
 **Предложение**: новый модуль `resilient_updates/_io.py` с:
 
@@ -185,7 +186,7 @@ WIREGUARD_VERSION=latest
 
 ## 8. Сводка по архитектурным темам
 
-1. **DRY** — общий `_io.py` + `RetryPolicy` + общий logging устранит ~60 % повторов.
+1. **DRY** — продолжить вынос общих helpers в `_io.py`; `RetryPolicy` и общий logging уже частично закрыли ранний долг.
 2. **Single source of truth** — `versions.env`, `run_manifest.json`, единый CLI.
 3. **Безопасность** — рут-пользователи в Dockerfile.* и tmpfs-конфиги.
 4. **Provenance** — корневой манифест связывает 8 файлов одного прогона.

@@ -479,6 +479,7 @@ def test_api_monitor_shape(tmp_path: Path, monkeypatch):
     assert body["pipeline"]["present"] is True
     assert body["pipeline"]["current_stage"] == "extract"
     assert body["containers"]["ok"] is True
+    assert "latest_run" in body
 
 
 def test_api_scan_resume_no_checkpoint_is_409(tmp_path: Path):

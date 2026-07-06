@@ -1,14 +1,27 @@
 > [!WARNING]
 > Snapshot of 2026-05-25 and is OUTDATED as a defect register: D1-D18 are all closed
-> (D13 closed in commit 2d801a0), the suite has grown to 868 tests. For current state see
-> the latest `NNN-analysis-*.md` file in docs/audit/.
+> (D13 closed in commit 2d801a0), the suite has grown to 874 tests, CI now validates
+> compose base + windows + linux + offline overlays, and dashboard-run checkpoints
+> create real per-run snapshots. For current state see `650-analysis-2026-07-06.md`.
 
 # Audit 2026-05-25 — Executive Summary
 
 > Этот файл — точка входа в результаты независимого аудита репозитория
-> `el-sca-ansamble` на коммите `7a04438` (ahead 1 от `origin/master`).
+> `el-sca-ansamble` на коммите `7a04438` (historical baseline snapshot).
 > Детали по категориям — в соседних файлах `10-defects.md`,
 > `20-architecture.md`, `30-tests.md`, `40-tooling-docs.md`.
+
+## 0. Current status (2026-07-06)
+
+Этот historical summary по-прежнему полезен как карта тем, но его исходные
+числа и часть приоритетов уже устарели. На текущем срезе:
+
+- full local gate зелёный: `ruff`, `compileall`, `pytest` (`874 passed`);
+- `compose-config` в CI проверяет `base`, `windows`, `linux`, `offline`;
+- dashboard/monitor показывает последний сохранённый snapshot, а периодические
+  checkpoints теперь сохраняют evidence в `run_dir`, а не только state-файл;
+- runtime cleanup оформлен как отдельный проход: live `artifacts/` можно
+  чистить после snapshot без потери сохранённых прогонов.
 
 ## 1. Контекст
 
@@ -47,6 +60,10 @@ fail-fast, `grype-static` имеет `healthcheck` и `depends_on`). CLI и вс
 - `Makefile` и `requirements.in` присутствуют.
 
 ## 4. Топ-10 приоритетов на устранение
+
+Ниже — исходный приоритетный список baseline-аудита. Часть пунктов уже
+закрыта или снижена по важности; актуальный carry-forward смотрите в
+`650-analysis-2026-07-06.md`.
 
 1. **NVD API-ключи в `.env`** в plaintext в Yandex Disk-папке. Файл синхронизируется в облако. Ротировать оба ключа и оставить значения только в `.env.local` ([10-defects.md §1](10-defects.md#1-секреты-в-env)).
 2. ~~`db_policy` игнорируется~~ — **false positive**, перепроверка подтвердила, что `cli.py:384-395 → activate_best_cve_bin_tool_db → _policy_allows_status` работают корректно. Подробнее: [10-defects.md §2](10-defects.md#2-db_policy-игнорируется--false-positive-исключено-из-плана).

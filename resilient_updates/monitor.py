@@ -111,6 +111,41 @@ def tail_log(artifacts_dir: str | Path, lines: int = _LOG_TAIL_LINES) -> list[st
     return [ln.rstrip() for ln in text.splitlines()[-lines:]]
 
 
+def latest_run_snapshot(artifacts_dir: str | Path) -> dict[str, Any] | None:
+    """Newest saved run snapshot under ``artifacts/runs``.
+
+    Near-source snapshots intentionally live outside ``artifacts/`` and cannot
+    be discovered globally; dashboard-launched and POSIX/PowerShell fallback
+    snapshots under ``artifacts/runs`` are listed here for the monitor panel.
+    """
+    runs_root = Path(artifacts_dir) / "runs"
+    if not runs_root.is_dir():
+        return None
+    candidates = [p for p in runs_root.iterdir() if p.is_dir()]
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    checkpoint = latest / "checkpoint.json"
+    manifest = latest / "MANIFEST.json"
+    try:
+        checkpoint_data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        checkpoint_data = None
+    try:
+        manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        manifest_data = None
+    return {
+        "id": latest.name,
+        "path": str(latest),
+        "checkpoint": checkpoint_data,
+        "manifest_present": manifest_data is not None,
+        "updated_at_utc": (checkpoint_data or {}).get("updated_at_utc")
+        if isinstance(checkpoint_data, dict)
+        else None,
+    }
+
+
 def gather_status(artifacts_dir: str | Path, repo_root: str | Path | None = None) -> dict[str, Any]:
     """One self-contained snapshot for every monitor consumer."""
     artifacts = Path(artifacts_dir)
@@ -120,6 +155,7 @@ def gather_status(artifacts_dir: str | Path, repo_root: str | Path | None = None
         "containers": list_containers(root),
         "db_status": summarize_db_status(artifacts),
         "log_tail": tail_log(artifacts),
+        "latest_run": latest_run_snapshot(artifacts),
     }
 
 
@@ -186,4 +222,13 @@ def render_text(status: dict[str, Any]) -> str:
     if tail:
         lines.append("── Лог (хвост) ───────────────────────────────")
         lines.extend(f"   {ln}" for ln in tail)
+    latest = status.get("latest_run")
+    if latest:
+        lines.append("── Последний snapshot ────────────────────────")
+        lines.append(f"   {latest.get('id')}: {latest.get('path')}")
+        chk = latest.get("checkpoint") if isinstance(latest, dict) else None
+        if isinstance(chk, dict):
+            lines.append(
+                f"   stage={chk.get('stage')} status={chk.get('status')} updated={chk.get('updated_at_utc')}"
+            )
     return "\n".join(lines)

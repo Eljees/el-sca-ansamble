@@ -35,7 +35,7 @@ from queue import Empty, Queue
 from typing import Any, ClassVar
 
 from . import pipeline_state
-from .run_layout import resolve_run_dir, snapshot_artifacts, write_checkpoint
+from .run_layout import resolve_run_dir, snapshot_artifacts
 
 
 def _load_dotenv(env: dict[str, str], dotenv_path: Path) -> None:
@@ -202,6 +202,8 @@ class Job:
             int(os.environ.get("EL_SCA_CHECKPOINT_INTERVAL_SECONDS", "3600") or "3600"),
         )
         self._last_checkpoint_at = self.started_at
+        self._checkpoint_count = 0
+        self._last_checkpoint_path: Path | None = None
 
     # -- on-disk transcript -------------------------------------------------
     def attach_log(self, path: Path, header: list[str] | None = None) -> None:
@@ -378,6 +380,12 @@ class Job:
             "finished_at": self.finished_at,
             "run_dir": str(self.run_dir) if self.run_dir else "",
             "log_path": str(self.log_path) if self.log_path else "",
+            "checkpoint_interval_seconds": self._checkpoint_interval,
+            "checkpoint_count": self._checkpoint_count,
+            "last_checkpoint_path": str(self._last_checkpoint_path) if self._last_checkpoint_path else "",
+            "next_checkpoint_due_at": (
+                self._last_checkpoint_at + self._checkpoint_interval if self.run_dir else None
+            ),
         }
 
     def subscribe(self) -> Queue[dict[str, Any] | None]:
@@ -438,12 +446,18 @@ class Job:
         if now - self._last_checkpoint_at < self._checkpoint_interval:
             return
         self._last_checkpoint_at = now
-        write_checkpoint(
+        stage = self.current_stage_key()
+        snapshot_artifacts(
+            self.artifacts_dir,
             self.run_dir,
-            stage=self.current_stage_key(),
+            target_host=self.target,
+            target_container="/scan-target" if self.kind == "scan" else None,
+            stage=stage,
             status=self.status,
-            artifacts_dir=self.artifacts_dir,
         )
+        with self._lock:
+            self._checkpoint_count += 1
+            self._last_checkpoint_path = self.run_dir / "checkpoint.json"
 
 
 # ── Registry + subprocess launcher ──────────────────────────────────────────

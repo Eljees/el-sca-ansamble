@@ -533,6 +533,7 @@ _GUI_HTML = """<!doctype html>
   <section class="panel">
     <h2>Монитор · контейнеры и прогресс</h2>
     <div id="mon-pipeline" class="muted">загрузка…</div>
+    <div id="mon-snapshot" style="margin-top:10px"></div>
     <div id="mon-containers" style="margin-top:10px"></div>
   </section>
 
@@ -831,6 +832,21 @@ async function loadMonitor(){
       "прерванный прогон: " + (p.target||"") + " — продолжить с последнего завершённого этапа";
   }
   $("#mon-pipeline").innerHTML = html;
+  const latest = m.latest_run || null;
+  let shot = "";
+  if(latest){
+    const chk = latest.checkpoint || {};
+    const bits = [];
+    bits.push("<b>snapshot:</b> " + esc(latest.id || ""));
+    if(chk.stage) bits.push("stage: <b>" + esc(chk.stage) + "</b>");
+    if(chk.status) bits.push("status: <b>" + esc(chk.status) + "</b>");
+    if(chk.updated_at_utc) bits.push("updated: " + esc(fmtTime(chk.updated_at_utc)));
+    shot = "<div class='muted'>" + bits.join(" · ") + "</div>" +
+      "<div class='muted' style='font-size:12px'>" + esc(latest.path || "") + "</div>";
+  } else {
+    shot = "<span class='muted'>сохранённых snapshots пока нет</span>";
+  }
+  $("#mon-snapshot").innerHTML = shot;
   const c = m.containers || {};
   let chtml = "";
   if(!c.ok){

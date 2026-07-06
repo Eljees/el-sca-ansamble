@@ -87,6 +87,29 @@ def test_tail_log(tmp_path: Path):
     assert monitor.tail_log(tmp_path / "nope") == []
 
 
+def test_latest_run_snapshot_reads_newest_checkpoint(tmp_path: Path):
+    old = tmp_path / "runs" / "old-20260706-100000"
+    new = tmp_path / "runs" / "new-20260706-110000"
+    old.mkdir(parents=True)
+    new.mkdir(parents=True)
+    (old / "checkpoint.json").write_text(
+        json.dumps({"stage": "extract", "status": "running", "updated_at_utc": "2026-07-06T10:00:00Z"}),
+        encoding="utf-8",
+    )
+    (new / "checkpoint.json").write_text(
+        json.dumps({"stage": "report", "status": "done", "updated_at_utc": "2026-07-06T11:00:00Z"}),
+        encoding="utf-8",
+    )
+    (new / "MANIFEST.json").write_text("{}", encoding="utf-8")
+
+    out = monitor.latest_run_snapshot(tmp_path)
+
+    assert out is not None
+    assert out["id"] == new.name
+    assert out["checkpoint"]["stage"] == "report"
+    assert out["manifest_present"] is True
+
+
 # --- gather_status + render_text -----------------------------------------------
 
 
@@ -105,6 +128,7 @@ def test_gather_status_and_render(tmp_path: Path):
     assert status["pipeline"]["present"] is True
     assert status["pipeline"]["current_stage"] == "sbom"
     assert status["containers"]["ok"] is True
+    assert "latest_run" in status
 
     text = monitor.render_text(status)
     assert "Пайплайн" in text
