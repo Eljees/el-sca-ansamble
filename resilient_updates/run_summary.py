@@ -94,16 +94,23 @@ def _cve_bin_tool_count(cve: Any) -> int:
     return 0
 
 
-def _input_sha256(extraction_manifest: Any) -> str | None:
+def _top_level_input_items(extraction_manifest: Any) -> list[dict[str, Any]]:
     if not isinstance(extraction_manifest, dict):
-        return None
+        return []
     items = extraction_manifest.get("items") or []
+    if not isinstance(items, list):
+        return []
+    dict_items = [item for item in items if isinstance(item, dict)]
+    top_level = [item for item in dict_items if item.get("depth") == 0]
+    return top_level or dict_items
+
+
+def _input_sha256(extraction_manifest: Any) -> str | None:
+    items = _top_level_input_items(extraction_manifest)
     if not items:
         return None
-    # When a single top-level archive is being scanned (the most common
-    # case) the first item is the canonical input — return its sha256
-    # directly so the header shows a stable per-run identifier.  When the
-    # input is a directory of archives we synthesise a composite hash.
+    # Prefer depth=0 items so nested archives discovered during extraction
+    # do not overwrite the identity of the original input artifact.
     if len(items) == 1:
         digest = str(items[0].get("sha256") or "")
         return digest or None
@@ -115,9 +122,7 @@ def _input_sha256(extraction_manifest: Any) -> str | None:
 
 
 def _input_hashes(extraction_manifest: Any) -> dict[str, str]:
-    if not isinstance(extraction_manifest, dict):
-        return {}
-    items = extraction_manifest.get("items") or []
+    items = _top_level_input_items(extraction_manifest)
     if len(items) != 1 or not isinstance(items[0], dict):
         return {}
     archive = str(items[0].get("archive") or "").strip()

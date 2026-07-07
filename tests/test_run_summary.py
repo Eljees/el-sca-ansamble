@@ -17,6 +17,7 @@ from resilient_updates.run_summary import (
     _grype_provenance_state,
     _input_hashes,
     _input_sha256,
+    _top_level_input_items,
     derive,
     write_to_disk,
 )
@@ -116,6 +117,23 @@ def test_derive_input_sha256_multi_item_uses_composite_hash(tmp_path: Path):
     s = derive(root)["summary"]
     assert s["input_sha256"].startswith("multi:")
     assert len(s["input_sha256"]) > len("multi:")
+
+
+def test_derive_input_sha256_prefers_single_top_level_archive(tmp_path: Path):
+    root = _seed_root(
+        tmp_path / "artifacts",
+        syft={"artifacts": []},
+        grype={"matches": []},
+        extraction={
+            "items": [
+                {"archive": "/input/root.zip", "sha256": "rootsha", "depth": 0},
+                {"archive": "/tmp/nested.docx", "sha256": "nestedsha1", "depth": 1},
+                {"archive": "/tmp/nested.gz", "sha256": "nestedsha2", "depth": 1},
+            ]
+        },
+    )
+    s = derive(root)["summary"]
+    assert s["input_sha256"] == "rootsha"
 
 
 def test_derive_db_snapshot_id_combines_provenance(tmp_path: Path):
@@ -350,6 +368,18 @@ def test_input_sha256_single_item_empty_sha():
     assert _input_sha256({"items": [{"sha256": ""}]}) is None
 
 
+def test_top_level_input_items_prefers_depth_zero():
+    items = _top_level_input_items(
+        {
+            "items": [
+                {"archive": "root.zip", "sha256": "root", "depth": 0},
+                {"archive": "nested.zip", "sha256": "nested", "depth": 1},
+            ]
+        }
+    )
+    assert items == [{"archive": "root.zip", "sha256": "root", "depth": 0}]
+
+
 # ---------------------------------------------------------------------------
 # _input_hashes — file path hashing
 # ---------------------------------------------------------------------------
@@ -369,6 +399,21 @@ def test_input_hashes_missing_file_returns_empty(tmp_path: Path):
     """Non-existent archive path → empty dict."""
     extraction = {"items": [{"archive": str(tmp_path / "no.tar.gz")}]}
     assert _input_hashes(extraction) == {}
+
+
+def test_input_hashes_prefers_single_top_level_file(tmp_path: Path):
+    """Nested archives do not prevent hashing the original input file."""
+    archive = tmp_path / "archive.zip"
+    archive.write_bytes(b"root archive")
+    extraction = {
+        "items": [
+            {"archive": str(archive), "sha256": "root", "depth": 0},
+            {"archive": str(tmp_path / "nested.docx"), "sha256": "nested", "depth": 1},
+        ]
+    }
+    result = _input_hashes(extraction)
+    assert "sha1" in result
+    assert "sha256" in result
 
 
 # ---------------------------------------------------------------------------

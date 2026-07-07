@@ -1,0 +1,152 @@
+schema_version: 1
+kind: remote_scan_example
+case_id: CYBERSEC-11531
+name: prometheus-3.11.0.linux-amd64 remote full scan
+
+purpose: >
+  Worked example for a remote host run where the deployed machine normally
+  keeps an offline/light .env, but one production scan needs fresh online DBs
+  and cve-bin-tool enabled without permanently changing .env.
+
+remote_context:
+  host: elaria@192.168.1.33
+  repo: /opt/sca-work/el-sca-ansamble
+  target_dir: /home/elaria/_SCA/_to_verify_logic_CYBERSEC-11531
+  note: >
+    The SSH key path is intentionally not recorded here. Use the operator's
+    local SSH configuration or a private inventory outside the repository.
+
+artifact:
+  path: /home/elaria/_SCA/_to_verify_logic_CYBERSEC-11531/prometheus-3.11.0.linux-amd64.tar.gz
+  sha256: ff799c3e4c318e17dec14aaaa406a4da328fabb4578336b36d96d893870c3b76
+
+db_refresh:
+  command: ./scripts/update-db.sh all
+  temporary_env:
+    COMPOSE_FILE: docker-compose.yml
+    EL_SCA_SKIP_CVEBT: "0"
+  observed_at_utc: "2026-07-06T21:04:51Z"
+  status:
+    trivy:
+      update_state: cached-present
+      age_hours: 0.98
+      warning: false
+    grype:
+      update_state: cached-present
+      age_hours: 0.98
+      warning: false
+    cve-bin-tool:
+      update_state: cached-present
+      age_hours: 0.16
+      warning: false
+      activation_status: degraded
+      audit_overall_status: pass
+      optional_missing_sources:
+        - OSV
+        - EPSS
+        - RSD
+  notes:
+    - cve-bin-tool feed import completed from NVD 2.0 feeds for 2002-2026 plus modified.
+    - The degraded activation was accepted because the main NVD/GAD/REDHAT/CURL/PURL2CPE evidence passed audit.
+
+scan:
+  command: >
+    ./scripts/run-scan.sh
+    -t /home/elaria/_SCA/_to_verify_logic_CYBERSEC-11531/prometheus-3.11.0.linux-amd64.tar.gz
+    --case-id CYBERSEC-11531
+    -c
+    --extract-max-depth 4
+    --timeout 3600
+    --checkers go,rust
+    --artifact-mode near-source
+    --heartbeat 60
+  temporary_env:
+    COMPOSE_FILE: docker-compose.yml
+    EL_SCA_SKIP_CVEBT: "0"
+    CVE_BIN_TOOL_AUTO_SBOM: "1"
+    CVE_BIN_TOOL_INJECT_GO_RUNTIME: "1"
+  started_at_utc: "2026-07-06T21:05:03Z"
+  finished_at_utc: "2026-07-06T21:09:12Z"
+  status: ok
+  cve_bin_tool_runtime_detection:
+    sbom_fast_path: true
+    elf_files_probed: 2
+    go_runtime_versions:
+      - go1.23.0
+      - go1.26.1
+
+outputs:
+  run_snapshot: /home/elaria/_SCA/_to_verify_logic_CYBERSEC-11531/CYBERSEC-11531-20260706-210912
+  markdown_report: /home/elaria/_SCA/_to_verify_logic_CYBERSEC-11531/prometheus-3.11.0.linux-amd64_report_2026-07-07.md
+  html_report: /home/elaria/_SCA/_to_verify_logic_CYBERSEC-11531/prometheus-3.11.0.linux-amd64_report_2026-07-07.html
+  db_snapshot_id: 2ef15ebff07a
+
+result_summary:
+  input_sha256: ff799c3e4c318e17dec14aaaa406a4da328fabb4578336b36d96d893870c3b76
+  sbom_components: 427
+  grype_findings: 141
+  trivy_findings: 0
+  cve_bin_tool_findings: 69
+  tool_failures: none
+  db_drift: cached-present
+  policy_decision: "fail: CRITICAL=7>0"
+  final_report_severity_counts:
+    CRITICAL: 7
+    HIGH: 74
+    MEDIUM: 55
+    LOW: 3
+    UNKNOWN: 2
+  raw_scanner_severity_counts:
+    grype:
+      CRITICAL: 8
+      HIGH: 78
+      MEDIUM: 53
+      LOW: 2
+    cve-bin-tool:
+      CRITICAL: 3
+      HIGH: 34
+      MEDIUM: 28
+      LOW: 2
+      UNKNOWN: 2
+
+historical_comparison:
+  - date: "2026-05-15"
+    sbom_components: 427
+    grype_findings: 49
+    trivy_findings: 0
+    cve_bin_tool_findings: 0
+    policy_decision: UNKNOWN
+  - date: "2026-05-16"
+    sbom_components: 427
+    grype_findings: 49
+    trivy_findings: 0
+    cve_bin_tool_findings: 5
+    policy_decision: UNKNOWN
+  - date: "2026-05-17"
+    sbom_components: 427
+    grype_findings: 49
+    trivy_findings: 0
+    cve_bin_tool_findings: 5
+    policy_decision: UNKNOWN
+  - date: "2026-06-11"
+    sbom_components: 427
+    grype_findings: 27
+    trivy_findings: 0
+    cve_bin_tool_findings: 0
+    db_snapshot_id: f755777eb045
+    db_drift: active, cached-present, missing
+    policy_decision: "fail: CRITICAL=1>0"
+  - date: "2026-07-07"
+    sbom_components: 427
+    grype_findings: 141
+    trivy_findings: 0
+    cve_bin_tool_findings: 69
+    db_snapshot_id: 2ef15ebff07a
+    db_drift: cached-present
+    policy_decision: "fail: CRITICAL=7>0"
+
+operator_notes:
+  - Keep DB refresh separate from the scan when preserving evidence.
+  - Do not commit raw runtime output from artifacts/, _SCA_reports/, DB caches, or per-run HTML/JSON reports.
+  - The top-level report SHA-256 can describe the extracted target digest; use input_sha256 for the original archive hash.
+  - Temporary env overrides above enabled online compose and cve-bin-tool for this run without editing the host .env.

@@ -376,7 +376,10 @@ def build_report(
     except Exception:
         pass
     high_critical = [item for item in all_findings if item["severity"] in {"CRITICAL", "HIGH"}]
-    severity_counts = Counter(item["severity"] for item in all_findings)
+    # Keep summary counts aligned with raw scanner outputs. The deduped list is
+    # useful for readable tables, but the headline totals should reflect the
+    # same evidence as the per-tool match counts.
+    severity_counts = Counter(item["severity"] for item in all_findings_raw)
 
     # Severity policy gate (replaces the historical "no-policy" placeholder).
     # Opt-in via ``configs/policy.json`` next to the artifacts root:
@@ -464,7 +467,7 @@ def build_report(
     resolved_case_id = _resolve_case_id(case_id, target_path, display_target)
 
     # "What changed since the last scan of this case" — uses the run history
-    # archived by run-scan.sh under ``artifacts/runs/<case>-<ts>/``. The current
+    # archived by run-scan.sh under ``_SCA_reports/<case>-<ts>/``. The current
     # run is archived only after this report is built, so the newest matching
     # directory IS the previous run. Best-effort: no history → no section.
     diff_lines: list[str] = []

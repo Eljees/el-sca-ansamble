@@ -124,6 +124,50 @@ def test_build_report_warns_on_stale_enrichment(tmp_path: Path, monkeypatch):
     assert "epss: enrichment data is" in text
 
 
+def test_build_report_severity_counts_follow_raw_findings(tmp_path: Path):
+    artifacts = tmp_path / "artifacts"
+    (artifacts / "sbom").mkdir(parents=True)
+    (artifacts / "reports" / "grype").mkdir(parents=True)
+    (artifacts / "reports" / "trivy").mkdir(parents=True)
+    (artifacts / "reports" / "cve-bin-tool").mkdir(parents=True)
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"hello-report")
+
+    (artifacts / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    (artifacts / "reports" / "grype" / "report.json").write_text(
+        json.dumps({"matches": []}),
+        encoding="utf-8",
+    )
+    (artifacts / "reports" / "trivy" / "report.json").write_text(
+        json.dumps({"Results": []}),
+        encoding="utf-8",
+    )
+    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(
+        json.dumps(
+            [
+                {"cve_number": "CVE-2026-0001", "severity": "HIGH", "product": "pkg", "version": "1.0"},
+                {"cve_number": "CVE-2026-0001", "severity": "HIGH", "product": "pkg", "version": "1.0"},
+                {
+                    "cve_number": "CVE-2026-0002",
+                    "severity": "CRITICAL",
+                    "product": "pkg",
+                    "version": "1.0",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, case_id="CYBERSEC-555")
+    text = output.read_text(encoding="utf-8")
+
+    assert "- cve-bin-tool findings: `3`" in text
+    assert "- Total findings: `3`" in text
+    assert "- Severity counts: `{'HIGH': 2, 'CRITICAL': 1}`" in text
+
+
 # ---------------------------------------------------------------------------
 # Policy gate + run-history diff
 # ---------------------------------------------------------------------------

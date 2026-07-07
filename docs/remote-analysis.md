@@ -226,3 +226,21 @@ After a successful run, expect:
 - `artifacts/reports/{trivy,grype,cve-bin-tool}/report.json`
 
 The final report should also carry the artifact hash and the DB freshness / policy evidence.
+
+---
+
+## 7. Worked example
+
+For a compact, commit-safe record of a real CYBERSEC-11531 remote run, see
+[CYBERSEC-11531-prometheus-remote.yaml](../configs/examples/CYBERSEC-11531-prometheus-remote.yaml).
+
+That example records:
+
+- the temporary env overrides used to refresh online DBs while leaving the host
+  `.env` unchanged;
+- the exact scan command and cve-bin-tool Go runtime knobs;
+- the input archive SHA-256, DB snapshot id, and output locations;
+- the 2026-07-07 result summary compared with the historical May/June reports.
+
+Keep this style for future examples: store reproducible parameters and compact
+summary evidence, not raw scanner output or generated HTML/JSON artefacts.
