@@ -167,12 +167,14 @@ class Job:
         *,
         artifacts_dir: Path | None = None,
         run_dir: Path | None = None,
+        case_id: str | None = None,
     ):
         self.id = uuid.uuid4().hex[:12]
         self.kind = kind  # "scan" | "update"
         self.target = target
         self.artifacts_dir = artifacts_dir
         self.run_dir = run_dir
+        self.case_id = case_id
         self.status = "running"  # running | done | error
         self.returncode: int | None = None
         self.started_at = time.time()
@@ -504,7 +506,14 @@ class JobRegistry:
         with self._lock:
             self._jobs[job.id] = job
 
-    def start_scan(self, target_host: str, tools: set[str] | None = None, *, resume: bool = False) -> Job:
+    def start_scan(
+        self,
+        target_host: str,
+        tools: set[str] | None = None,
+        *,
+        resume: bool = False,
+        case_id: str | None = None,
+    ) -> Job:
         # tools = which analysers to run (subset of syft/grype/trivy/cve-bin-tool).
         # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
         # resume = skip stages already completed for the SAME target+tools
@@ -512,10 +521,11 @@ class JobRegistry:
         # "host" saves into _SCA_reports/<target>-<timestamp> on the scanner
         # host; operators can still opt into "auto"/"near-source"/"artifacts".
         mode = os.environ.get("EL_SCA_RUN_OUTPUT_MODE", "host")
+        resolved_case_id = case_id or os.environ.get("CASE_ID")
         run_dir = resolve_run_dir(
             artifacts_dir=self.artifacts_dir,
             target_host=target_host,
-            case_id=os.environ.get("CASE_ID"),
+            case_id=resolved_case_id,
             mode=mode,
             timestamp=time.time(),
         )
@@ -525,6 +535,7 @@ class JobRegistry:
             target=target_host,
             artifacts_dir=self.artifacts_dir,
             run_dir=run_dir,
+            case_id=resolved_case_id,
         )
         job.attach_log(
             run_dir / "job.log",
@@ -904,7 +915,7 @@ class JobRegistry:
             self.artifacts_dir,
             target=target_host,
             tool=tool_key,
-            case_id=os.environ.get("CASE_ID"),
+            case_id=job.case_id,
             resume=resume,
         )
         skip_done = pipeline_state.completed_stages(state) if resume and state.get("resumed") else set()
@@ -1044,7 +1055,7 @@ class JobRegistry:
             snapshot_artifacts(
                 self.artifacts_dir,
                 job.run_dir,
-                case_id=os.environ.get("CASE_ID"),
+                case_id=job.case_id,
                 target_host=job.target,
                 target_container="/scan-target",
                 stage=stage,

@@ -228,7 +228,7 @@ def _mock_registry(monkeypatch, tmp_path):
     pytest.importorskip("fastapi")
     from resilient_updates.orchestrator import SCAN_STAGES, UPDATE_STAGES, Job, JobRegistry
 
-    def fake_start_scan(self, target_host, tools=None):
+    def fake_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
         job = Job("scan", SCAN_STAGES, target=target_host)
         with self._lock:
             self._jobs[job.id] = job
@@ -270,7 +270,7 @@ def test_api_scan_empty_tools_selects_all(tmp_path: Path, monkeypatch):
 
     captured: list = []
 
-    def fake_start_scan(self, target_host, tools=None):
+    def fake_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
         captured.append(tools)
         job = Job("scan", SCAN_STAGES, target=target_host)
         with self._lock:
@@ -295,7 +295,7 @@ def test_api_scan_sparse_tools_string(tmp_path: Path, monkeypatch):
 
     captured: list = []
 
-    def fake_start_scan(self, target_host, tools=None):
+    def fake_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
         captured.append(tools)
         job = Job("scan", SCAN_STAGES, target=target_host)
         with self._lock:
@@ -311,6 +311,107 @@ def test_api_scan_sparse_tools_string(tmp_path: Path, monkeypatch):
         data={"tools": "syft,,grype"},
     )
     assert captured[0] == {"syft", "grype"}
+
+
+def test_api_artifact_upload_and_list(tmp_path: Path):
+    client = _client(tmp_path)
+    import io
+
+    resp = client.post(
+        "/api/artifacts/upload",
+        files={"file": ("CYBERSEC-12345-app.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+    )
+    assert resp.status_code == 200
+    artifact = resp.json()["artifact"]
+    assert artifact["case_id"] == "CYBERSEC-12345"
+    listed = client.get("/api/artifacts").json()["artifacts"]
+    assert listed[0]["id"] == artifact["id"]
+    assert listed[0]["run_count"] == 0
+
+
+def test_api_artifact_patch_and_scan(tmp_path: Path, monkeypatch):
+    import io
+
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import SCAN_STAGES, Job, JobRegistry
+
+    client = _client(tmp_path)
+    artifact = client.post(
+        "/api/artifacts/upload",
+        files={"file": ("plain.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+    ).json()["artifact"]
+
+    patch = client.patch(
+        f"/api/artifacts/{artifact['id']}",
+        json={"case_id": "CYBERSEC-77777", "display_name": "patched-name"},
+    )
+    assert patch.status_code == 200
+    assert patch.json()["artifact"]["display_name"] == "patched-name"
+
+    captured: list[tuple[str, set[str] | None, str | None]] = []
+
+    def fake_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
+        captured.append((target_host, tools, case_id))
+        run_dir = tmp_path / "runs" / "patched-name-20260707-120000"
+        job = Job("scan", SCAN_STAGES, target=target_host, run_dir=run_dir, case_id=case_id)
+        with self._lock:
+            self._jobs[job.id] = job
+        return job
+
+    monkeypatch.setattr(JobRegistry, "start_scan", fake_start_scan)
+    resp = client.post(
+        f"/api/artifacts/{artifact['id']}/scan",
+        data={"tools": "syft,trivy"},
+    )
+    assert resp.status_code == 200
+    (target_host, tools, case_id) = captured[0]
+    assert Path(target_host).name == "plain.zip"
+    assert tools == {"syft", "trivy"}
+    assert case_id == "CYBERSEC-77777"
+
+
+def test_api_artifact_runs_and_run_file(tmp_path: Path, monkeypatch):
+    import io
+
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import SCAN_STAGES, Job, JobRegistry
+
+    run_dir = tmp_path / "runs" / "artifact-run-20260707-120000"
+    _populate(run_dir)
+    (run_dir / "reports" / "final" / "index.html").write_text("<html>ok</html>", encoding="utf-8")
+
+    client = _client(tmp_path)
+    artifact = client.post(
+        "/api/artifacts/upload",
+        files={"file": ("sample.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+    ).json()["artifact"]
+
+    def fake_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
+        job = Job("scan", SCAN_STAGES, target=target_host, run_dir=run_dir, case_id=case_id)
+        with self._lock:
+            self._jobs[job.id] = job
+        return job
+
+    monkeypatch.setattr(JobRegistry, "start_scan", fake_start_scan)
+    assert client.post(f"/api/artifacts/{artifact['id']}/scan").status_code == 200
+
+    runs = client.get(f"/api/artifacts/{artifact['id']}/runs")
+    assert runs.status_code == 200
+    payload = runs.json()["runs"]
+    assert payload[0]["id"] == "artifact-run-20260707-120000"
+    assert payload[0]["default_report_path"] == "reports/final/index.html"
+    file_resp = client.get("/api/runs/artifact-run-20260707-120000/files/reports/final/index.html")
+    assert file_resp.status_code == 200
+
+
+def test_api_delete_run_hides_saved_run(tmp_path: Path):
+    saved = tmp_path / "runs" / "hide-me-20260707-120000"
+    _populate(saved)
+    client = _client(tmp_path)
+    assert client.get("/api/runs").json()["runs"][0]["id"] == "hide-me-20260707-120000"
+    resp = client.delete("/api/runs/hide-me-20260707-120000")
+    assert resp.status_code == 200
+    assert client.get("/api/runs").json()["runs"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -518,8 +619,8 @@ def test_api_scan_resume_starts_job_with_resume_flag(tmp_path: Path, monkeypatch
 
     captured: list = []
 
-    def fake_start_scan(self, target_host, tools=None, *, resume=False):
-        captured.append((target_host, tools, resume))
+    def fake_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
+        captured.append((target_host, tools, resume, case_id))
         job = Job("scan", SCAN_STAGES, target=target_host)
         with self._lock:
             self._jobs[job.id] = job
@@ -529,10 +630,11 @@ def test_api_scan_resume_starts_job_with_resume_flag(tmp_path: Path, monkeypatch
     resp = _client(tmp_path).post("/api/scan/resume")
     assert resp.status_code == 200
     assert "job_id" in resp.json()
-    (target_host, tools, resume) = captured[0]
+    (target_host, tools, resume, case_id) = captured[0]
     assert target_host == str(target)
     assert tools == {"syft", "grype"}
     assert resume is True
+    assert case_id == ""
 
 
 # ---------------------------------------------------------------------------

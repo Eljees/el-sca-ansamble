@@ -28,6 +28,8 @@ except ImportError:  # pragma: no cover
     File = None  # type: ignore[assignment]
     UploadFile = None  # type: ignore[assignment]
 
+from .artifact_catalog import ArtifactCatalog, is_valid_case_id
+
 
 def _safe_read_json(path: Path) -> Any | None:
     try:
@@ -64,6 +66,7 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
     discoverable under ``artifacts/runs/<run-name>/``.
     """
     out: list[dict[str, Any]] = []
+    hidden_runs = ArtifactCatalog(artifacts_dir).deleted_run_ids()
     prov = _provenance(artifacts_dir)
     manifest = _safe_read_json(artifacts_dir / "MANIFEST.json")
     reports = _reports(artifacts_dir)
@@ -79,6 +82,8 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
         )
 
     for run_dir in _saved_run_dirs(artifacts_dir):
+        if run_dir.name in hidden_runs:
+            continue
         run_prov = _provenance(run_dir)
         run_manifest = _safe_read_json(run_dir / "MANIFEST.json")
         run_reports = _reports(run_dir)
@@ -138,6 +143,23 @@ def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
         "provenance": _provenance(root),
         "reports": _reports(root),
     }
+
+
+def _report_candidates(run_dir: Path) -> list[str]:
+    reports_root = run_dir / "reports" / "final"
+    if not reports_root.is_dir():
+        return []
+    preferred: list[Path] = []
+    for pattern in ("index.html", "*.html", "*.md"):
+        preferred.extend(sorted(reports_root.rglob(pattern)))
+    seen: set[Path] = set()
+    out: list[str] = []
+    for path in preferred:
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        out.append(str(path.relative_to(run_dir)).replace("\\", "/"))
+    return out
 
 
 def _provenance_status(payload: Any) -> str:
@@ -453,6 +475,19 @@ _GUI_HTML = """<!doctype html>
   .muted { color:var(--muted); }
   .tools-select { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:12px; }
   .tools-select label { display:flex; gap:6px; align-items:center; cursor:pointer; }
+  .artifact-list { display:grid; gap:12px; }
+  .artifact-card { border:1px solid var(--line); border-radius:12px; background:#10161d; padding:14px; }
+  .artifact-card.deleted { opacity:.5; }
+  .artifact-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  .artifact-name { font-size:15px; font-weight:700; }
+  .artifact-meta { font-size:12px; color:var(--muted); word-break:break-word; }
+  .artifact-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .artifact-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-top:12px; }
+  .artifact-fields label { display:grid; gap:6px; font-size:12px; color:var(--muted); }
+  .artifact-fields input { width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+                           background:#0a0e12; color:var(--fg); }
+  .artifact-runs { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .artifact-runs button { padding:5px 10px; font-size:12px; }
   /* analysis map */
   #map { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
   .map-col { display:flex; flex-direction:column; gap:8px; }
@@ -539,7 +574,7 @@ _GUI_HTML = """<!doctype html>
     <h2>Анализ артефакта</h2>
     <div id="drop">
       <p><b>Перетащите сюда артефакт</b> (.tar.gz / .zip / .apk / .exe)<br>
-      или нажмите, чтобы выбрать файл — анализ начнётся автоматически.</p>
+      или нажмите, чтобы выбрать файл — загрузка в каталог начнётся автоматически.</p>
       <input type="file" id="file" hidden>
     </div>
     <div class="tools-select" id="tools-select">
@@ -549,14 +584,22 @@ _GUI_HTML = """<!doctype html>
       <label><input type="checkbox" value="trivy" checked> Trivy</label>
       <label><input type="checkbox" value="cve-bin-tool" checked> cve-bin-tool</label>
     </div>
-    <div class="row" id="ready-row" style="display:none; margin-top:12px">
-      <span class="muted">Артефакт: <b id="ready-name"></b></span>
-      <button id="btn-go">▶ Тулз ок, погнали</button>
-      <span class="muted">— выбери инструменты выше и запускай</span>
+    <div class="row" style="margin-top:12px">
+      <span class="muted" id="upload-status">Новый drop/upload появится ниже в каталоге артефактов.</span>
     </div>
     <div class="row" id="resume-row" style="display:none; margin-top:12px">
       <button id="btn-resume">⏯ Продолжить с чекпоинта</button>
       <span class="muted" id="resume-info"></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Артефакты</h2>
+    <div class="row" style="margin-bottom:12px">
+      <span class="muted">Загруженные и исторические артефакты. Здесь можно задать `CYBERSEC-XXXXX`, переименовать, запустить scan, открыть отчёты и скрыть лишнее.</span>
+    </div>
+    <div id="artifact-list" class="artifact-list">
+      <div class="muted">Каталог загружается…</div>
     </div>
   </section>
 
@@ -665,9 +708,9 @@ function renderMap(){
     `<div class="map-arrow">→</div>` +
     `<div class="map-col">${mapNode("report","Отчёт")}</div>`;
 }
-function showReport(){
+function showReport(url){
   const f = $("#report-frame");
-  f.src = "/api/report/index.html?t=" + Date.now();
+  f.src = (url || "/api/report/index.html") + (url && url.includes("?") ? "&" : "?") + "t=" + Date.now();
   $("#report-panel").style.display = "";
 }
 renderMap();
@@ -707,29 +750,173 @@ function follow(jobId, kind){
       statusEl.textContent = ok ? "✓ готово" : "✗ ошибка";
       es.close(); connEl.textContent = "";
       loadTools();
+      loadArtifacts();
       if(ok && isScan) showReport();
     }
   };
   es.onerror = () => { connEl.textContent = ""; };
 }
-let pendingFile = null;
-function selectFile(file){
-  pendingFile = file;
-  $("#ready-name").textContent = file.name;
-  $("#ready-row").style.display = "";
-  $("#report-panel").style.display = "none";
-  statusEl.textContent = "готов к запуску — выбери инструменты и нажми «погнали»";
-  statusEl.className = "muted";
-}
-async function startScan(file){
+function currentTools(){
   const tools = Array.from(document.querySelectorAll("#tools-select input:checked"))
     .map(c => c.value).join(",");
-  const fd = new FormData(); fd.append("file", file); fd.append("tools", tools);
-  statusEl.textContent = "загрузка артефакта…";
+  return tools;
+}
+function humanSize(value){
+  const size = Number(value || 0);
+  if(!Number.isFinite(size) || size <= 0) return "0 B";
+  const units = ["B","KB","MB","GB","TB"];
+  let idx = 0, cur = size;
+  while(cur >= 1024 && idx < units.length - 1){ cur /= 1024; idx += 1; }
+  return `${cur.toFixed(cur >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+function uploadStatus(text, isError){
+  const el = $("#upload-status");
+  el.textContent = text;
+  el.className = isError ? "" : "muted";
+}
+async function uploadArtifact(file){
+  const fd = new FormData();
+  fd.append("file", file);
+  uploadStatus("загрузка " + file.name + "…", false);
   $("#report-panel").style.display = "none";
-  const r = await fetch("/api/scan", { method:"POST", body:fd });
-  if(!r.ok){ statusEl.textContent = "ошибка запуска: " + r.status; return; }
+  try {
+    const r = await fetch("/api/artifacts/upload", { method:"POST", body:fd });
+    if(!r.ok){
+      let msg = "ошибка загрузки: " + r.status;
+      try { msg = (await r.json()).detail || msg; } catch(e){}
+      uploadStatus(msg, true);
+      return;
+    }
+    const body = await r.json();
+    uploadStatus("загружен: " + (body.artifact.display_name || body.artifact.original_filename), false);
+    await loadArtifacts();
+  } catch(e) {
+    uploadStatus("ошибка загрузки: " + e, true);
+  }
+}
+async function scanArtifact(artifactId){
+  statusEl.textContent = "запуск анализа…";
+  const fd = new FormData();
+  fd.append("tools", currentTools());
+  const r = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}/scan`, { method:"POST", body:fd });
+  if(!r.ok){
+    let msg = "ошибка запуска: " + r.status;
+    try { msg = (await r.json()).detail || msg; } catch(e){}
+    statusEl.textContent = msg;
+    return;
+  }
   follow((await r.json()).job_id, "scan");
+}
+async function saveArtifact(artifactId){
+  const caseId = document.getElementById("case-" + artifactId)?.value || "";
+  const displayName = document.getElementById("name-" + artifactId)?.value || "";
+  const r = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, {
+    method:"PATCH",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ case_id: caseId, display_name: displayName })
+  });
+  if(!r.ok){
+    let msg = "ошибка сохранения: " + r.status;
+    try { msg = (await r.json()).detail || msg; } catch(e){}
+    uploadStatus(msg, true);
+    return;
+  }
+  uploadStatus("метаданные сохранены", false);
+  await loadArtifacts();
+}
+async function hideArtifact(artifactId){
+  const r = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}`, { method:"DELETE" });
+  if(!r.ok){
+    let msg = "ошибка скрытия: " + r.status;
+    try { msg = (await r.json()).detail || msg; } catch(e){}
+    uploadStatus(msg, true);
+    return;
+  }
+  await loadArtifacts();
+}
+async function deleteRun(runId){
+  const r = await fetch(`/api/runs/${encodeURIComponent(runId)}`, { method:"DELETE" });
+  if(r.ok) await loadArtifacts();
+}
+async function openArtifactReports(artifactId){
+  const r = await fetch(`/api/artifacts/${encodeURIComponent(artifactId)}/runs`);
+  if(!r.ok){
+    let msg = "ошибка отчётов: " + r.status;
+    try { msg = (await r.json()).detail || msg; } catch(e){}
+    uploadStatus(msg, true);
+    return;
+  }
+  const body = await r.json();
+  const first = (body.runs || []).find(x => x.default_report_path);
+  if(!first){
+    uploadStatus("для артефакта ещё нет сохранённого отчёта", true);
+    return;
+  }
+  runInfoEl.textContent = "run: " + first.id;
+  showReport(`/api/runs/${encodeURIComponent(first.id)}/files/${first.default_report_path}`);
+}
+function artifactRunButtons(artifact){
+  const runs = artifact.runs || [];
+  if(!runs.length) return `<span class="muted">запусков пока нет</span>`;
+  return runs.slice(0, 4).map(run =>
+    `<button type="button" onclick="openRunReport('${esc(run.id)}')">${esc(run.id)}</button>` +
+    `<button type="button" onclick="deleteRun('${esc(run.id)}')">скрыть run</button>`
+  ).join("");
+}
+function renderArtifacts(items){
+  const box = $("#artifact-list");
+  if(!(items || []).length){
+    box.innerHTML = `<div class="muted">Артефактов пока нет. Перетащи файл выше.</div>`;
+    return;
+  }
+  box.innerHTML = items.map(a => `
+    <div class="artifact-card ${a.deleted_at ? "deleted" : ""}">
+      <div class="artifact-head">
+        <div>
+          <div class="artifact-name">${esc(a.display_name || a.original_filename || a.id)}</div>
+          <div class="artifact-meta">${esc(a.original_filename || "")} · ${humanSize(a.size)} · SHA-256: ${esc(a.sha256 || "—")}</div>
+          <div class="artifact-meta">${esc(a.stored_path || "")}</div>
+        </div>
+        <div class="artifact-actions">
+          <button type="button" onclick="scanArtifact('${esc(a.id)}')">Scan</button>
+          <button type="button" onclick="openArtifactReports('${esc(a.id)}')">Reports</button>
+          <button type="button" onclick="hideArtifact('${esc(a.id)}')">Hide</button>
+        </div>
+      </div>
+      <div class="artifact-fields">
+        <label>CYBERSEC-ID
+          <input id="case-${esc(a.id)}" value="${esc(a.case_id || "")}" placeholder="CYBERSEC-12345">
+        </label>
+        <label>Название
+          <input id="name-${esc(a.id)}" value="${esc(a.display_name || "")}" placeholder="prometheus-3.11.0">
+        </label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button type="button" onclick="saveArtifact('${esc(a.id)}')">Сохранить</button>
+        <span class="artifact-meta">запусков: ${Number(a.run_count || 0)} · загружен: ${esc(fmtTime(a.uploaded_at_utc))}</span>
+      </div>
+      <div class="artifact-runs">${artifactRunButtons(a)}</div>
+    </div>
+  `).join("");
+}
+async function loadArtifacts(){
+  const r = await fetch("/api/artifacts");
+  if(!r.ok){
+    $("#artifact-list").innerHTML = `<div class="muted">Не удалось загрузить каталог (${r.status}).</div>`;
+    return;
+  }
+  renderArtifacts((await r.json()).artifacts || []);
+}
+async function openRunReport(runId){
+  const r = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
+  if(!r.ok) return;
+  const body = await r.json();
+  const reports = body.reports || [];
+  const candidate = reports.find(p => p.endsWith("/index.html")) || reports.find(p => p.endsWith(".html")) || reports.find(p => p.endsWith(".md"));
+  if(candidate) {
+    runInfoEl.textContent = "run: " + runId;
+    showReport(`/api/runs/${encodeURIComponent(runId)}/files/${candidate}`);
+  }
 }
 async function updateTarget(target){
   statusEl.textContent = "обновление баз: " + target + "…"; statusEl.className = "";
@@ -800,16 +987,16 @@ async function loadTools(){
 }
 const drop = $("#drop"), fileInput = $("#file");
 drop.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", e => { if(e.target.files[0]) selectFile(e.target.files[0]); });
+fileInput.addEventListener("change", e => { if(e.target.files[0]) uploadArtifact(e.target.files[0]); });
 ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => {
   e.preventDefault(); drop.classList.add("hot"); }));
 ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => {
   e.preventDefault(); drop.classList.remove("hot"); }));
-drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if(f) selectFile(f); });
-$("#btn-go").addEventListener("click", () => { if(pendingFile) startScan(pendingFile); });
+drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if(f) uploadArtifact(f); });
 $("#btn-update").addEventListener("click", () => updateTarget("all"));
 $("#btn-refresh").addEventListener("click", loadTools);
 loadTools();
+loadArtifacts();
 
 // ── Resume from checkpoint ───────────────────────────────────────────────────
 async function resumeScan(){
@@ -958,6 +1145,33 @@ def render_gui() -> str:
     return _GUI_HTML
 
 
+def _artifact_runs_payload(
+    artifacts_dir: Path,
+    artifact: dict[str, Any],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for run_ref in artifact.get("runs", []):
+        run_id = str(run_ref.get("id") or "").strip()
+        if not run_id:
+            continue
+        detail = run_detail(artifacts_dir, run_id)
+        if detail is None:
+            continue
+        run_root = Path(detail["path"])
+        reports = _report_candidates(run_root)
+        out.append(
+            {
+                "id": run_id,
+                "path": detail["path"],
+                "case_id": str((detail.get("manifest") or {}).get("case_id") or ""),
+                "updated_at_utc": str((detail.get("checkpoint") or {}).get("updated_at_utc") or ""),
+                "default_report_path": reports[0] if reports else "",
+                "report_paths": reports,
+            }
+        )
+    return out
+
+
 def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     """Build the FastAPI app: read-only run browser + active scan/update GUI.
 
@@ -965,7 +1179,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     parent of ``artifacts_dir``).  Scans and DB updates run as host
     subprocesses via :mod:`resilient_updates.orchestrator`.
     """
-    from fastapi import FastAPI, File, Form, HTTPException
+    from fastapi import Body, FastAPI, File, Form, HTTPException
     from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
     from .orchestrator import JobRegistry, sse_stream
@@ -973,6 +1187,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     root = Path(artifacts_dir)
     rroot = Path(repo_root) if repo_root is not None else root.resolve().parent
     uploads = root / "uploads"
+    catalog = ArtifactCatalog(root)
     registry = JobRegistry(rroot)
     active_enabled = os.environ.get("EL_SCA_DASHBOARD_ACTIVE", "1").strip().lower() not in (
         "0",
@@ -1024,22 +1239,112 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     def tools() -> dict[str, Any]:
         return tool_status(root, rroot)
 
-    @app.post("/api/scan", response_model=None)
-    def scan(file: UploadFile = File(...), tools: str = Form("")) -> dict[str, str]:
+    @app.get("/api/artifacts")
+    def artifacts(include_deleted: bool = False) -> dict[str, Any]:
+        return {
+            "artifacts": catalog.list_artifacts(include_deleted=include_deleted, legacy_runs=list_runs(root))
+        }
+
+    @app.post("/api/artifacts/upload", response_model=None)
+    def upload_artifact(
+        file: UploadFile = File(...),
+        case_id: str = Form(""),
+        display_name: str = Form(""),
+    ) -> dict[str, Any]:
+        if not active_enabled:
+            raise HTTPException(status_code=403, detail="active upload is disabled for this dashboard")
+        if not is_valid_case_id(case_id):
+            raise HTTPException(status_code=400, detail="case_id must look like CYBERSEC-12345")
+        artifact = catalog.create_upload(
+            filename=file.filename or "artifact.bin",
+            fileobj=file.file,
+            case_id=case_id,
+            display_name=display_name,
+        )
+        return {"artifact": artifact}
+
+    @app.patch("/api/artifacts/{artifact_id}")
+    def patch_artifact(artifact_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        case_id = payload.get("case_id")
+        display_name = payload.get("display_name")
+        if case_id is not None and not is_valid_case_id(str(case_id)):
+            raise HTTPException(status_code=400, detail="case_id must look like CYBERSEC-12345")
+        artifact = catalog.update_artifact(
+            artifact_id,
+            case_id=(None if case_id is None else str(case_id)),
+            display_name=(None if display_name is None else str(display_name)),
+            legacy_runs=list_runs(root),
+        )
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"artifact not found: {artifact_id}")
+        return {"artifact": artifact}
+
+    @app.delete("/api/artifacts/{artifact_id}")
+    def delete_artifact(artifact_id: str) -> dict[str, Any]:
+        artifact = catalog.soft_delete_artifact(artifact_id, legacy_runs=list_runs(root))
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"artifact not found: {artifact_id}")
+        return {"artifact": artifact}
+
+    @app.get("/api/artifacts/{artifact_id}/runs")
+    def artifact_runs(artifact_id: str) -> dict[str, Any]:
+        artifact = catalog.get_artifact(artifact_id, legacy_runs=list_runs(root))
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"artifact not found: {artifact_id}")
+        return {"artifact_id": artifact_id, "runs": _artifact_runs_payload(root, artifact)}
+
+    @app.post("/api/artifacts/{artifact_id}/scan")
+    def scan_artifact(artifact_id: str, tools: str = Form("")) -> dict[str, str]:
         if not active_enabled:
             raise HTTPException(status_code=403, detail="active scan is disabled for this dashboard")
-        uploads.mkdir(parents=True, exist_ok=True)
-        safe_name = Path(file.filename or "artifact").name
-        dest = uploads / safe_name
-        with dest.open("wb") as fh:
-            while chunk := file.file.read(1024 * 1024):
-                fh.write(chunk)
-        # tools = comma-separated subset of syft,grype,trivy,cve-bin-tool; empty = all.
+        artifact = catalog.get_artifact(artifact_id, legacy_runs=list_runs(root))
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"artifact not found: {artifact_id}")
+        target_path = Path(str(artifact.get("stored_path") or ""))
+        if not target_path.is_file():
+            raise HTTPException(status_code=409, detail=f"artifact file is missing: {target_path}")
         selected = {t.strip() for t in tools.split(",") if t.strip()} or None
-        job = registry.start_scan(str(dest.resolve()), tools=selected)
+        job = registry.start_scan(
+            str(target_path), tools=selected, case_id=str(artifact.get("case_id") or "")
+        )
+        if job.run_dir:
+            catalog.add_run(artifact_id, run_id=job.run_dir.name, run_dir=job.run_dir)
         return {
             "job_id": job.id,
-            "target": str(dest),
+            "artifact_id": artifact_id,
+            "target": str(target_path),
+            "run_dir": str(job.run_dir) if job.run_dir else "",
+            "log": str(job.log_path) if job.log_path else "",
+        }
+
+    @app.post("/api/scan", response_model=None)
+    def scan(
+        file: UploadFile = File(...),
+        tools: str = Form(""),
+        case_id: str = Form(""),
+        display_name: str = Form(""),
+    ) -> dict[str, str]:
+        if not active_enabled:
+            raise HTTPException(status_code=403, detail="active scan is disabled for this dashboard")
+        if not is_valid_case_id(case_id):
+            raise HTTPException(status_code=400, detail="case_id must look like CYBERSEC-12345")
+        uploads.mkdir(parents=True, exist_ok=True)
+        artifact = catalog.create_upload(
+            filename=file.filename or "artifact.bin",
+            fileobj=file.file,
+            case_id=case_id,
+            display_name=display_name,
+        )
+        # tools = comma-separated subset of syft,grype,trivy,cve-bin-tool; empty = all.
+        selected = {t.strip() for t in tools.split(",") if t.strip()} or None
+        target_path = str(Path(str(artifact["stored_path"])).resolve())
+        job = registry.start_scan(target_path, tools=selected, case_id=str(artifact.get("case_id") or ""))
+        if job.run_dir:
+            catalog.add_run(str(artifact["id"]), run_id=job.run_dir.name, run_dir=job.run_dir)
+        return {
+            "job_id": job.id,
+            "artifact_id": str(artifact["id"]),
+            "target": target_path,
             "run_dir": str(job.run_dir) if job.run_dir else "",
             "log": str(job.log_path) if job.log_path else "",
         }
@@ -1059,7 +1364,9 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
             raise HTTPException(status_code=409, detail=f"цель чекпоинта недоступна: {target}")
         tool_key = str(state.get("tool") or "all")
         tools_set = None if tool_key in ("", "all") else {t for t in tool_key.split(",") if t}
-        job = registry.start_scan(target, tools=tools_set, resume=True)
+        job = registry.start_scan(
+            target, tools=tools_set, resume=True, case_id=str(state.get("case_id") or "")
+        )
         return {
             "job_id": job.id,
             "target": target,
@@ -1084,6 +1391,19 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
             raise HTTPException(status_code=404, detail="report not found")
         return FileResponse(target)
 
+    @app.get("/api/runs/{run_id}/files/{path:path}")
+    def run_file(run_id: str, path: str):
+        run_root = _resolve_run_dir(root, run_id)
+        if run_root is None:
+            raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        base = run_root.resolve()
+        target = (base / path).resolve()
+        if base != target and base not in target.parents:
+            raise HTTPException(status_code=400, detail="bad path")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        return FileResponse(target)
+
     @app.post("/api/update-db")
     def update_db(target: str = "all") -> dict[str, str]:
         if not active_enabled:
@@ -1105,6 +1425,14 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if job is None:
             raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
         return StreamingResponse(sse_stream(job), media_type="text/event-stream")
+
+    @app.delete("/api/runs/{run_id}")
+    def delete_run(run_id: str) -> dict[str, str]:
+        detail = run_detail(root, run_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        catalog.hide_run(run_id)
+        return {"status": "deleted", "run_id": run_id}
 
     # ── Route plan API (ADR-0007 P2) ─────────────────────────────────────────
     # route-doctor probes the live egress from INSIDE the docker network and
