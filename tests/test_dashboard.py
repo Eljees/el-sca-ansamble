@@ -113,6 +113,39 @@ def test_api_run_detail_and_404(tmp_path: Path):
     assert client.get("/api/runs/bogus").status_code == 404
 
 
+def test_list_runs_exposes_markdown_report_path(tmp_path: Path):
+    _populate(tmp_path)
+    assert list_runs(tmp_path)[0]["markdown_report_path"] == "reports/final/report.md"
+
+
+def test_list_runs_markdown_report_path_empty_without_md(tmp_path: Path):
+    (tmp_path / "provenance").mkdir(parents=True)
+    (tmp_path / "provenance" / "trivy.json").write_text(json.dumps({"tool": "trivy"}), encoding="utf-8")
+    assert list_runs(tmp_path)[0]["markdown_report_path"] == ""
+
+
+def test_render_index_links_report_md(tmp_path: Path):
+    _populate(tmp_path)
+    assert "/api/runs/current/report.md" in render_index(tmp_path)
+
+
+def test_api_run_report_markdown_served_inline(tmp_path: Path):
+    _populate(tmp_path)
+    resp = _client(tmp_path).get("/api/runs/current/report.md")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/markdown")
+    assert resp.text == "# report"
+
+
+def test_api_run_report_markdown_404s(tmp_path: Path):
+    """404 for an unknown run, and for a known run that has no .md."""
+    (tmp_path / "provenance").mkdir(parents=True)
+    (tmp_path / "provenance" / "trivy.json").write_text(json.dumps({"tool": "trivy"}), encoding="utf-8")
+    client = _client(tmp_path)
+    assert client.get("/api/runs/current/report.md").status_code == 404
+    assert client.get("/api/runs/bogus/report.md").status_code == 404
+
+
 def test_api_freshness_shape(tmp_path: Path):
     resp = _client(tmp_path).get("/api/freshness")
     assert resp.status_code == 200

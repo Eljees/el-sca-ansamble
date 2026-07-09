@@ -78,6 +78,7 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
                 "manifest_present": manifest is not None,
                 "provenance_tools": sorted(prov.keys()),
                 "report_count": len(reports),
+                "markdown_report_path": _markdown_report(artifacts_dir),
             }
         )
 
@@ -94,6 +95,7 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
                 "manifest_present": run_manifest is not None,
                 "provenance_tools": sorted(run_prov.keys()),
                 "report_count": len(run_reports),
+                "markdown_report_path": _markdown_report(run_dir),
             }
         )
     return out
@@ -142,6 +144,7 @@ def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
         "checkpoint": _safe_read_json(root / "checkpoint.json"),
         "provenance": _provenance(root),
         "reports": _reports(root),
+        "markdown_report_path": _markdown_report(root),
     }
 
 
@@ -162,6 +165,21 @@ def _report_candidates(run_dir: Path) -> list[str]:
     return out
 
 
+def _markdown_report(run_dir: Path) -> str:
+    """Run-relative path of the final Markdown report, or ``""`` when absent.
+
+    This is the artefact operators hand over ("вот отчёт"), so it gets a
+    first-class link/endpoint instead of being buried in ``report_paths``.
+    """
+    reports_root = run_dir / "reports" / "final"
+    if not reports_root.is_dir():
+        return ""
+    for path in sorted(reports_root.rglob("*.md")):
+        if path.is_file():
+            return str(path.relative_to(run_dir)).replace("\\", "/")
+    return ""
+
+
 def _provenance_status(payload: Any) -> str:
     if isinstance(payload, dict):
         return str(payload.get("activation_status") or payload.get("status") or "?")
@@ -171,15 +189,23 @@ def _provenance_status(payload: Any) -> str:
 def render_index(artifacts_dir: Path) -> str:
     """Server-side HTML index of runs (plain stdlib rendering, no template engine)."""
     import html
+    from urllib.parse import quote
 
     runs = list_runs(artifacts_dir)
     if runs:
         items = "".join(
-            "<li><a href='/runs/{id}'>{id}</a> — tools: {tools}; reports: {rc}; manifest: {mp}</li>".format(
+            (
+                "<li><a href='/runs/{id}'>{id}</a> — tools: {tools}; reports: {rc}; manifest: {mp}{md}</li>"
+            ).format(
                 id=html.escape(r["id"]),
                 tools=html.escape(", ".join(r["provenance_tools"]) or "—"),
                 rc=r["report_count"],
                 mp=r["manifest_present"],
+                md=(
+                    " · <a href='/api/runs/{qid}/report.md'>report.md</a>".format(qid=quote(r["id"], safe=""))
+                    if r.get("markdown_report_path")
+                    else ""
+                ),
             )
             for r in runs
         )
@@ -634,6 +660,7 @@ _GUI_HTML = """<!doctype html>
 
   <section class="panel" id="report-panel" style="display:none">
     <h2>Отчёт</h2>
+    <div class="row" id="report-links" style="margin-bottom:12px"></div>
     <iframe id="report-frame" title="report"></iframe>
   </section>
 
@@ -715,9 +742,57 @@ function renderMap(){
     `<div class="map-arrow">→</div>` +
     `<div class="map-col">${mapNode("report","Отчёт")}</div>`;
 }
-function showReport(url){
+// Clipboard API needs a secure context; the dashboard is plain http, so keep a
+// textarea+execCommand fallback or "Скопировать" silently does nothing.
+async function copyToClipboard(text){
+  if(window.isSecureContext && navigator.clipboard){
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed"; ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch(e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+async function copyReportMarkdown(mdUrl){
+  const st = $("#md-status");
+  st.textContent = "загружаю…";
+  try {
+    const r = await fetch(mdUrl);
+    if(!r.ok){
+      st.textContent = r.status === 404 ? "у этого прогона нет .md" : ("ошибка " + r.status);
+      return;
+    }
+    const text = await r.text();
+    const ok = await copyToClipboard(text);
+    st.textContent = ok
+      ? ("✓ скопировано (" + text.length.toLocaleString("ru-RU") + " симв.)")
+      : "не удалось скопировать — открой .md и скопируй вручную";
+  } catch(e){ st.textContent = "ошибка: " + e; }
+}
+function setReportLinks(runId, htmlUrl){
+  const box = $("#report-links");
+  if(!runId){ box.innerHTML = ""; return; }
+  const md = `/api/runs/${encodeURIComponent(runId)}/report.md`;
+  box.innerHTML =
+    `<button type="button" id="btn-copy-md">📋 Скопировать Markdown</button>` +
+    `<a href="${md}" target="_blank" rel="noopener">📄 Открыть .md</a>` +
+    `<a href="${md}" download="${esc(runId)}.md">⬇ Скачать .md</a>` +
+    (htmlUrl ? `<a href="${htmlUrl}" target="_blank" rel="noopener">🌐 HTML в новой вкладке</a>` : "") +
+    `<span class="muted" id="md-status"></span>`;
+  $("#btn-copy-md").addEventListener("click", () => copyReportMarkdown(md));
+}
+function showReport(url, runId){
   const f = $("#report-frame");
-  f.src = (url || "/api/report/index.html") + (url && url.includes("?") ? "&" : "?") + "t=" + Date.now();
+  const target = url || "/api/report/index.html";
+  f.src = target + (target.includes("?") ? "&" : "?") + "t=" + Date.now();
+  setReportLinks(runId || "current", target);
   $("#report-panel").style.display = "";
 }
 renderMap();
@@ -758,7 +833,7 @@ function follow(jobId, kind){
       es.close(); connEl.textContent = "";
       loadTools();
       loadArtifacts();
-      if(ok && isScan) showReport();
+      if(ok && isScan) showReport(null, "current");
     }
   };
   es.onerror = () => { connEl.textContent = ""; };
@@ -860,7 +935,7 @@ async function openArtifactReports(artifactId){
     return;
   }
   runInfoEl.textContent = "run: " + first.id;
-  showReport(`/api/runs/${encodeURIComponent(first.id)}/files/${first.default_report_path}`);
+  showReport(`/api/runs/${encodeURIComponent(first.id)}/files/${first.default_report_path}`, first.id);
 }
 function artifactRunButtons(artifact){
   const runs = artifact.runs || [];
@@ -922,7 +997,7 @@ async function openRunReport(runId){
   const candidate = reports.find(p => p.endsWith("/index.html")) || reports.find(p => p.endsWith(".html")) || reports.find(p => p.endsWith(".md"));
   if(candidate) {
     runInfoEl.textContent = "run: " + runId;
-    showReport(`/api/runs/${encodeURIComponent(runId)}/files/${candidate}`);
+    showReport(`/api/runs/${encodeURIComponent(runId)}/files/${candidate}`, runId);
   }
 }
 async function updateTarget(target){
@@ -1174,6 +1249,7 @@ def _artifact_runs_payload(
                 "updated_at_utc": str((detail.get("checkpoint") or {}).get("updated_at_utc") or ""),
                 "default_report_path": reports[0] if reports else "",
                 "report_paths": reports,
+                "markdown_report_path": _markdown_report(run_root),
             }
         )
     return out
@@ -1187,7 +1263,12 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
     subprocesses via :mod:`resilient_updates.orchestrator`.
     """
     from fastapi import Body, FastAPI, File, Form, HTTPException
-    from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+    from fastapi.responses import (
+        FileResponse,
+        HTMLResponse,
+        PlainTextResponse,
+        StreamingResponse,
+    )
 
     from .orchestrator import JobRegistry, sse_stream
 
@@ -1397,6 +1478,25 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if not target.is_file():
             raise HTTPException(status_code=404, detail="report not found")
         return FileResponse(target)
+
+    @app.get("/api/runs/{run_id}/report.md")
+    def run_report_markdown(run_id: str):
+        """The run's final Markdown report as inline UTF-8 text.
+
+        Served as text (not a FileResponse) so the browser renders it for
+        copy/paste instead of downloading it — that is what operators hand over.
+        """
+        run_root = _resolve_run_dir(root, run_id)
+        if run_root is None:
+            raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        rel = _markdown_report(run_root)
+        if not rel:
+            raise HTTPException(status_code=404, detail="run has no markdown report")
+        target = run_root / rel
+        return PlainTextResponse(
+            target.read_text(encoding="utf-8", errors="replace"),
+            media_type="text/markdown; charset=utf-8",
+        )
 
     @app.get("/api/runs/{run_id}/files/{path:path}")
     def run_file(run_id: str, path: str):
