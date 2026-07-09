@@ -184,6 +184,65 @@ def test_api_run_report_markdown_404s(tmp_path: Path):
     assert client.get("/api/runs/bogus/report.md").status_code == 404
 
 
+def _uploaded_artifact(artifacts: Path, artifact_id: str = "artifact-20260709-1") -> Path:
+    """Create a minimal uploaded artifact in the catalogue."""
+    d = artifacts / "uploads" / artifact_id
+    d.mkdir(parents=True)
+    (d / "payload.bin").write_bytes(b"junk")
+    (d / "artifact.json").write_text(
+        json.dumps({"id": artifact_id, "original_filename": "payload.bin", "runs": []}),
+        encoding="utf-8",
+    )
+    return d
+
+
+def test_api_purge_requires_confirm(tmp_path: Path):
+    _populate(tmp_path)
+    d = _uploaded_artifact(tmp_path)
+    client = _client(tmp_path)
+    # no confirm → refused, file survives
+    assert client.delete("/api/artifacts/artifact-20260709-1/purge").status_code == 400
+    # wrong confirm → refused
+    r = client.delete("/api/artifacts/artifact-20260709-1/purge?confirm=nope")
+    assert r.status_code == 400
+    assert d.is_dir()
+
+
+def test_api_purge_hard_deletes_uploaded_artifact(tmp_path: Path):
+    _populate(tmp_path)
+    d = _uploaded_artifact(tmp_path)
+    client = _client(tmp_path)
+    r = client.delete("/api/artifacts/artifact-20260709-1/purge?confirm=artifact-20260709-1")
+    assert r.status_code == 200
+    assert r.json()["purged"] == "artifact-20260709-1"
+    assert not d.exists()
+
+
+def test_api_purge_refuses_legacy_artifacts(tmp_path: Path):
+    """legacy-* ids mirror saved run evidence and must never be hard-deleted."""
+    _populate(tmp_path)
+    r = _client(tmp_path).delete("/api/artifacts/legacy-run1/purge?confirm=legacy-run1")
+    assert r.status_code == 400
+    assert "evidence" in r.json()["detail"]
+
+
+def test_api_purge_404_for_unknown(tmp_path: Path):
+    _populate(tmp_path)
+    r = _client(tmp_path).delete("/api/artifacts/artifact-nope/purge?confirm=artifact-nope")
+    assert r.status_code == 404
+
+
+def test_catalog_purge_refuses_path_escape(tmp_path: Path):
+    from resilient_updates.artifact_catalog import ArtifactCatalog
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    cat = ArtifactCatalog(tmp_path)
+    with pytest.raises(ValueError):
+        cat.purge_artifact("legacy-anything")
+    assert outside.is_dir()
+
+
 def test_api_freshness_shape(tmp_path: Path):
     resp = _client(tmp_path).get("/api/freshness")
     assert resp.status_code == 200

@@ -241,9 +241,33 @@ class ArtifactCatalog:
                 out.add(run_id)
         return out
 
-    def purge_artifact(self, artifact_id: str) -> None:
-        """Best-effort hard delete for transient test fixtures only."""
-        shutil.rmtree(self.uploads_dir / artifact_id, ignore_errors=True)
+    def purge_artifact(self, artifact_id: str) -> dict[str, Any] | None:
+        """Hard-delete an *uploaded* artifact: its stored file and metadata.
+
+        Returns the artifact payload that was removed, or ``None`` when it does
+        not exist.  Raises ``ValueError`` for ``legacy-`` ids: those are only a
+        view over saved run snapshots, and destroying evidence is not something
+        this catalogue is allowed to do.
+
+        Saved runs produced *from* the artifact are deliberately left alone —
+        they live under ``_SCA_reports/`` / ``artifacts/runs/`` and are evidence.
+        """
+        if artifact_id.startswith("legacy-"):
+            raise ValueError("legacy artifacts mirror saved runs; refusing to purge evidence")
+
+        payload = self._read_uploaded_artifact(artifact_id)
+        if payload is None:
+            return None
+
+        target = (self.uploads_dir / artifact_id).resolve()
+        uploads = self.uploads_dir.resolve()
+        # Containment check: never rmtree outside the uploads directory, whatever
+        # the id looked like.
+        if target == uploads or uploads not in target.parents:
+            raise ValueError(f"refusing to purge outside uploads dir: {artifact_id}")
+
+        shutil.rmtree(target, ignore_errors=True)
+        return payload
 
     def _read_uploaded_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         payload = _read_json(self._artifact_meta_path(artifact_id))

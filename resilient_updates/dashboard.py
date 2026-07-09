@@ -524,11 +524,24 @@ _GUI_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>el-sca-ansamble — анализ артефактов</title>
 <style>
-  :root { --bg:#0f1419; --panel:#1a2027; --line:#2b3540; --fg:#e6edf3;
-          --muted:#8b98a5; --accent:#3b82f6; --ok:#22c55e; --active:#eab308; --err:#ef4444; }
+  /* ── Phosphor CRT ──────────────────────────────────────────────────────
+     Зелёный фосфорный монохром. Бочки с мутагеном намеренно оставлены в
+     своей кислотной зелени — они и так родные для этой палитры.          */
+  :root { --bg:#020a04; --panel:#04170a; --line:#0d3a1c; --fg:#8dffb0;
+          --muted:#3f9c5f; --accent:#35ff7a; --ok:#35ff7a; --active:#b7ff5a; --err:#ff5f56;
+          --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; }
+         font:14px/1.5 var(--mono); }
+  /* Сканлайны CRT + лёгкое виньетирование. pointer-events:none, чтобы не
+     перехватывать клики; fixed, чтобы не ехали при скролле. */
+  body::before { content:""; position:fixed; inset:0; z-index:9999; pointer-events:none;
+                 background:repeating-linear-gradient(0deg,#000 0 1px,transparent 1px 3px);
+                 opacity:.22; }
+  body::after { content:""; position:fixed; inset:0; z-index:9998; pointer-events:none;
+                background:radial-gradient(ellipse at center,transparent 60%,#000a 100%);
+                opacity:.5; }
+  h1,h2,.nm { text-shadow:0 0 6px #35ff7a55; }
   header { padding:16px 24px; border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   h1 { font-size:18px; margin:0; }
@@ -576,10 +589,13 @@ _GUI_HTML = """<!doctype html>
   .pill { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line); }
   .pill.fresh,.pill.active,.pill.ok { color:var(--ok); border-color:#1c3a24; }
   .pill.healthcheckonly,.pill.failed { color:var(--active); border-color:#3a3214; }
-  button { font:inherit; border:1px solid var(--line); background:#1f2937; color:var(--fg);
+  button { font:inherit; border:1px solid var(--line); background:#062a12; color:var(--fg);
            padding:9px 16px; border-radius:9px; cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  button:disabled { opacity:.5; cursor:not-allowed; }
+  button:hover { border-color:var(--accent); box-shadow:0 0 8px #35ff7a33; }
+  button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+  /* Необратимое действие подсвечено красным — единственный не-зелёный акцент. */
+  button.danger { border-color:#5c1a18; background:#1e0806; color:#ff8a80; }
+  button.danger:hover:not(:disabled) { border-color:var(--err); box-shadow:0 0 10px #ff5f5644; }
   .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   a { color:var(--accent); }
   .muted { color:var(--muted); }
@@ -993,6 +1009,24 @@ async function hideArtifact(artifactId){
   }
   await loadArtifacts();
 }
+// Hard delete. Three confirmations, exactly as asked — and the server still
+// demands ?confirm=<id>, because these dialogs only exist in the browser.
+async function purgeArtifact(artifactId, name){
+  if(!confirm(`Удалить «${name}» навсегда — из каталога и из хранилища.\n\nУверены?`)) return;
+  if(!confirm("Точно-точно?")) return;
+  if(!confirm("Совсем отчаялся?\n\nФайл будет стёрт с диска. Отменить будет нельзя.")) return;
+  const url = `/api/artifacts/${encodeURIComponent(artifactId)}/purge`
+            + `?confirm=${encodeURIComponent(artifactId)}`;
+  const r = await fetch(url, { method:"DELETE" });
+  if(!r.ok){
+    let msg = "ошибка удаления: " + r.status;
+    try { msg = (await r.json()).detail || msg; } catch(e){}
+    uploadStatus(msg, true);
+    return;
+  }
+  uploadStatus(`удалён навсегда: ${name}`, false);
+  await loadArtifacts();
+}
 async function deleteRun(runId){
   const r = await fetch(`/api/runs/${encodeURIComponent(runId)}`, { method:"DELETE" });
   if(r.ok) await loadArtifacts();
@@ -1040,6 +1074,12 @@ function renderArtifacts(items){
           <button type="button" onclick="scanArtifact('${esc(a.id)}')">Scan</button>
           <button type="button" onclick="openArtifactReports('${esc(a.id)}')">Reports</button>
           <button type="button" onclick="hideArtifact('${esc(a.id)}')">Hide</button>
+          ${String(a.id).startsWith("legacy-")
+            ? `<button type="button" class="danger" disabled
+                 title="legacy-артефакт — это представление сохранённого прогона (evidence). Удалять нельзя.">🗑 Удалить</button>`
+            : `<button type="button" class="danger"
+                 onclick="purgeArtifact('${esc(a.id)}','${esc(a.display_name || a.original_filename || a.id)}')"
+                 title="Стирает файл из хранилища. Сохранённые прогоны не трогает.">🗑 Удалить навсегда</button>`}
         </div>
       </div>
       <div class="artifact-fields">
@@ -1463,6 +1503,31 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if artifact is None:
             raise HTTPException(status_code=404, detail=f"artifact not found: {artifact_id}")
         return {"artifact": artifact}
+
+    @app.delete("/api/artifacts/{artifact_id}/purge")
+    def purge_artifact(artifact_id: str, confirm: str = "") -> dict[str, Any]:
+        """Hard-delete an uploaded artifact from the catalogue AND from disk.
+
+        The GUI asks three times before calling this, but that is client-side
+        only — a stray `curl -X DELETE` would not see those dialogs.  So the
+        server requires `?confirm=<artifact_id>`: deleting is never the result
+        of a single accidental request.
+
+        Saved runs are NOT touched: they are evidence under `_SCA_reports/`.
+        `legacy-*` ids are a view over those runs and are refused outright.
+        """
+        if confirm != artifact_id:
+            raise HTTPException(
+                status_code=400,
+                detail="purge requires ?confirm=<artifact_id>",
+            )
+        try:
+            artifact = catalog.purge_artifact(artifact_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if artifact is None:
+            raise HTTPException(status_code=404, detail=f"artifact not found: {artifact_id}")
+        return {"purged": artifact_id, "artifact": artifact}
 
     @app.get("/api/artifacts/{artifact_id}/runs")
     def artifact_runs(artifact_id: str) -> dict[str, Any]:
