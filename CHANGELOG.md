@@ -51,6 +51,12 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `.dockerignore`: добавлен (его не было вовсе). Без него build-контекст на
+  реальной развёртке — около 7 ГБ (`bundle/` ~4.3 ГБ, `artifacts/` ~1.9 ГБ,
+  `_SCA_reports/` ~0.6 ГБ) и в демон уезжал локальный `.env`. Dockerfile'ы
+  копируют только `requirements.txt`, `resilient_updates/`, `scripts/` и
+  корневые `*.tar.gz`. После правки контекст — **880 КБ**, сборка проверена.
+  (аудит-fixup 2026-07-09)
 - `versions.env` / `docker-compose.yml` / `.env.example`: `SEAWEEDFS_VERSION` и
   `MINIO_MC_VERSION` запиннены (`4.38`, `RELEASE.2025-08-13T08-35-41Z`) — раньше
   их не было в `versions.env` вовсе, и оба уходили в `latest`, из-за чего

@@ -1,0 +1,56 @@
+# Keep the build context small and free of evidence/secrets.
+#
+# Without this file the context is ~7 GB on a real deployment (bundle/ ~4.3 GB,
+# artifacts/ ~1.9 GB, _SCA_reports/ ~0.6 GB) and it also ships the local .env
+# to the daemon. The Dockerfiles only ever COPY:
+#   requirements.txt, resilient_updates/, scripts/, and root-level *.tar.gz
+#   (Dockerfile.db-data)
+# so everything below is dead weight.
+
+# --- VCS / CI -----------------------------------------------------------
+.git/
+.github/
+.gitlab-ci.yml
+.pre-commit-config.yaml
+
+# --- Runtime output & evidence (never belongs in an image) --------------
+artifacts/
+_SCA_reports/
+incoming/
+batches/
+
+# --- The LFS bundle: images + vulnerability DBs, ~4 GB ------------------
+bundle/
+
+# --- Secrets ------------------------------------------------------------
+# .env may hold NVD/registry credentials; nothing COPYs it.
+.env
+.env.*
+receiver.env
+*.pem
+*.key
+
+# --- Python / tooling caches -------------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# --- Docs & tests: not COPYed by any Dockerfile -------------------------
+docs/
+tests/
+*.md
+
+# --- Editor / OS --------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+node_modules/
