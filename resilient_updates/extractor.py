@@ -493,7 +493,17 @@ def extract_artifacts(
         kind = _archive_kind(archive_path)
         if not kind:
             continue
-        rel = archive_path.name if source_root.is_file() else str(archive_path.relative_to(source_root))
+        # Nested archives discovered while recursing live under the OUTPUT tree,
+        # not under a directory input — compute rel against whichever root the
+        # path actually belongs to instead of crashing with ValueError.
+        if source_root.is_file():
+            rel = archive_path.name
+        elif archive_path.is_relative_to(source_root):
+            rel = str(archive_path.relative_to(source_root))
+        elif archive_path.is_relative_to(destination_root):
+            rel = str(archive_path.relative_to(destination_root))
+        else:
+            rel = archive_path.name
         target_dir = (
             destination_root
             / f"depth{depth}"

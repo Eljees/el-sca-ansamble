@@ -53,6 +53,27 @@ def test_extract_artifacts_recurses_when_output_path_contains_artifacts(tmp_path
     assert list(output.rglob("app.bin"))
 
 
+def test_extract_artifacts_directory_input_with_nested_archives(tmp_path: Path):
+    """Directory input + nested archive: the nested item is found under the
+    OUTPUT tree, so rel computation against the input dir used to raise
+    ValueError and abort the whole run (CYBERSEC-12172 regression).
+    """
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as zf:
+        zf.writestr("payload/app.bin", b"binary")
+    outer = input_dir / "outer.zip"
+    _zip_file(outer, {"nested/inner.zip": inner.getvalue()})
+
+    output = tmp_path / "out"
+    manifest = extract_artifacts(input_dir, output, max_depth=2)
+
+    assert manifest["status"] == "pass"
+    assert manifest["extracted_count"] == 2
+    assert list(output.rglob("app.bin"))
+
+
 def test_extract_artifacts_blocks_zip_slip_paths(tmp_path: Path):
     archive = tmp_path / "bad.zip"
     _zip_file(archive, {"../evil.txt": b"nope"})

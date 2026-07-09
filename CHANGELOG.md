@@ -55,6 +55,13 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `test_activate_best_windows_permission_error_uses_fallback` патчит его вместо
   `os.name` глобально. Исправляет `INTERNALERROR` в pytest на Linux
   (CI ubuntu-latest), присутствовавший с `2d801a0` (2026-06-20). (`38c04dd`)
+- `extractor.py`: `extract_artifacts` падал с непойманным `ValueError` при
+  входе-директории, содержащей архив с вложенными архивами — rel-путь
+  вложенного архива (он находится в ВЫХОДНОМ дереве) вычислялся относительно
+  input-директории; extract-стадия обрывалась целиком, манифест не писался
+  (воспроизводилось на `_SCA/CYBERSEC-12172`). rel теперь считается
+  относительно фактического корня (input или output). Регрессионный тест:
+  `test_extract_artifacts_directory_input_with_nested_archives`. (этот коммит)
 
 ### Documentation
 
