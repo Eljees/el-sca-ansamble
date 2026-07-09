@@ -306,7 +306,10 @@ def test_hidden_artifact_cards_lose_their_neon_outline():
 
     gui = render_gui()
     assert ".artifact-card:hover" in gui
-    assert ".artifact-card.deleted { opacity:.5; border-color:var(--line); box-shadow:none; }" in gui
+    assert (
+        ".artifact-card.deleted { opacity:.5; border-color:var(--line); "
+        "box-shadow:none; transition:none; }"
+    ) in gui
 
 
 def test_gui_keeps_mutagen_barrels_acid_green():

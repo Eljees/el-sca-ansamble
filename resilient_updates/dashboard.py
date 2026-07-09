@@ -629,8 +629,10 @@ _GUI_HTML = """<!doctype html>
                    border-radius:2px; background:var(--ok); box-shadow:0 0 10px var(--ok);
                    opacity:.55; transition:opacity .25s ease; }
   .artifact-card:hover::before { opacity:1; }
-  /* Скрытый проект гаснет целиком: ни рамки, ни свечения. */
-  .artifact-card.deleted { opacity:.5; border-color:var(--line); box-shadow:none; }
+  /* Скрытый проект гаснет целиком: ни рамки, ни свечения.  transition:none —
+     box-shadow не интерполируется из списка теней в `none` предсказуемо, и
+     карточка успевает мигнуть неоном; гаснуть она должна сразу. */
+  .artifact-card.deleted { opacity:.5; border-color:var(--line); box-shadow:none; transition:none; }
   .artifact-card.deleted::before { display:none; }
   .artifact-card.deleted:hover { transform:none; box-shadow:none; border-color:var(--line); }
   .artifact-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
