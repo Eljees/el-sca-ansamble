@@ -59,6 +59,10 @@ ignore = [
 "resilient_updates/monitor.py" = [
   "RUF001", # operator-facing Russian status strings (с/c lookalikes are intended Cyrillic)
 ]
+"resilient_updates/themes.py" = [
+  "RUF001", # operator-facing Russian theme taglines rendered into the GUI
+  "RUF003", # comment uses A–E / F–J en dashes for the two theme families
+]
 "resilient_updates/pipeline_state.py" = [
   "RUF002", # docstring mixes Russian terms (resume «с чекпоинта»)
 ]

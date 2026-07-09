@@ -524,24 +524,30 @@ _GUI_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>el-sca-ansamble — анализ артефактов</title>
 <style>
-  /* ── Phosphor CRT ──────────────────────────────────────────────────────
-     Зелёный фосфорный монохром. Бочки с мутагеном намеренно оставлены в
-     своей кислотной зелени — они и так родные для этой палитры.          */
-  :root { --bg:#020a04; --panel:#04170a; --line:#0d3a1c; --fg:#8dffb0;
-          --muted:#3f9c5f; --accent:#35ff7a; --ok:#35ff7a; --active:#b7ff5a; --err:#ff5f56;
+  /* ── Rose Phosphor ─────────────────────────────────────────────────────
+     Текст остаётся фосфорно-зелёным, хром — розовый.  Красный НЕ занят под
+     украшение: он держит смысл (упавший этап, ✕ на недоступном источнике,
+     «Удалить навсегда»), поэтому акцент — розовый, а ошибка — алая.
+
+     Фон-эффекты — слои background у body, поэтому физически под контентом.
+     Прошлая ревизия рисовала сканлайны и виньетку в fixed-псевдоэлементах
+     поверх всего интерфейса: текст рябил, а панель выглядела мрачной.     */
+  :root { --bg:#0f0a10; --panel:#1a1019; --surface:#211426; --line:#40203a; --line2:#5a2c50;
+          --fg:#c9ffd9; --muted:#a37fa0; --accent:#ff77c8; --ok:#4dffa0; --active:#ffd166;
+          --err:#ff5f56; --glow:#ff77c866;
           --mono:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.5 var(--mono); }
-  /* Сканлайны CRT + лёгкое виньетирование. pointer-events:none, чтобы не
-     перехватывать клики; fixed, чтобы не ехали при скролле. */
-  body::before { content:""; position:fixed; inset:0; z-index:9999; pointer-events:none;
-                 background:repeating-linear-gradient(0deg,#000 0 1px,transparent 1px 3px);
-                 opacity:.22; }
-  body::after { content:""; position:fixed; inset:0; z-index:9998; pointer-events:none;
-                background:radial-gradient(ellipse at center,transparent 60%,#000a 100%);
-                opacity:.5; }
-  h1,h2,.nm { text-shadow:0 0 6px #35ff7a55; }
+  /* Фон-эффекты — слои самого body, а не оверлей: диагональный розово-мятный
+     градиент и очень слабые сканлайны.  Так они физически не могут оказаться
+     поверх текста — в отличие от предыдущего fixed-оверлея поверх интерфейса. */
+  body { margin:0; color:var(--fg); font:14px/1.5 var(--mono);
+         background-color:var(--bg);
+         background-image:linear-gradient(120deg,#ff77c81f,transparent 50%,#4dffa01a 100%),
+                          repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 4px);
+         background-attachment:fixed; }
+  h1,h2 { text-shadow:0 0 10px var(--glow); }
+  a, button, .stage, .pill, .barrel { transition:color .2s ease, border-color .2s ease,
+                                      box-shadow .25s ease, background-color .2s ease; }
   header { padding:16px 24px; border-bottom:1px solid var(--line);
            display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   h1 { font-size:18px; margin:0; }
@@ -555,19 +561,20 @@ _GUI_HTML = """<!doctype html>
        color:var(--muted); margin:0 0 14px; }
   #drop { border:2px dashed var(--line); border-radius:12px; padding:36px;
           text-align:center; color:var(--muted); cursor:pointer; transition:.15s; }
-  #drop.hot { border-color:var(--accent); background:#13243d; color:var(--fg); }
+  #drop.hot { border-color:var(--accent); background:#2b1128; color:var(--fg);
+              box-shadow:0 0 24px var(--glow) inset; }
   #drop b { color:var(--fg); }
   .pipeline { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .stage { flex:1 1 120px; min-width:110px; padding:10px 12px; border-radius:10px;
-           border:1px solid var(--line); background:#10161d; position:relative; }
+           border:1px solid var(--line); background:var(--surface); position:relative; }
   .stage .lbl { font-weight:600; }
   .stage .st { font-size:12px; color:var(--muted); margin-top:2px; }
   .stage.pending { opacity:.55; }
   .stage.active { border-color:var(--active); box-shadow:0 0 0 1px var(--active) inset;
                   animation:pulse-border 1.8s ease-in-out infinite; }
   @keyframes pulse-border {
-    0%,100% { box-shadow:0 0 0 1px var(--active) inset,0 0 4px #3b82f633; }
-    50%      { box-shadow:0 0 0 1px var(--active) inset,0 0 10px #3b82f688; }
+    0%,100% { box-shadow:0 0 0 1px var(--active) inset,0 0 6px #ffd16644; }
+    50%      { box-shadow:0 0 0 1px var(--active) inset,0 0 18px #ffd16699; }
   }
   .stage.active .st { color:var(--active); }
   .stage .timer { font-size:11px; color:var(--muted); margin-top:3px; min-height:14px; }
@@ -576,11 +583,11 @@ _GUI_HTML = """<!doctype html>
   .stage.done .st { color:var(--ok); }
   .stage.error { border-color:var(--err); }
   .stage.error .st { color:var(--err); }
-  pre#log { background:#0a0e12; border:1px solid var(--line); border-radius:10px;
+  pre#log { background:#140d15; border:1px solid var(--line); border-radius:10px;
             padding:12px; height:300px; overflow:auto; margin:0; white-space:pre-wrap;
             font:12px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace; color:#c8d3de; }
   .tools { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
-  .tool { border:1px solid var(--line); border-radius:10px; padding:12px; background:#10161d; }
+  .tool { border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--surface); }
   .tool .tn { font-weight:600; display:flex; justify-content:space-between; gap:8px; }
   .tool .role { color:var(--muted); font-size:12px; }
   .tool dl { margin:10px 0 0; display:grid; grid-template-columns:auto 1fr; gap:2px 10px; }
@@ -589,9 +596,10 @@ _GUI_HTML = """<!doctype html>
   .pill { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line); }
   .pill.fresh,.pill.active,.pill.ok { color:var(--ok); border-color:#1c3a24; }
   .pill.healthcheckonly,.pill.failed { color:var(--active); border-color:#3a3214; }
-  button { font:inherit; border:1px solid var(--line); background:#062a12; color:var(--fg);
+  button { font:inherit; border:1px solid var(--line); background:#231020; color:var(--fg);
            padding:9px 16px; border-radius:9px; cursor:pointer; }
-  button:hover { border-color:var(--accent); box-shadow:0 0 8px #35ff7a33; }
+  button:hover { border-color:var(--accent); color:var(--accent);
+                 box-shadow:0 0 14px var(--glow); transform:translateY(-1px); }
   button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
   /* Необратимое действие подсвечено красным — единственный не-зелёный акцент. */
   button.danger { border-color:#5c1a18; background:#1e0806; color:#ff8a80; }
@@ -602,7 +610,7 @@ _GUI_HTML = """<!doctype html>
   .tools-select { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:12px; }
   .tools-select label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   .artifact-list { display:grid; gap:12px; }
-  .artifact-card { border:1px solid var(--line); border-radius:12px; background:#10161d; padding:14px; }
+  .artifact-card { border:1px solid var(--line); border-radius:12px; background:var(--surface); padding:14px; }
   .artifact-card.deleted { opacity:.5; }
   .artifact-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
   .artifact-name { font-size:15px; font-weight:700; }
@@ -611,14 +619,38 @@ _GUI_HTML = """<!doctype html>
   .artifact-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-top:12px; }
   .artifact-fields label { display:grid; gap:6px; font-size:12px; color:var(--muted); }
   .artifact-fields input { width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line);
-                           background:#0a0e12; color:var(--fg); }
+                           background:#140d15; color:var(--fg); }
+  .artifact-fields input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 10px var(--glow); }
+  /* ── Превью тем: раскрывается, но выбрать нельзя ─────────────────────── */
+  .theme-picker { position:relative; }
+  .theme-picker > summary { list-style:none; cursor:pointer; user-select:none;
+        font-size:12px; color:var(--muted); padding:5px 12px; border-radius:9px;
+        border:1px dashed var(--line2); background:var(--surface); }
+  .theme-picker > summary::-webkit-details-marker { display:none; }
+  .theme-picker > summary:hover { border-color:var(--accent); color:var(--accent); }
+  .theme-picker .soon { font-size:10px; padding:1px 6px; border-radius:999px;
+        border:1px solid var(--line2); margin-left:6px; opacity:.8; }
+  .theme-panel { position:absolute; top:calc(100% + 8px); left:0; z-index:50; width:min(760px,86vw);
+        background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px;
+        box-shadow:0 12px 40px #000a, 0 0 24px var(--glow); }
+  .theme-note { margin:0 0 10px; font-size:12px; color:var(--muted); }
+  .theme-grid { list-style:none; margin:0; padding:0; display:grid; gap:10px;
+        grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); }
+  .theme-card { border:1px solid var(--line); border-radius:10px; padding:10px; background:var(--surface); }
+  .theme-chips { display:flex; gap:3px; margin-bottom:8px; }
+  .theme-chips i { flex:1; height:16px; border-radius:3px; border:1px solid #0006; }
+  .theme-name { font-size:12px; font-weight:700; display:flex; align-items:center; gap:6px; }
+  .theme-active { font-size:9px; padding:1px 6px; border-radius:999px;
+        border:1px solid var(--accent); color:var(--accent); font-weight:400; }
+  .theme-tag { font-size:11px; color:var(--muted); margin:3px 0 8px; min-height:28px; }
+  .theme-card button { width:100%; padding:5px 8px; font-size:11px; }
   .artifact-runs { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .artifact-runs button { padding:5px 10px; font-size:12px; }
   /* analysis map */
   #map { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
   .map-col { display:flex; flex-direction:column; gap:8px; }
   .map-node { padding:8px 12px; border:1px solid var(--line); border-radius:10px;
-              background:#10161d; min-width:120px; text-align:center; font-size:13px; }
+              background:var(--surface); min-width:120px; text-align:center; font-size:13px; }
   .map-node .ms { font-size:11px; color:var(--muted); }
   .map-node.active { border-color:var(--active); box-shadow:0 0 0 1px var(--active) inset; }
   .map-node.active .ms { color:var(--active); }
@@ -660,7 +692,7 @@ _GUI_HTML = """<!doctype html>
   .barrel.broken .barrel-pct { color:#ff7a7c; text-shadow:none; }
   .barrel-pct { position:absolute; top:6px; left:0; right:0; text-align:center; z-index:4;
             font-weight:700; font-size:13px; color:#0a0e12; text-shadow:0 0 3px #b6ff3a; }
-  .barrel-pct.low { color:#e6edf3; text-shadow:none; }
+  .barrel-pct.low { color:var(--fg); text-shadow:none; }
   .barrel-box .bt { font-weight:600; }
   .barrel-box .bsub { font-size:11px; color:var(--muted); text-align:center; }
   .barrel-box button { padding:5px 10px; font-size:12px; width:100%; }
@@ -672,7 +704,7 @@ _GUI_HTML = """<!doctype html>
   .mini .bsub { font-size:10px; }
   .mini button { padding:2px 4px; font-size:10px; width:100%; }
   /* proxy toggle */
-  .proxy-ctl { display:flex; align-items:center; gap:8px; background:#10161d;
+  .proxy-ctl { display:flex; align-items:center; gap:8px; background:var(--surface);
                border:1px solid var(--line); border-radius:9px; padding:5px 12px; }
   .proxy-ctl span { font-size:12px; color:var(--muted); }
   .proxy-btn { padding:3px 10px; font-size:12px; border-radius:6px; min-width:90px; transition:.15s; }
@@ -693,6 +725,7 @@ _GUI_HTML = """<!doctype html>
     <span id="route-info" class="muted" style="font-size:12px">—</span>
     <button class="proxy-btn" id="btn-route" onclick="refreshRoute()" title="Перепроверить сеть">🔄</button>
   </div>
+  <!--THEME_PICKER-->
   <span class="muted" style="margin-left:auto" id="conn"></span>
 </header>
 <main class="grid">
@@ -1354,7 +1387,9 @@ loadRoute();
 
 def render_gui() -> str:
     """Return the active dashboard GUI (drag-drop scan + pipeline + DB cards)."""
-    return _GUI_HTML
+    from .themes import render_theme_picker
+
+    return _GUI_HTML.replace("<!--THEME_PICKER-->", render_theme_picker())
 
 
 def _artifact_runs_payload(

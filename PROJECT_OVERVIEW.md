@@ -57,6 +57,13 @@ Single source of truth: `versions.env` (CI enforces agreement with
 - Add linux + offline compose overlays to the compose-config CI matrix.
 - Unify (or clearly document) the Python vs shell S3-publish paths.
 - Reduce `cli.py` / `dashboard.py` size behind tests; drop `datetime` shims once the minimum Python rises.
+- **Theme switching.** Ten palettes are already shipped as data in
+  [`resilient_updates/themes.py`](resilient_updates/themes.py) and previewed by the
+  `🎨 Темы` picker in the dashboard header. The picker is intentionally inert
+  (every "Выбрать" is `disabled`): switching at runtime — write the chosen
+  palette into `:root`, persist the choice per operator — is planned, not shipped.
+  The mutagen barrels stay acid green in every variant, because their colour
+  encodes DB fill level.
 - Continue operator-UX work: container progress, live logs, report viewer, resumable long-run snapshots.
 
 ## Getting Started

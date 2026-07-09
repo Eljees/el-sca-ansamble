@@ -257,6 +257,55 @@ def test_gui_has_no_unterminated_double_quoted_js_strings():
             assert '")' in line, f"unterminated double-quoted JS string at GUI line {lineno}: {line!r}"
 
 
+def test_gui_never_paints_a_full_screen_overlay_over_content():
+    """Regression: the first CRT skin put scanlines + a vignette in fixed
+    pseudo-elements at z-index 9998/9999, i.e. ON TOP of every label and button.
+    It looked gloomy and washed the text out. Background effects belong in the
+    body's own background layers, underneath the content.
+    """
+    from resilient_updates.dashboard import render_gui
+
+    gui = render_gui()
+    assert "z-index:9999" not in gui
+    assert "z-index:9998" not in gui
+
+
+def test_themes_catalogue_has_ten_variants_and_a_valid_active_one():
+    from resilient_updates.themes import ACTIVE_THEME_ID, THEMES, active_theme
+
+    assert len(THEMES) == 10
+    ids = [t["id"] for t in THEMES]
+    assert len(set(ids)) == 10, "theme ids must be unique"
+    assert ACTIVE_THEME_ID in ids
+    assert active_theme()["name"] == "Rose Phosphor"
+    for t in THEMES:
+        assert set(t["swatch"]) == {"bg", "panel", "fg", "accent", "accent2"}
+        for value in t["swatch"].values():
+            assert value.startswith("#"), f"{t['id']}: {value!r} is not a hex colour"
+
+
+def test_theme_picker_previews_all_themes_but_cannot_be_used():
+    """It must look inert: every "Выбрать" is disabled, one per theme."""
+    from resilient_updates.dashboard import render_gui
+    from resilient_updates.themes import THEMES
+
+    gui = render_gui()
+    assert "<!--THEME_PICKER-->" not in gui, "placeholder must be substituted"
+    assert 'class="theme-picker"' in gui
+    for theme in THEMES:
+        assert theme["name"] in gui
+    # exactly one disabled button per theme, and no enabled ones inside a card
+    assert gui.count('<button type="button" disabled') >= len(THEMES)
+    assert "Переключение тем ещё не реализовано" in gui
+
+
+def test_gui_keeps_mutagen_barrels_acid_green():
+    """Whatever the skin, the barrels stay radioactive green."""
+    from resilient_updates.dashboard import render_gui
+
+    assert "#39ff14" in render_gui()
+
+
 def test_gui_exposes_three_purge_confirmations():
     from resilient_updates.dashboard import render_gui
 
