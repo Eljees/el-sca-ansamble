@@ -4,6 +4,12 @@
 
 These instructions apply to the whole repository.
 
+## Start Here
+
+Read **`00_PROJECT_CONTEXT.md`** first. It is the canonical onboarding doc:
+versions, module map, DB/provenance behaviour, the live `10.2.108.47`
+deployment (access, egress, `.env` deltas), and the current carry-forward.
+
 ## Project Shape
 
 `el-sca-ansamble` is a Docker-based SCA stack for Trivy, Grype, Syft, and

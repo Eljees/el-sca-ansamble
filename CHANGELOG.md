@@ -71,6 +71,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Documentation
 
+- `00_PROJECT_CONTEXT.md`: переведён из untracked-черновика в отслеживаемый
+  onboarding-док для агентов — версии, карта модулей, поведение
+  provenance/дашборда, живая развёртка `10.2.108.47` (доступ, egress,
+  `.env`-дельты), carry-forward. `AGENTS.md` теперь ссылается на него как на
+  точку входа. (аудит-fixup 2026-07-09)
 - `PROJECT_OVERVIEW.md`: новый обзор проекта (версии, фичи, известные баги,
   roadmap) для публикации на GitHub и GitLab. (аудит-fixup 2026-07-09)
 - `CONTRIBUTING.md`: добавлена секция "Known dev-environment gotchas" —
