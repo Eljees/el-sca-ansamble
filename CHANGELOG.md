@@ -22,6 +22,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `dashboard.py` (`tool_status`) + GUI: карточки БД отдают `db_updated_kind`
+  (`built` | `imported` | `null`). Grype/Trivy показывают дату сборки базы
+  апстримом, cve-bin-tool — время нашего импорта (у NVD JSON-фидов нет даты
+  сборки). Бочка подписывает это как `· сборка` / `· импорт` + тултип, чтобы
+  разные по смыслу даты не выглядели одинаково. (аудит-fixup 2026-07-09)
 - `monitor.py` / dashboard GUI: `GET /api/monitor` теперь включает
   `latest_run`, а панель «Монитор · контейнеры и прогресс» показывает
   последний сохранённый snapshot/checkpoint текущего контура.
@@ -46,6 +51,13 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `versions.env` / `docker-compose.yml` / `.env.example`: `SEAWEEDFS_VERSION` и
+  `MINIO_MC_VERSION` запиннены (`4.38`, `RELEASE.2025-08-13T08-35-41Z`) — раньше
+  их не было в `versions.env` вовсе, и оба уходили в `latest`, из-за чего
+  storage-слой молча дрейфовал (уехал на SeaweedFS 4.x с новой STS-подсистемой).
+  Проверено: статические identities из `configs/seaweedfs/s3.json` работают,
+  анонимный доступ отбивается `403`; лог `Failed to load IAM configuration:
+  no signing key found for STS service` безобиден. (аудит-fixup 2026-07-09)
 - `dashboard.py` (`tool_status`): счётчики cve-bin-tool по источникам теперь
   сопоставляются регистронезависимо. `cve_bin_tool/data_sources/curl_source.py`
   пишет в `cve.db` источник как `Curl`, а дашборд искал ключ `CURL` — бочка

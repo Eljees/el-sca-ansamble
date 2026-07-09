@@ -37,7 +37,7 @@ Single source of truth: `versions.env` (CI enforces agreement with
 - **Network intelligence:** route-doctor probes egress from inside the Docker network and picks direct / proxy / VPN per tool.
 - **Internal S3 mirror** (SeaweedFS, compose profile `storage`) for DBs and scan results; provenance + reproducibility metadata (`input_sha256`, `db_snapshot_id`, `policy_decision`).
 - **Cross-platform:** POSIX (`scripts/*.sh`) and Windows (`scripts/windows/*.ps1`) entrypoints.
-- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**908 tests** green as of 2026-07-09).
+- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**910 tests** green as of 2026-07-09).
 
 ## Known Issues & Limitations
 

@@ -30,7 +30,7 @@ storage/artifact layout, deployment facts, or operator commands change.
   is the `.env.bak-*` backup.
 - Latest audit doc: `docs/audit/660-analysis-2026-07-09.md`.
 - Validation at this snapshot: `ruff check` passed, `ruff format --check` passed,
-  **908 tests passed** on Windows.
+  **910 tests passed** on Windows.
 
 Commits landed after audit 660 (newest first, all on both remotes):
 
@@ -172,6 +172,8 @@ OSV_SCANNER_VERSION=latest
 XRAY_VERSION=latest
 TINYPROXY_VERSION=latest
 WIREGUARD_VERSION=latest
+SEAWEEDFS_VERSION=4.38
+MINIO_MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 PYTHON_BASE_IMAGE=python:3.12-slim
 JAVA_XMX=512m
 ```
@@ -224,11 +226,14 @@ Known architecture notes from audit 660:
   `artifacts/provenance/<tool>.json`. No provenance file → the barrel is
   permanently empty, even if the DB exists in its volume. That was the Trivy
   bug fixed in `62fc073`.
-- Date semantics differ per scanner and are **not** unified:
-  - Grype → `built` (when upstream built the DB);
-  - Trivy → `db_updated_at` (`UpdatedAt` from `db/metadata.json`);
+- Date semantics differ per scanner, so each card also carries
+  `db_updated_kind` (`built` | `imported` | `null`) and the GUI labels it
+  (`· сборка` / `· импорт`, with a tooltip):
+  - Grype → `built` (when upstream built the DB) → `built`;
+  - Trivy → `db_updated_at` (`UpdatedAt` from `db/metadata.json`) → `built`,
+    falling back to the update-run clock → `imported`;
   - cve-bin-tool → `timestamp_utc` (when *we* ran the import — the NVD JSON
-    feeds carry no DB build date).
+    feeds carry no DB build date) → always `imported`.
 - cve-bin-tool per-source counts come from `cve_range_by_source`. cve-bin-tool
   writes its own spelling, and `curl_source.py` uses `SOURCE = "Curl"` while
   the rest are upper-case — the lookup is case-insensitive since `fc0d59d`.
@@ -419,8 +424,8 @@ EL_SCA_S3_BUCKET=el-sca
 EL_SCA_S3_ACCESS_KEY=el-sca
 EL_SCA_S3_SECRET_KEY=el-sca-secret
 EL_SCA_S3_ALIAS=elsca
-SEAWEEDFS_VERSION=latest
-MINIO_MC_VERSION=latest
+SEAWEEDFS_VERSION=4.38
+MINIO_MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 ```
 
 Rotate these S3 credentials for any real/shared environment.
@@ -531,10 +536,29 @@ cve-bin-tool update routing:
 
 S3-compatible storage is provided by SeaweedFS.
 
-> Reality check (2026-07-09): SeaweedFS is **not running** on the `10.2.108.47`
-> deployment — no `weed` process, nothing listening on `8333`,
-> `artifacts/mirror/` is empty. There, "the S3 artifacts" are simply the on-disk
-> tree `artifacts/runs/` + `artifacts/uploads/`. Treat that tree as evidence.
+> Reality check (verified 2026-07-09):
+>
+> - **The S3 layer works.** Brought up locally: `mc alias set` + `mb` + `ls`
+>   authenticate with the `el-sca` identity from `configs/seaweedfs/s3.json`,
+>   and anonymous `GET /` is correctly refused (`403 AccessDenied`).
+> - **The startup error is benign.** SeaweedFS ≥ 4.x logs
+>   `Failed to load IAM configuration: no signing key found for STS service`.
+>   That is the *new STS/assume-role* subsystem, not the static identities the
+>   project uses; the S3 API still starts and enforces them. Ignore it (or set
+>   `jwt.filer_signing.key` in `security.toml` if you ever want STS).
+> - **Versions are pinned** (`SEAWEEDFS_VERSION`, `MINIO_MC_VERSION` in
+>   `versions.env`). They used to default to `latest`, which silently drifted
+>   the storage layer — the one thing `versions.env` exists to prevent.
+> - **It is not deployed on `10.2.108.47`** — the `storage` profile was never
+>   brought up, so nothing listens on `8333` and `artifacts/mirror/` is empty;
+>   `EL_SCA_RESULTS_TO_S3` and `make s3-*` are inert there. Nothing is broken,
+>   it is simply off. There, "the S3 artifacts" are the on-disk tree
+>   `artifacts/runs/` + `_SCA_reports/` + `artifacts/uploads/` — that is the evidence.
+> - `s3-client` (profile `storage-tools`) `depends_on` `seaweedfs` (profile
+>   `storage`), so it must be invoked with **both** profiles and `--no-deps`.
+>   `scripts/s3_storage.sh` and `resilient_updates/s3_publish.py` both do this
+>   correctly; a bare `--profile storage-tools run s3-client` fails with
+>   `depends on undefined service "seaweedfs"`.
 
 Services:
 
@@ -864,12 +888,24 @@ Open, security-flavoured (owner action required):
 - `artifacts/` on the deployment is `0777` (~570 world-writable paths), created
   that way by the `volinit` profile. Evidence integrity risk.
 
+Done since (2026-07-09, later pass):
+
+- ~~Unify GUI date semantics~~ — each card now carries `db_updated_kind` and the
+  barrel is labelled `· сборка` / `· импорт` with a tooltip.
+- ~~S3 pinning~~ — `SEAWEEDFS_VERSION` / `MINIO_MC_VERSION` moved into
+  `versions.env` (were unpinned `latest`).
+- `default_report_path` was **not** broken: `/api/artifacts/{id}/runs` returns
+  `reports/final/index.html` correctly. The confusion came from `/api/runs`,
+  which simply does not carry that field.
+
 Open, engineering:
 
 - Rebuild and push `elariaphd/el-sca-*` images — they still carry pre-`cff6529`
   code. Compose runs are fine (mounted `/workspace` wins); standalone runs are not.
-- Unify GUI date semantics (`built` vs `db_updated_at` vs `timestamp_utc`) or
-  label them explicitly in the card/tooltip.
+- Enable the `storage` profile on the deployment if S3 mirroring is actually
+  wanted there; rotate `el-sca` / `el-sca-secret` first (they are committed in
+  `configs/seaweedfs/s3.json`, which is on the public GitHub mirror).
+- Unify `s3_publish.py` and `scripts/s3_storage.sh` (duplicated S3 behaviour).
 - Upstream cve-bin-tool 3.4 bugs to report or work around: EPSS `TypeError`,
   PURL2CPE `no such table`, OSV unbounded memory. Currently sidestepped with
   `CVE_BIN_TOOL_ENRICH_DISABLE`.

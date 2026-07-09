@@ -827,6 +827,49 @@ def test_tool_status_cbt_source_names_are_case_insensitive(tmp_path: Path):
     assert by_name["OSV"]["count"] == 0
 
 
+def test_tool_status_db_updated_kind_built_vs_imported(tmp_path: Path):
+    """Grype/Trivy expose the upstream BUILD date; cve-bin-tool an IMPORT time."""
+    prov = _prov_dir(tmp_path)
+    (prov / "grype.json").write_text(
+        json.dumps({"activation_status": "active", "built": "2026-07-09T07:25:16Z"}),
+        encoding="utf-8",
+    )
+    (prov / "trivy.json").write_text(
+        json.dumps(
+            {
+                "activation_status": "active",
+                "db_updated_at": "2026-07-09T07:49:39Z",
+                "timestamp_utc": "2026-07-09T14:13:25Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (prov / "cve-bin-tool-update-status.json").write_text(
+        json.dumps({"status": "degraded", "timestamp_utc": "2026-07-09T16:03:47Z"}),
+        encoding="utf-8",
+    )
+    by_name = {t["name"]: t for t in tool_status(tmp_path)["tools"]}
+
+    assert by_name["Grype"]["db_updated_kind"] == "built"
+    # Trivy must prefer the DB's own build date over the update-run wall clock
+    assert by_name["Trivy"]["db_updated"] == "2026-07-09T07:49:39Z"
+    assert by_name["Trivy"]["db_updated_kind"] == "built"
+    assert by_name["cve-bin-tool"]["db_updated_kind"] == "imported"
+    assert by_name["Syft"]["db_updated_kind"] is None
+
+
+def test_tool_status_db_updated_kind_falls_back_to_imported(tmp_path: Path):
+    """Without a build date, Trivy degrades to reporting the import time."""
+    prov = _prov_dir(tmp_path)
+    (prov / "trivy.json").write_text(
+        json.dumps({"activation_status": "active", "timestamp_utc": "2026-07-09T14:13:25Z"}),
+        encoding="utf-8",
+    )
+    trivy = next(t for t in tool_status(tmp_path)["tools"] if t["name"] == "Trivy")
+    assert trivy["db_updated"] == "2026-07-09T14:13:25Z"
+    assert trivy["db_updated_kind"] == "imported"
+
+
 def test_tool_status_fill_degraded(tmp_path: Path):
     """degraded status → fill == 80."""
     prov = _prov_dir(tmp_path)

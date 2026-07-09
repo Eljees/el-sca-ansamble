@@ -441,6 +441,23 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
     trivy_status = _status("trivy")
     cbt_status = _status("cve-bin-tool-db") or _status("cve-bin-tool-update-status")
 
+    # The three scanners do NOT mean the same thing by "db_updated":
+    #   built    — when upstream built the DB (Grype `built`, Trivy `UpdatedAt`)
+    #   imported — when *we* ran the import (cve-bin-tool: the NVD JSON feeds
+    #              carry no build date, so the wall clock is all we have)
+    # Expose which one it is instead of silently mixing them in one column.
+    trivy_payload = prov.get("trivy") or {}
+    grype_built = _deep_find(grype_payload, "built")
+    trivy_built = _deep_find(trivy_payload, "db_updated_at")
+    grype_updated = grype_built or _updated("grype")
+    trivy_updated = trivy_built or _updated("trivy")
+    cbt_updated = _updated("cve-bin-tool-db", "cve-bin-tool-update-status")
+
+    def _kind(built: Any, updated: Any) -> str | None:
+        if not updated:
+            return None
+        return "built" if built else "imported"
+
     tools = [
         {
             "name": "Syft",
@@ -448,6 +465,7 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "version": versions.get("SYFT_VERSION", "—"),
             "db_status": "n/a",
             "db_updated": None,
+            "db_updated_kind": None,
             "detail": "no vulnerability DB (produces SBOM)",
             "fill": None,
             "update_target": None,
@@ -457,7 +475,8 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "role": "SBOM → CVE scanner",
             "version": versions.get("GRYPE_VERSION", "—"),
             "db_status": grype_status,
-            "db_updated": _deep_find(grype_payload, "built") or _updated("grype"),
+            "db_updated": grype_updated,
+            "db_updated_kind": _kind(grype_built, grype_updated),
             "detail": (f"checksum {str(grype_checksum)[:23]}…" if grype_checksum else "anchore DB"),
             "fill": _fill(grype_status),
             "update_target": "grype",
@@ -470,7 +489,8 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             # Prefer the DB's own build time (written by scripts/update_trivy.sh
             # from db/metadata.json -> UpdatedAt), mirroring Grype's "built".
             # Fall back to the update-run wall clock when it is absent.
-            "db_updated": _deep_find(prov.get("trivy") or {}, "db_updated_at") or _updated("trivy"),
+            "db_updated": trivy_updated,
+            "db_updated_kind": _kind(trivy_built, trivy_updated),
             "detail": "aquasec trivy-db",
             "fill": _fill(trivy_status),
             "update_target": "trivy",
@@ -480,7 +500,9 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "role": "binary CVE scanner",
             "version": "local build",
             "db_status": cbt_status,
-            "db_updated": _updated("cve-bin-tool-db", "cve-bin-tool-update-status"),
+            # The NVD JSON feeds carry no build date -> this is always an import time.
+            "db_updated": cbt_updated,
+            "db_updated_kind": _kind(None, cbt_updated),
             "detail": (
                 f"{int(cbt_counts):,} CVE rows" if isinstance(cbt_counts, (int, float)) else "NVD feed DB"
             ),
@@ -1067,6 +1089,19 @@ function fmtTime(t){
   if(!t) return "—";
   const d = new Date(t); return isNaN(d) ? t : d.toLocaleString();
 }
+// Grype/Trivy report when upstream BUILT the DB; cve-bin-tool can only report
+// when we IMPORTED it (the NVD JSON feeds carry no build date). Label which.
+const DB_DATE_SUFFIX = { built: " · сборка", imported: " · импорт" };
+const DB_DATE_TITLE = {
+  built: "дата сборки базы апстримом",
+  imported: "время импорта базы у нас — у источника нет даты сборки",
+};
+function dbDateSuffix(t){
+  return (t.db_updated && DB_DATE_SUFFIX[t.db_updated_kind]) || "";
+}
+function dbDateTitle(t){
+  return (t.db_updated && DB_DATE_TITLE[t.db_updated_kind]) || "";
+}
 function barrel(fill, mini, stage, unavailable){
   const na = (fill == null);
   const f = na ? 0 : Math.max(0, Math.min(100, fill));
@@ -1115,7 +1150,7 @@ async function loadTools(){
       ${barrel(t.fill, false, t.update_target)}
       <div class="bt">${t.name}</div>
       <div class="bsub">${t.version||"—"} · ${t.db_status||"n/a"}</div>
-      <div class="bsub">${fmtTime(t.db_updated)}</div>
+      <div class="bsub" title="${dbDateTitle(t)}">${fmtTime(t.db_updated)}${dbDateSuffix(t)}</div>
       ${btn}${sources}`;
     box.appendChild(el);
   });
