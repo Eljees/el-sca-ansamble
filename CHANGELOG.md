@@ -58,6 +58,8 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Documentation
 
+- `PROJECT_OVERVIEW.md`: новый обзор проекта (версии, фичи, известные баги,
+  roadmap) для публикации на GitHub и GitLab. (аудит-fixup 2026-07-09)
 - `CONTRIBUTING.md`: добавлена секция "Known dev-environment gotchas" —
   описание FUSE/stale-mount проблемы (mtime не обновляется через FUSE,
   Python грузит stale `.pyc`) и три варианта обхода. (FUSE-DOCS)

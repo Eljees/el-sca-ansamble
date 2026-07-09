@@ -1,0 +1,63 @@
+# el-sca-ansamble — Project Overview
+
+`el-sca-ansamble` is a Docker-based, wrapper-first **SCA (software composition
+analysis) stack** for repeatable vulnerability analysis of archives, binaries,
+APKs, Windows installers, container images, and extracted software trees. Drop an
+artifact into the web dashboard and get an SBOM + multi-scanner vulnerability
+report. Code, scanner images, and vulnerability DBs are all delivered via
+`git clone` (Git LFS bundle), so it runs fully offline / air-gapped.
+
+Distribution: **GitHub** `github.com/Eljees/el-sca-ansamble` ·
+**GitLab** `gitlab01.soc.rt.ru/yurij.m.tumanov/el-sca-ansamble`.
+
+## Versions
+
+Single source of truth: `versions.env` (CI enforces agreement with
+`pyproject.toml` and `docker-compose.yml`). Latest changes live in
+`CHANGELOG.md` under `[Unreleased]`.
+
+| Component | Version |
+|-----------|---------|
+| Project (`el-sca`, SemVer) | **0.1.5** (Python ≥ 3.10) |
+| Trivy | 0.64.1 |
+| Grype | v0.112.0 |
+| Syft | v1.20.0 |
+| cve-bin-tool | 3.4 |
+| OSV scanner | latest (optional) |
+| Base image | python:3.12-slim |
+| Sidecars | Xray / tinyproxy / WireGuard (latest) |
+
+## Features
+
+- **Pipeline:** `extract → SBOM (Syft) → Grype / Trivy / cve-bin-tool / (optional OSV) → report`, with a final Markdown + HTML report.
+- **Resilient & offline-first:** runs from bundled images and prewarmed DBs; explicit (never silent) DB updates; `offline` / `airgap` compose profiles.
+- **FastAPI dashboard** (`:8088`): drag-drop upload, live per-stage pipeline + logs, report viewer, artifact catalog with `CYBERSEC-XXXXX` case IDs, DB-freshness "barrels", and proxy/route toggles.
+- **Recoverable long runs:** stage checkpoints + per-run evidence snapshots (`artifacts/runs/<run-id>/`); resume from last completed stage.
+- **Network intelligence:** route-doctor probes egress from inside the Docker network and picks direct / proxy / VPN per tool.
+- **Internal S3 mirror** (SeaweedFS, compose profile `storage`) for DBs and scan results; provenance + reproducibility metadata (`input_sha256`, `db_snapshot_id`, `policy_decision`).
+- **Cross-platform:** POSIX (`scripts/*.sh`) and Windows (`scripts/windows/*.ps1`) entrypoints.
+- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**898 tests** green as of 2026-07-09).
+
+## Known Issues & Limitations
+
+- **NVD API key (D1, open):** cve-bin-tool's NVD source needs an API key that must be provisioned/rotated **manually** on `nvd.nist.gov`; keep it only in a local, git-ignored `.env`. Without it the NVD feed degrades (handled by `degraded-ok` policy).
+- **cve-bin-tool exit code `1`** means "findings were discovered" and is treated as a **successful** scan stage; hard failures are tracked separately.
+- **Large modules:** `cli.py` and `dashboard.py` mix parsing / business logic / config; a split behind focused tests is planned.
+- **S3 path overlap:** `resilient_updates/s3_publish.py` and `scripts/s3_storage.sh` partially duplicate behavior — to be unified or clearly bounded.
+- **Flaky test under watch:** `test_post_proxy_chain_roundtrip_all_values`.
+- **Compatibility shims:** some `datetime.UTC` shims remain for older Python behavior.
+
+## Roadmap / Planned
+
+- Cut **v0.1.6**: move `CHANGELOG [Unreleased]` into a dated release and tag `vX.Y.Z`.
+- Stronger preflight automation: stale `.git/index.lock` cleanup and FUSE-truncated-file recovery.
+- Add linux + offline compose overlays to the compose-config CI matrix.
+- Unify (or clearly document) the Python vs shell S3-publish paths.
+- Reduce `cli.py` / `dashboard.py` size behind tests; drop `datetime` shims once the minimum Python rises.
+- Continue operator-UX work: container progress, live logs, report viewer, resumable long-run snapshots.
+
+## Getting Started
+
+See `START_HERE.md` (from-scratch, for a colleague), `QUICK_START.md`
+(first run), and `docs/SHIP_AND_DEPLOY.md` (bundle build/transfer). Operator
+walkthrough: `docs/operator-quickstart-ru.md`. Architecture: `docs/architecture.md`.
