@@ -46,6 +46,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `.env.example` / `scripts/update_cve_bin_tool.sh`:
+  `CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS` приведён к `1800` — согласован с
+  рантайм-дефолтом в `scripts/run-scan.sh`, `scripts/windows/run-scan.ps1` и
+  fallback в `docker-compose.yml` (раньше документированный дефолт был `600`,
+  что расходилось с реальным поведением). (аудит-fixup 2026-07-09)
 - `cve_db_audit.py`: извлечён `_is_windows() -> bool` хелпер; тест
   `test_activate_best_windows_permission_error_uses_fallback` патчит его вместо
   `os.name` глобально. Исправляет `INTERNALERROR` в pytest на Linux

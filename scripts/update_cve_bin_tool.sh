@@ -458,7 +458,7 @@ PY
     if [ "${CVE_BIN_TOOL_VERIFY_DB:-1}" = "1" ]; then
       python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null
     fi
-    SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-600}"
+    SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}"
     SBOM_PATH="${CVE_BIN_TOOL_SBOM_PATH:-}"
     SBOM_FORMAT="${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}"
 
