@@ -8,6 +8,61 @@
 
 **Версия проекта:** см. `EL_SCA_VERSION` в [`versions.env`](versions.env). Полный список изменений — в [`CHANGELOG.md`](CHANGELOG.md); порядок выпуска и чек-лист перед пушем — в [`docs/RELEASING.md`](docs/RELEASING.md).
 
+## Документация
+
+Точки входа, по возрастанию глубины:
+
+| Документ | Зачем |
+|---|---|
+| [`START_HERE.md`](START_HERE.md) | Развернуть с нуля на чистой машине (Windows/Linux) |
+| [`QUICK_START.md`](QUICK_START.md) | Первый скан за 5 минут |
+| [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md) | Версии, фичи, известные баги, roadmap |
+| [`00_PROJECT_CONTEXT.md`](00_PROJECT_CONTEXT.md) | **Onboarding для агентов и инженеров**: карта модулей, поведение provenance, живая развёртка, egress-контур |
+| [`AGENTS.md`](AGENTS.md) | Правила для coding-агентов в этом репозитории |
+| [`docs/INDEX.md`](docs/INDEX.md) | Полный сайтмап документации |
+
+Эксплуатация и устройство:
+
+- [`docs/architecture.md`](docs/architecture.md) — сервисы и модули · [`docs/adr/`](docs/adr/) — архитектурные решения
+- [`docs/operations.md`](docs/operations.md) — справочник команд · [`docs/operations-guide.md`](docs/operations-guide.md) — разбор по шагам
+- [`docs/operator-quickstart-ru.md`](docs/operator-quickstart-ru.md) — путь оператора: GUI → обновление баз → скан → отчёт
+- [`docs/runbook.md`](docs/runbook.md) — траблшутинг · [`docs/failure-modes.md`](docs/failure-modes.md) — классификация отказов
+- [`docs/proxy.md`](docs/proxy.md) и [`docs/network-design.md`](docs/network-design.md) — прокси, VPN, авто-маршрут
+- [`docs/s3-storage.md`](docs/s3-storage.md) — внутренний S3 (SeaweedFS) · [`docs/airgap.md`](docs/airgap.md) — работа без сети
+- [`docs/distribution.md`](docs/distribution.md) и [`docs/SHIP_AND_DEPLOY.md`](docs/SHIP_AND_DEPLOY.md) — сборка и передача бандла
+- [`docs/reproducibility.md`](docs/reproducibility.md) — контракт воспроизводимости
+- [`SECURITY.md`](SECURITY.md) и [`docs/security-notes.md`](docs/security-notes.md) — модель угроз и заметки
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`docs/RELEASING.md`](docs/RELEASING.md) · [`CHANGELOG.md`](CHANGELOG.md)
+- [`docs/audit/660-analysis-2026-07-09.md`](docs/audit/660-analysis-2026-07-09.md) — последний аудит
+
+## Что нового (2026-07-09)
+
+- **Trivy снова обновляется.** База тянется с `mirror.gcr.io` (собственный дефолт
+  upstream), потому что блобы `ghcr.io` уходят на `pkg-containers.githubusercontent.com`,
+  который корпоративные TLS-инспектирующие прокси пересобирают своим CA —
+  и Trivy падал с `x509: certificate signed by unknown authority`.
+  `ghcr.io` и `public.ecr.aws` остались запасными.
+- **Даты баз больше не врут.** Каждая карточка отдаёт `db_updated_kind`:
+  Grype и Trivy показывают дату **сборки базы апстримом**, cve-bin-tool —
+  время **нашего импорта** (у NVD JSON-фидов даты сборки нет). В GUI это
+  подписано как `· сборка` / `· импорт`.
+- **Отчёт в один клик.** `/runs` группирует прогоны по датам, у каждого — ссылка
+  `report.md`; новый эндпоинт `GET /api/runs/{run_id}/report.md` отдаёт итоговый
+  Markdown инлайном (`text/markdown`) для копирования и передачи.
+- **Удаление артефакта из хранилища.** Кнопка «🗑 Удалить навсегда» с тремя
+  подтверждениями; сервер дополнительно требует `?confirm=<artifact_id>`.
+  `legacy-*` артефакты (представления сохранённых прогонов) удалять запрещено —
+  это evidence.
+- **Тема Phosphor CRT.** Зелёный фосфорный монохром, моношрифт, сканлайны.
+  Бочки с мутагеном остались кислотно-зелёными.
+- **Пины и контекст сборки.** `SEAWEEDFS_VERSION` / `MINIO_MC_VERSION` переехали
+  в [`versions.env`](versions.env) (были незапиннеными `latest`), появился
+  [`.dockerignore`](.dockerignore) — build-контекст ужался с ~7 ГБ до 880 КБ.
+- **cve-bin-tool: источники.** NVD + GAD + REDHAT + Curl наполняются;
+  OSV, EPSS и PURL2CPE помечены недоступными в этом контуре
+  (`CVE_BIN_TOOL_ENRICH_DISABLE`) из-за апстрим-багов 3.4 — подробности в
+  [`00_PROJECT_CONTEXT.md`](00_PROJECT_CONTEXT.md).
+
 ## Что нового (2026-06-11)
 
 - **Обновление баз из любой сети (route-doctor, ADR-0007).** Контейнер

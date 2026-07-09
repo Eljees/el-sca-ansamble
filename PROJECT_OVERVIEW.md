@@ -33,11 +33,13 @@ Single source of truth: `versions.env` (CI enforces agreement with
 - **Resilient & offline-first:** runs from bundled images and prewarmed DBs; explicit (never silent) DB updates; `offline` / `airgap` compose profiles.
 - **FastAPI dashboard** (`:8088`): drag-drop upload, live per-stage pipeline + logs, report viewer, artifact catalog with `CYBERSEC-XXXXX` case IDs, DB-freshness "barrels", and proxy/route toggles.
 - **Run browser & report hand-off:** `/runs` lists every past run grouped by date (newest first); each run's final Markdown report is one click away — copy, download, or fetch it directly via `GET /api/runs/{run_id}/report.md` (served inline as `text/markdown`).
+- **Artifact lifecycle:** upload, tag with a `CYBERSEC-XXXXX` case id, rescan, hide — or hard-delete from storage behind three confirmations plus a server-side `?confirm=<artifact_id>` guard. Saved run snapshots are evidence and are never purged.
+- **Phosphor CRT skin:** green monochrome, monospace, scanlines. The radioactive mutagen barrels stay acid green.
 - **Recoverable long runs:** stage checkpoints + per-run evidence snapshots (`artifacts/runs/<run-id>/`); resume from last completed stage.
 - **Network intelligence:** route-doctor probes egress from inside the Docker network and picks direct / proxy / VPN per tool.
 - **Internal S3 mirror** (SeaweedFS, compose profile `storage`) for DBs and scan results; provenance + reproducibility metadata (`input_sha256`, `db_snapshot_id`, `policy_decision`).
 - **Cross-platform:** POSIX (`scripts/*.sh`) and Windows (`scripts/windows/*.ps1`) entrypoints.
-- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**910 tests** green as of 2026-07-09).
+- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**917 tests** green as of 2026-07-09).
 
 ## Known Issues & Limitations
 
@@ -59,6 +61,26 @@ Single source of truth: `versions.env` (CI enforces agreement with
 
 ## Getting Started
 
-See `START_HERE.md` (from-scratch, for a colleague), `QUICK_START.md`
-(first run), and `docs/SHIP_AND_DEPLOY.md` (bundle build/transfer). Operator
-walkthrough: `docs/operator-quickstart-ru.md`. Architecture: `docs/architecture.md`.
+| Документ | Зачем |
+|---|---|
+| [`START_HERE.md`](START_HERE.md) | Развернуть с нуля (Windows/Linux) |
+| [`QUICK_START.md`](QUICK_START.md) | Первый скан за 5 минут |
+| [`00_PROJECT_CONTEXT.md`](00_PROJECT_CONTEXT.md) | Onboarding для агентов: модули, provenance, живая развёртка |
+| [`AGENTS.md`](AGENTS.md) | Правила для coding-агентов |
+| [`docs/INDEX.md`](docs/INDEX.md) | Полный сайтмап документации |
+
+Устройство и эксплуатация: [`docs/architecture.md`](docs/architecture.md) ·
+[`docs/adr/`](docs/adr/) · [`docs/operations.md`](docs/operations.md) ·
+[`docs/operator-quickstart-ru.md`](docs/operator-quickstart-ru.md) ·
+[`docs/runbook.md`](docs/runbook.md) · [`docs/failure-modes.md`](docs/failure-modes.md)
+
+Сеть и хранилище: [`docs/proxy.md`](docs/proxy.md) ·
+[`docs/network-design.md`](docs/network-design.md) ·
+[`docs/s3-storage.md`](docs/s3-storage.md) · [`docs/airgap.md`](docs/airgap.md) ·
+[`docs/distribution.md`](docs/distribution.md) ·
+[`docs/SHIP_AND_DEPLOY.md`](docs/SHIP_AND_DEPLOY.md)
+
+Процесс: [`CONTRIBUTING.md`](CONTRIBUTING.md) ·
+[`docs/RELEASING.md`](docs/RELEASING.md) · [`CHANGELOG.md`](CHANGELOG.md) ·
+[`SECURITY.md`](SECURITY.md) ·
+[`docs/audit/660-analysis-2026-07-09.md`](docs/audit/660-analysis-2026-07-09.md)
