@@ -329,6 +329,10 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
     cbt_by_source = _deep_find(cbt_db, "cve_range_by_source")
     if not isinstance(cbt_by_source, dict):
         cbt_by_source = {}
+    # cve-bin-tool stores its own SOURCE spelling in cve.db (curl_source.py uses
+    # "Curl", not "CURL"), so match case-insensitively — otherwise the Curl
+    # barrel reads 0% even when the source imported rows.
+    cbt_by_source = {str(k).upper(): v for k, v in cbt_by_source.items()}
     cbt_source_names = ["NVD", "OSV", "GAD", "REDHAT", "CURL", "EPSS", "PURL2CPE", "RSD"]
     # Sources known not to load in this contour (e.g. GAD/REDHAT behind a 403)
     # are marked unavailable → the GUI shows them with a red ✕ ("not working

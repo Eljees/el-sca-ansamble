@@ -722,6 +722,40 @@ def test_tool_status_with_non_dict_provenance_entry(tmp_path: Path):
     assert grype["db_updated"] is None
 
 
+def test_tool_status_cbt_source_names_are_case_insensitive(tmp_path: Path):
+    """cve-bin-tool spells its curl source "Curl"; the barrel must still fill.
+
+    Regression: dashboard looked up "CURL" verbatim in cve_range_by_source, so
+    the Curl barrel showed 0% even after the source imported rows.
+    """
+    prov = _prov_dir(tmp_path)
+    (prov / "cve-bin-tool-db.json").write_text(
+        json.dumps(
+            {
+                "activation_status": "degraded",
+                "selected_audit": {
+                    "counts": {
+                        "cve_range_by_source": {
+                            "Curl": 206,
+                            "GAD": 73324,
+                            "REDHAT": 296836,
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    data = tool_status(tmp_path)
+    cbt = next(t for t in data["tools"] if t["name"] == "cve-bin-tool")
+    by_name = {s["name"]: s for s in cbt["sources"]}
+    assert by_name["CURL"]["count"] == 206
+    assert by_name["CURL"]["fill"] == 100
+    assert by_name["GAD"]["count"] == 73324
+    assert by_name["REDHAT"]["count"] == 296836
+    assert by_name["OSV"]["count"] == 0
+
+
 def test_tool_status_fill_degraded(tmp_path: Path):
     """degraded status → fill == 80."""
     prov = _prov_dir(tmp_path)

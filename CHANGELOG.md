@@ -46,6 +46,12 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `dashboard.py` (`tool_status`): счётчики cve-bin-tool по источникам теперь
+  сопоставляются регистронезависимо. `cve_bin_tool/data_sources/curl_source.py`
+  пишет в `cve.db` источник как `Curl`, а дашборд искал ключ `CURL` — бочка
+  Curl показывала 0% даже при импортированных строках (проверено на
+  развёртке: `cve_range` = `Curl 206`, `GAD 73324`, `REDHAT 296836`).
+  Добавлен регрессионный тест. (аудит-fixup 2026-07-09)
 - `.env.example` / `scripts/update_cve_bin_tool.sh`:
   `CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS` приведён к `1800` — согласован с
   рантайм-дефолтом в `scripts/run-scan.sh`, `scripts/windows/run-scan.ps1` и
