@@ -8,6 +8,15 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `resilient_updates/artifact_catalog.py`: новый модуль — каталог run-артефактов
+  с индексацией по дате, инструменту и case_id; Dashboard GET `/api/artifacts` и
+  GET `/api/artifacts/{run_id}/report` отдают список и HTML-отчёт. (`27d002b`)
+- `resilient_updates/s3_publish.py`: публикация snapshot run-директории на
+  stack-local SeaweedFS/S3 через `s3-client` compose-сервис; `make s3-push` /
+  `make s3-list`; `docs/s3-storage.md` описывает layout и bucket-политику. (`f157b6c`)
+- `docs/operator-quickstart-ru.md`: пошаговый русскоязычный гайд оператора —
+  GitHub/GitLab clone → GUI → DB update → scan → S3 publish → log review. (`a5e19ae`)
+- `configs/seaweedfs/s3.json`: Filer config для SeaweedFS S3-gateway. (`f157b6c`)
 - `AGENTS.md`: зафиксированы команды проверки, cleanup policy для runtime
   артефактов и правило держать GitHub/GitLab sync отдельным проходом.
 
@@ -19,6 +28,18 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `orchestrator.py`: периодический checkpoint dashboard/host scan больше не
   ограничивается записью `checkpoint.json`; теперь он сохраняет реальный
   per-run snapshot evidence через `snapshot_artifacts()`.
+- `reporting.py` / `run_summary.py`: итоговый отчёт сохраняет сырые счётчики
+  severity по каждому сканеру (`severity_totals_raw`) и top-level `input_hash` —
+  diff-сессии больше не теряют контекст при агрегации. (`1e57b22`)
+- `orchestrator.py` / `run_layout.py` / `cli.py` / `dashboard.py`: scan-run
+  публикует snapshot (SBOM + отчёты + провенанс) в `artifacts/runs/<RUN_ID>/`
+  после завершения; `snapshot_artifacts()` вызывается как из checkpoint, так и
+  при штатном завершении. (`a5e19ae`)
+- `resilient_updates/dashboard.py`: UI обогащён вкладкой Artifact Catalog —
+  список run-ов с фильтром по сканеру и case_id, просмотр HTML-отчётов. (`27d002b`)
+- `scripts/run-scan.sh` / `scripts/windows/run-scan.ps1`: интеграция с
+  `s3_publish.py` — при `EL_SCA_S3_PUSH=1` snapshot публикуется в S3 после скана.
+  (`a5e19ae`)
 - `docs/INDEX.md`, `docs/audit/00-overview.md`, `docs/audit/30-tests.md`,
   `docs/architecture.md`, `docs/operations.md`: актуализированы текущие
   указатели, test-count и описания snapshot/monitor/CI overlay behaviour.
