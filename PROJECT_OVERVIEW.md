@@ -32,11 +32,12 @@ Single source of truth: `versions.env` (CI enforces agreement with
 - **Pipeline:** `extract → SBOM (Syft) → Grype / Trivy / cve-bin-tool / (optional OSV) → report`, with a final Markdown + HTML report.
 - **Resilient & offline-first:** runs from bundled images and prewarmed DBs; explicit (never silent) DB updates; `offline` / `airgap` compose profiles.
 - **FastAPI dashboard** (`:8088`): drag-drop upload, live per-stage pipeline + logs, report viewer, artifact catalog with `CYBERSEC-XXXXX` case IDs, DB-freshness "barrels", and proxy/route toggles.
+- **Run browser & report hand-off:** `/runs` lists every past run grouped by date (newest first); each run's final Markdown report is one click away — copy, download, or fetch it directly via `GET /api/runs/{run_id}/report.md` (served inline as `text/markdown`).
 - **Recoverable long runs:** stage checkpoints + per-run evidence snapshots (`artifacts/runs/<run-id>/`); resume from last completed stage.
 - **Network intelligence:** route-doctor probes egress from inside the Docker network and picks direct / proxy / VPN per tool.
 - **Internal S3 mirror** (SeaweedFS, compose profile `storage`) for DBs and scan results; provenance + reproducibility metadata (`input_sha256`, `db_snapshot_id`, `policy_decision`).
 - **Cross-platform:** POSIX (`scripts/*.sh`) and Windows (`scripts/windows/*.ps1`) entrypoints.
-- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**898 tests** green as of 2026-07-09).
+- **CI quality gates:** ruff, format check, compileall, shellcheck, hadolint, yamllint, PSScriptAnalyzer, version-consistency, compose config, docker build, and pytest with an ≥ 88 % coverage gate (**908 tests** green as of 2026-07-09).
 
 ## Known Issues & Limitations
 

@@ -101,6 +101,24 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+# Run ids end in a "<name>-YYYYMMDD-HHMMSS" stamp; pull it out so runs sort by
+# actual time (newest first) instead of alphabetically by name — otherwise
+# different name prefixes (CYBERSEC-… / PIX_… / avandoc-…) interleave by letter.
+_RUN_TS_RE = re.compile(r"(?P<date>\d{8})-(?P<time>\d{6})\b")
+
+
+def _run_timestamp(run_id: str) -> str:
+    """Sortable ``YYYYMMDDHHMMSS`` extracted from a run id, or ``""`` if absent."""
+    m = _RUN_TS_RE.search(run_id)
+    return (m.group("date") + m.group("time")) if m else ""
+
+
+def _run_date(run_id: str) -> str:
+    """``YYYY-MM-DD`` extracted from a run id, or ``""`` when it has no stamp."""
+    ts = _run_timestamp(run_id)
+    return f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]}" if ts else ""
+
+
 def _saved_run_dirs(artifacts_dir: Path) -> list[Path]:
     roots = (artifacts_dir.parent / "_SCA_reports", artifacts_dir / "runs")
     candidates: list[Path] = []
@@ -116,7 +134,13 @@ def _saved_run_dirs(artifacts_dir: Path) -> list[Path]:
                 continue
             seen.add(key)
             candidates.append(run_dir)
-    return sorted(candidates, key=lambda p: p.name, reverse=True)
+    # Newest first by parsed timestamp; runs without a stamp fall to the bottom
+    # (still deterministic via the name tie-breaker).
+    return sorted(
+        candidates,
+        key=lambda p: (_run_timestamp(p.name) != "", _run_timestamp(p.name), p.name),
+        reverse=True,
+    )
 
 
 def _resolve_run_dir(artifacts_dir: Path, run_id: str) -> Path | None:
@@ -187,35 +211,66 @@ def _provenance_status(payload: Any) -> str:
 
 
 def render_index(artifacts_dir: Path) -> str:
-    """Server-side HTML index of runs (plain stdlib rendering, no template engine)."""
+    """Server-side HTML index of runs, grouped by date (newest first).
+
+    Runs are sorted by their ``YYYYMMDD-HHMMSS`` stamp; each date gets its own
+    header so a long history stays scannable and reports are easy to find.
+    """
     import html
+    from itertools import groupby
     from urllib.parse import quote
 
     runs = list_runs(artifacts_dir)
-    if runs:
-        items = "".join(
-            (
-                "<li><a href='/runs/{id}'>{id}</a> — tools: {tools}; reports: {rc}; manifest: {mp}{md}</li>"
-            ).format(
-                id=html.escape(r["id"]),
-                tools=html.escape(", ".join(r["provenance_tools"]) or "—"),
-                rc=r["report_count"],
-                mp=r["manifest_present"],
-                md=(
-                    " · <a href='/api/runs/{qid}/report.md'>report.md</a>".format(qid=quote(r["id"], safe=""))
-                    if r.get("markdown_report_path")
-                    else ""
-                ),
-            )
-            for r in runs
+
+    def _group_label(r: dict[str, Any]) -> str:
+        if r["id"] == "current":
+            return "⏵ активный прогон (current)"
+        return _run_date(r["id"]) or "без даты"
+
+    def _row(r: dict[str, Any]) -> str:
+        md = (
+            f" · <a href='/api/runs/{quote(r['id'], safe='')}/report.md'>report.md</a>"
+            if r.get("markdown_report_path")
+            else ""
         )
+        return (
+            "<li><a href='/runs/{id}'>{id}</a> — tools: {tools}; reports: {rc}; manifest: {mp}{md}</li>"
+        ).format(
+            id=html.escape(r["id"]),
+            tools=html.escape(", ".join(r["provenance_tools"]) or "—"),
+            rc=r["report_count"],
+            mp=r["manifest_present"],
+            md=md,
+        )
+
+    if runs:
+        sections = []
+        for label, group in groupby(runs, key=_group_label):
+            rows = list(group)
+            sections.append(
+                "<section class='run-group'><h2>{lbl} <span class='count'>({n})</span></h2>"
+                "<ul>{items}</ul></section>".format(
+                    lbl=html.escape(label),
+                    n=len(rows),
+                    items="".join(_row(r) for r in rows),
+                )
+            )
+        body = "".join(sections)
     else:
-        items = "<li>No runs yet.</li>"
+        body = "<p>No runs yet.</p>"
+
+    style = (
+        "<style>body{font:14px system-ui,Segoe UI,sans-serif;margin:24px;max-width:960px;"
+        "color:#1a2027}h1{font-size:20px}h2{font-size:13px;text-transform:uppercase;"
+        "letter-spacing:.04em;margin:22px 0 6px;padding-bottom:4px;border-bottom:1px solid #cbd2d9;"
+        "color:#3b4b57}.count{color:#8b98a5;font-weight:400}ul{margin:0 0 4px;padding-left:20px}"
+        "li{margin:3px 0}a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}</style>"
+    )
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>el-sca-ansamble dashboard</title></head><body>"
-        "<h1>Runs</h1><ul>" + items + "</ul>"
-        "<p><a href='/api/runs'>runs JSON</a> · <a href='/api/freshness'>freshness JSON</a></p>"
+        "<title>el-sca-ansamble dashboard</title>" + style + "</head><body>"
+        "<h1>Runs</h1>" + body + "<p><a href='/api/runs'>runs JSON</a> · "
+        "<a href='/api/freshness'>freshness JSON</a></p>"
         "</body></html>"
     )
 

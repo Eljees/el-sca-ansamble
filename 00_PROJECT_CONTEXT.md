@@ -21,20 +21,23 @@ storage/artifact layout, deployment facts, or operator commands change.
 ## Current Repository Snapshot
 
 - Repository root: `D:\dev\el-sca-ansamble`.
-- Branch: `master`.
-- HEAD: `fc0d59d fix(dashboard): match cve-bin-tool source names case-insensitively`.
-- `origin/master` (GitHub): `fc0d59d`.
-- `gitlab/master` (GitLab): `fc0d59d`.
-- Divergence: `0/0` against both remotes — everything is pushed.
-- Worktree: clean except this untracked file (`00_PROJECT_CONTEXT.md` stays untracked by design).
+- Branch: `master`. Pushed to both remotes in lockstep (`0/0` divergence).
+- This file is **tracked** (since `d4d6631`) and committed together with the
+  work it documents — so the exact tip advances every time; consult the log
+  block below and `git log --oneline` for the true HEAD rather than trusting a
+  single pinned hash here.
+- Worktree normally clean; the only expected untracked item on the deployment
+  is the `.env.bak-*` backup.
 - Latest audit doc: `docs/audit/660-analysis-2026-07-09.md`.
 - Validation at this snapshot: `ruff check` passed, `ruff format --check` passed,
-  **900 tests passed** on Windows (898 → 899 extractor regression test → 900
-  dashboard source-name regression test).
+  **908 tests passed** on Windows.
 
-Commits landed after audit 660 (all on both remotes):
+Commits landed after audit 660 (newest first, all on both remotes):
 
 ```text
+(this doc)  docs/UX: /runs grouped by date + report.md endpoint, docs
+a232c5a  feat(dashboard): first-class Markdown report link + copy button per run
+d4d6631  docs: track 00_PROJECT_CONTEXT.md as the agent onboarding doc
 fc0d59d  fix(dashboard): match cve-bin-tool source names case-insensitively
 cff6529  fix(extractor): don't crash on directory input with nested archives
 62fc073  fix(trivy): prefer mirror.gcr.io for DB downloads; show real DB date in GUI
@@ -354,7 +357,11 @@ Important APIs:
 - `GET /api/jobs/{id}`: job snapshot.
 - `GET /api/jobs/{id}/stream`: SSE stream with stage/log/progress updates.
 - `GET /api/monitor`: pipeline, containers, DB status, latest run snapshot.
-- `GET /api/runs`: current and saved runs.
+- `GET /api/runs`: current and saved runs (sorted newest-first by the
+  `YYYYMMDD-HHMMSS` stamp; each entry carries `markdown_report_path`).
+- `GET /api/runs/{run_id}/report.md`: the run's final Markdown report, inline
+  as `text/markdown; charset=utf-8` (for copy/hand-off; 404 if the run has no
+  `.md`). `GET /runs` (HTML) groups runs by date and links each `report.md`.
 - `GET /api/route-plan`: current route plan.
 - `POST /api/route-plan`: rerun route-doctor.
 - `GET/POST /api/proxy-chain`: inspect/switch proxy chain.

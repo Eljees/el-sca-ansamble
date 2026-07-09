@@ -80,6 +80,44 @@ def test_list_runs_includes_host_report_directories(tmp_path: Path):
     assert detail["checkpoint"]["stage"] == "final"
 
 
+def test_list_runs_sorted_by_date_across_name_prefixes(tmp_path: Path):
+    """Newest-first by the YYYYMMDD-HHMMSS stamp, not alphabetically by name."""
+    artifacts = tmp_path / "artifacts"
+    for run_id in (
+        "CYBERSEC-11531-20260707-132613",
+        "avandoc-1.0-20260709-165134",
+        "PIX_Studio-20260708-184731",
+        "CYBERSEC-11531-20260707-180226",
+    ):
+        _populate(tmp_path / "_SCA_reports" / run_id)
+    ids = [r["id"] for r in list_runs(artifacts)]
+    assert ids == [
+        "avandoc-1.0-20260709-165134",
+        "PIX_Studio-20260708-184731",
+        "CYBERSEC-11531-20260707-180226",
+        "CYBERSEC-11531-20260707-132613",
+    ]
+
+
+def test_run_date_and_timestamp_helpers():
+    from resilient_updates.dashboard import _run_date, _run_timestamp
+
+    assert _run_timestamp("avandoc-1.0-20260709-165134") == "20260709165134"
+    assert _run_date("avandoc-1.0-20260709-165134") == "2026-07-09"
+    assert _run_timestamp("no-stamp-here") == ""
+    assert _run_date("no-stamp-here") == ""
+
+
+def test_render_index_groups_by_date_headers(tmp_path: Path):
+    artifacts = tmp_path / "artifacts"
+    _populate(tmp_path / "_SCA_reports" / "app-20260709-100000")
+    _populate(tmp_path / "_SCA_reports" / "app-20260707-100000")
+    page = render_index(artifacts)
+    # one <h2> date header per distinct date, newest first
+    assert page.index("2026-07-09") < page.index("2026-07-07")
+    assert page.count("<h2>") == 2
+
+
 # --- endpoints (skip when fastapi/httpx absent) -----------------------------
 
 
