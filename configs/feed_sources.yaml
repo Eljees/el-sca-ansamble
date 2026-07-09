@@ -75,6 +75,15 @@ trivy:
       url: "oci://registry.example.invalid/trivy-db"
       priority: 10
       enabled: false
+    # Upstream Trivy's own default registry.  Preferred over ghcr.io because
+    # ghcr.io redirects blob downloads to pkg-containers.githubusercontent.com,
+    # which TLS-inspecting corporate proxies commonly re-sign with a private CA
+    # ("x509: certificate signed by unknown authority").  mirror.gcr.io serves
+    # manifest *and* blobs from Google hosts and is typically not intercepted.
+    - name: gcr-mirror-trivy-db
+      url: "oci://mirror.gcr.io/aquasec/trivy-db:2"
+      priority: 15
+      enabled: true
     - name: ghcr-trivy-db
       url: "oci://ghcr.io/aquasecurity/trivy-db:2"
       priority: 20
@@ -88,6 +97,11 @@ trivy:
       url: "oci://registry.example.invalid/trivy-java-db"
       priority: 10
       enabled: false
+    # Same rationale as gcr-mirror-trivy-db above.
+    - name: gcr-mirror-trivy-java-db
+      url: "oci://mirror.gcr.io/aquasec/trivy-java-db:1"
+      priority: 15
+      enabled: true
     - name: ghcr-trivy-java-db
       url: "oci://ghcr.io/aquasecurity/trivy-java-db:1"
       priority: 20

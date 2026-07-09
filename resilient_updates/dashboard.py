@@ -382,7 +382,10 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
             "role": "filesystem/CVE scanner",
             "version": versions.get("TRIVY_VERSION", "—"),
             "db_status": trivy_status,
-            "db_updated": _updated("trivy"),
+            # Prefer the DB's own build time (written by scripts/update_trivy.sh
+            # from db/metadata.json -> UpdatedAt), mirroring Grype's "built".
+            # Fall back to the update-run wall clock when it is absent.
+            "db_updated": _deep_find(prov.get("trivy") or {}, "db_updated_at") or _updated("trivy"),
             "detail": "aquasec trivy-db",
             "fill": _fill(trivy_status),
             "update_target": "trivy",
