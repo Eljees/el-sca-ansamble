@@ -299,6 +299,16 @@ def test_theme_picker_previews_all_themes_but_cannot_be_used():
     assert "Переключение тем ещё не реализовано" in gui
 
 
+def test_hidden_artifact_cards_lose_their_neon_outline():
+    """The neon border marks a live project. A hidden one must go dark, otherwise
+    "скрыт" and "активен" glow identically."""
+    from resilient_updates.dashboard import render_gui
+
+    gui = render_gui()
+    assert ".artifact-card:hover" in gui
+    assert ".artifact-card.deleted { opacity:.5; border-color:var(--line); box-shadow:none; }" in gui
+
+
 def test_gui_keeps_mutagen_barrels_acid_green():
     """Whatever the skin, the barrels stay radioactive green."""
     from resilient_updates.dashboard import render_gui

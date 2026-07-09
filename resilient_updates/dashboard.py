@@ -555,7 +555,10 @@ _GUI_HTML = """<!doctype html>
            background:#3a2a14; color:#f0c674; border:1px solid #5c4420; }
   main { max-width:1100px; margin:0 auto; padding:24px; }
   .grid { display:grid; gap:20px; }
-  .panel { background:var(--panel); border:1px solid var(--line);
+  /* Панели держат неон сдержаннее карточек — иначе всё светится одинаково
+     и обводка перестаёт что-либо выделять. */
+  .panel { box-shadow:0 0 20px -12px var(--glow), inset 0 1px 0 #ffffff08;
+           background:var(--panel); border:1px solid var(--line);
            border-radius:12px; padding:18px; }
   h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em;
        color:var(--muted); margin:0 0 14px; }
@@ -610,8 +613,26 @@ _GUI_HTML = """<!doctype html>
   .tools-select { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:12px; }
   .tools-select label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   .artifact-list { display:grid; gap:12px; }
-  .artifact-card { border:1px solid var(--line); border-radius:12px; background:var(--surface); padding:14px; }
-  .artifact-card.deleted { opacity:.5; }
+  /* Неоновая обводка карточки проекта: тонкая линия по акценту + мягкое
+     свечение снаружи и еле заметный внутренний блик.  Свечение только на
+     рамке, фон не трогаем — текст должен остаться контрастным. */
+  .artifact-card { border:1px solid #ff77c855; border-radius:12px; background:var(--surface);
+                   padding:14px; position:relative;
+                   box-shadow:0 0 0 1px #ff77c81f, 0 0 18px -6px var(--glow),
+                              inset 0 0 22px -18px var(--accent);
+                   transition:border-color .25s ease, box-shadow .3s ease, transform .2s ease; }
+  .artifact-card:hover { border-color:var(--accent); transform:translateY(-1px);
+                   box-shadow:0 0 0 1px var(--glow), 0 0 28px -6px var(--glow),
+                              inset 0 0 26px -16px var(--accent); }
+  /* Мятный второй акцент на левом ребре — «этот проект просканирован». */
+  .artifact-card::before { content:""; position:absolute; left:-1px; top:14px; bottom:14px; width:2px;
+                   border-radius:2px; background:var(--ok); box-shadow:0 0 10px var(--ok);
+                   opacity:.55; transition:opacity .25s ease; }
+  .artifact-card:hover::before { opacity:1; }
+  /* Скрытый проект гаснет целиком: ни рамки, ни свечения. */
+  .artifact-card.deleted { opacity:.5; border-color:var(--line); box-shadow:none; }
+  .artifact-card.deleted::before { display:none; }
+  .artifact-card.deleted:hover { transform:none; box-shadow:none; border-color:var(--line); }
   .artifact-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
   .artifact-name { font-size:15px; font-weight:700; }
   .artifact-meta { font-size:12px; color:var(--muted); word-break:break-word; }
