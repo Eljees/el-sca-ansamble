@@ -734,9 +734,31 @@ standalone (no mount) -> /opt/app/resilient_updates/extractor.py   (stale)
 compose (with mount)  -> /workspace/resilient_updates/extractor.py (current)
 ```
 
-So a `git pull` is enough for compose-driven scans, but the
-`elariaphd/el-sca-*` images still carry old code and should be rebuilt for
-standalone runs.
+So a `git pull` is enough for compose-driven scans; standalone runs need the
+image rebuilt.
+
+**Rebuilt on the deployment 2026-07-09.** The three images that bake
+`resilient_updates` (`extractor`, `cve-bin-tool`, `resilient-updater`) now carry
+post-`cff6529` code — verified by hashing the baked file against the git blob
+(`sha256 2724076cfd7fb125…`). The previous images are kept as
+`:0.1.1-pre-cff6529` for rollback. They were **not** pushed to Docker Hub (that
+needs registry credentials).
+
+Build recipe (needs the corporate proxy for PyPI, which is *not* TLS-inspected):
+
+```sh
+sudo env DOCKER_BUILDKIT=1 docker build \
+  --build-arg HTTP_PROXY=http://10.2.204.162:3128/ \
+  --build-arg HTTPS_PROXY=http://10.2.204.162:3128/ \
+  --build-arg NO_PROXY=localhost,127.0.0.1,.soc.rt.ru \
+  -f Dockerfile.extractor -t elariaphd/el-sca-extractor:0.1.1 .
+```
+
+> ⚠️ **Tag drift:** the deployment's `.env` pins `EL_SCA_VERSION=0.1.1` while
+> `versions.env`/`pyproject.toml` say `0.1.5`. So the host runs `:0.1.1` images.
+> CI's `lint-versions` only compares versions.env / pyproject / compose fallback
+> — it cannot see a deployment `.env`. Rebuild with the tag the host actually
+> references, or realign both.
 
 ## Reports And Result Semantics
 
@@ -900,8 +922,10 @@ Done since (2026-07-09, later pass):
 
 Open, engineering:
 
-- Rebuild and push `elariaphd/el-sca-*` images — they still carry pre-`cff6529`
-  code. Compose runs are fine (mounted `/workspace` wins); standalone runs are not.
+- ~~Rebuild `elariaphd/el-sca-*` images~~ — done on the deployment (tag `0.1.1`,
+  rollback tag `0.1.1-pre-cff6529`). Still **not pushed to Docker Hub** (needs
+  registry credentials) and the bundle in `bundle/` still ships the old images.
+- Realign `EL_SCA_VERSION`: deployment `.env` says `0.1.1`, repo says `0.1.5`.
 - Enable the `storage` profile on the deployment if S3 mirroring is actually
   wanted there; rotate `el-sca` / `el-sca-secret` first (they are committed in
   `configs/seaweedfs/s3.json`, which is on the public GitHub mirror).
