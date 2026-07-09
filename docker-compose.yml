@@ -582,7 +582,7 @@ services:
   #   ./scripts/s3_storage.sh results-push
 
   seaweedfs:
-    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-4.38}
     profiles: ["storage"]
     restart: unless-stopped
     command:
@@ -603,7 +603,7 @@ services:
     networks: [scanner-net]
 
   s3-client:
-    image: minio/mc:${MINIO_MC_VERSION:-latest}
+    image: minio/mc:${MINIO_MC_VERSION:-RELEASE.2025-08-13T08-35-41Z}
     profiles: ["storage-tools"]
     depends_on:
       seaweedfs:
