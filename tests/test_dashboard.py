@@ -243,6 +243,30 @@ def test_catalog_purge_refuses_path_escape(tmp_path: Path):
     assert outside.is_dir()
 
 
+def test_gui_has_no_unterminated_double_quoted_js_strings():
+    """`_GUI_HTML` is a plain (non-raw) triple-quoted string, so a literal `\\n`
+    written inside it becomes a REAL newline in the served JS. Inside a
+    double-quoted JS string that is a SyntaxError which kills the whole script
+    (barrels and artifact cards silently stop rendering). Template literals are
+    fine. Guard the double-quoted ones.
+    """
+    from resilient_updates.dashboard import render_gui
+
+    for lineno, line in enumerate(render_gui().splitlines(), 1):
+        if 'confirm("' in line or 'alert("' in line:
+            assert '")' in line, f"unterminated double-quoted JS string at GUI line {lineno}: {line!r}"
+
+
+def test_gui_exposes_three_purge_confirmations():
+    from resilient_updates.dashboard import render_gui
+
+    gui = render_gui()
+    assert "Уверены?" in gui
+    assert "Точно-точно?" in gui
+    assert "Совсем отчаялся?" in gui
+    assert "/purge" in gui and "confirm=" in gui
+
+
 def test_api_freshness_shape(tmp_path: Path):
     resp = _client(tmp_path).get("/api/freshness")
     assert resp.status_code == 200

@@ -1014,7 +1014,7 @@ async function hideArtifact(artifactId){
 async function purgeArtifact(artifactId, name){
   if(!confirm(`Удалить «${name}» навсегда — из каталога и из хранилища.\n\nУверены?`)) return;
   if(!confirm("Точно-точно?")) return;
-  if(!confirm("Совсем отчаялся?\n\nФайл будет стёрт с диска. Отменить будет нельзя.")) return;
+  if(!confirm(`Совсем отчаялся?\n\nФайл будет стёрт с диска. Отменить будет нельзя.`)) return;
   const url = `/api/artifacts/${encodeURIComponent(artifactId)}/purge`
             + `?confirm=${encodeURIComponent(artifactId)}`;
   const r = await fetch(url, { method:"DELETE" });
