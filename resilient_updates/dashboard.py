@@ -520,7 +520,7 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
 # ── Active GUI (drag-drop scan + live pipeline + DB cards) ───────────────────
 
 _GUI_HTML = """<!doctype html>
-<html lang="ru"><head><meta charset="utf-8">
+<html lang="ru" data-theme="__THEME__" data-edge="__EDGE__"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>el-sca-ansamble — анализ артефактов</title>
 <style>
@@ -613,28 +613,14 @@ _GUI_HTML = """<!doctype html>
   .tools-select { display:flex; gap:16px; flex-wrap:wrap; align-items:center; margin-top:12px; }
   .tools-select label { display:flex; gap:6px; align-items:center; cursor:pointer; }
   .artifact-list { display:grid; gap:12px; }
-  /* Неоновая обводка карточки проекта: тонкая линия по акценту + мягкое
-     свечение снаружи и еле заметный внутренний блик.  Свечение только на
-     рамке, фон не трогаем — текст должен остаться контрастным. */
-  .artifact-card { border:1px solid #ff77c855; border-radius:12px; background:var(--surface);
-                   padding:14px; position:relative;
-                   box-shadow:0 0 0 1px #ff77c81f, 0 0 18px -6px var(--glow),
-                              inset 0 0 22px -18px var(--accent);
+  /* Базовая карточка проекта.  Сам НЕОН рисует выбранная обводка (data-edge):
+     см. resilient_updates/themes.py — там десять пресетов, цвет края берётся
+     из --edge и задаётся статусом, а не пресетом. */
+  .artifact-card { position:relative; overflow:hidden; padding:14px; border-radius:10px;
+                   background:var(--surface); border:1px solid var(--line);
                    transition:border-color .25s ease, box-shadow .3s ease, transform .2s ease; }
-  .artifact-card:hover { border-color:var(--accent); transform:translateY(-1px);
-                   box-shadow:0 0 0 1px var(--glow), 0 0 28px -6px var(--glow),
-                              inset 0 0 26px -16px var(--accent); }
-  /* Мятный второй акцент на левом ребре — «этот проект просканирован». */
-  .artifact-card::before { content:""; position:absolute; left:-1px; top:14px; bottom:14px; width:2px;
-                   border-radius:2px; background:var(--ok); box-shadow:0 0 10px var(--ok);
-                   opacity:.55; transition:opacity .25s ease; }
-  .artifact-card:hover::before { opacity:1; }
-  /* Скрытый проект гаснет целиком: ни рамки, ни свечения.  transition:none —
-     box-shadow не интерполируется из списка теней в `none` предсказуемо, и
-     карточка успевает мигнуть неоном; гаснуть она должна сразу. */
-  .artifact-card.deleted { opacity:.5; border-color:var(--line); box-shadow:none; transition:none; }
-  .artifact-card.deleted::before { display:none; }
-  .artifact-card.deleted:hover { transform:none; box-shadow:none; border-color:var(--line); }
+  .artifact-card:hover { transform:translateY(-1px); }
+  .artifact-card.deleted:hover { transform:none; }
   .artifact-head { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:flex-start; }
   .artifact-name { font-size:15px; font-weight:700; }
   .artifact-meta { font-size:12px; color:var(--muted); word-break:break-word; }
@@ -667,6 +653,13 @@ _GUI_HTML = """<!doctype html>
         border:1px solid var(--accent); color:var(--accent); font-weight:400; }
   .theme-tag { font-size:11px; color:var(--muted); margin:3px 0 8px; min-height:28px; }
   .theme-card button { width:100%; padding:5px 8px; font-size:11px; }
+  .theme-panel h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+        color:var(--muted); margin:14px 0 8px; }
+  .theme-panel h3:first-of-type { margin-top:4px; }
+  .theme-anim { font-size:9px; color:var(--active); border:1px solid var(--line2);
+        border-radius:999px; padding:0 5px; margin-left:4px; }
+  .theme-card.chosen { border-color:var(--accent); box-shadow:0 0 14px -4px var(--glow); }
+  #skin-reset { margin-top:12px; font-size:11px; padding:5px 10px; }
   .artifact-runs { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .artifact-runs button { padding:5px 10px; font-size:12px; }
   /* analysis map */
@@ -734,7 +727,8 @@ _GUI_HTML = """<!doctype html>
   .proxy-btn.direct  { border-color:#22c55e; color:#22c55e; }
   .proxy-btn.corp    { border-color:#eab308; color:#eab308; }
   .proxy-btn.via-vpn { border-color:#a855f7; color:#a855f7; }
-</style></head>
+</style>
+<!--SKIN_STYLES--></head>
 <body>
 <header>
   <h1>el-sca-ansamble</h1>
@@ -1112,6 +1106,18 @@ function artifactRunButtons(artifact){
     `<button type="button" onclick="deleteRun('${esc(run.id)}')">скрыть run</button>`
   ).join("");
 }
+// Цвет обводки карточки — это статус, а не украшение.  Считаем только по тем
+// данным, что реально есть в /api/artifacts: наличие прогонов и legacy-природа.
+function artifactStatus(a){
+  if(a.deleted_at) return "";
+  if(String(a.id).startsWith("legacy-")) return "st-legacy";
+  return Number(a.run_count || 0) > 0 ? "st-scanned" : "st-new";
+}
+function artifactStatusTitle(a){
+  if(a.deleted_at) return "скрыт";
+  if(String(a.id).startsWith("legacy-")) return "legacy: представление сохранённого прогона (evidence)";
+  return Number(a.run_count || 0) > 0 ? "есть сохранённые прогоны" : "ещё не сканировался";
+}
 function renderArtifacts(items){
   const box = $("#artifact-list");
   if(!(items || []).length){
@@ -1119,7 +1125,8 @@ function renderArtifacts(items){
     return;
   }
   box.innerHTML = items.map(a => `
-    <div class="artifact-card ${a.deleted_at ? "deleted" : ""}">
+    <div class="artifact-card ${a.deleted_at ? "deleted" : ""} ${artifactStatus(a)}"
+         title="${artifactStatusTitle(a)}">
       <div class="artifact-head">
         <div>
           <div class="artifact-name">${esc(a.display_name || a.original_filename || a.id)}</div>
@@ -1403,6 +1410,38 @@ async function refreshRoute(){
   } finally { b.disabled = false; }
 }
 loadRoute();
+
+// ── Скины: палитра + обводка ────────────────────────────────────────────────
+// Храним выбор в localStorage, а не на сервере: дашборд отдаётся без
+// аутентификации, и «текущая тема» на сервере означала бы, что любой в сети
+// перекрашивает интерфейс всем сразу.
+const SKIN_KEYS = { theme:"el-sca.theme", edge:"el-sca.edge" };
+const SKIN_DEFAULTS = { theme:document.documentElement.dataset.theme,
+                        edge:document.documentElement.dataset.edge };
+function applySkin(kind, id){
+  document.documentElement.dataset[kind] = id;
+  try { localStorage.setItem(SKIN_KEYS[kind], id); } catch(e) { /* private mode */ }
+  document.querySelectorAll(`.theme-card[data-kind="${kind}"]`).forEach(c =>
+    c.classList.toggle("chosen", c.dataset.id === id));
+}
+function restoreSkin(){
+  Object.keys(SKIN_KEYS).forEach(kind => {
+    let saved = null;
+    try { saved = localStorage.getItem(SKIN_KEYS[kind]); } catch(e) {}
+    applySkin(kind, saved || SKIN_DEFAULTS[kind]);
+  });
+}
+document.addEventListener("click", ev => {
+  const pick = ev.target.closest(".skin-pick");
+  if(pick){ applySkin(pick.dataset.kind, pick.dataset.id); return; }
+  if(ev.target.id === "skin-reset"){
+    Object.keys(SKIN_KEYS).forEach(kind => {
+      try { localStorage.removeItem(SKIN_KEYS[kind]); } catch(e) {}
+      applySkin(kind, SKIN_DEFAULTS[kind]);
+    });
+  }
+});
+restoreSkin();
 </script>
 </body></html>
 """
@@ -1410,9 +1449,14 @@ loadRoute();
 
 def render_gui() -> str:
     """Return the active dashboard GUI (drag-drop scan + pipeline + DB cards)."""
-    from .themes import render_theme_picker
+    from .themes import ACTIVE_EDGE_ID, ACTIVE_THEME_ID, render_skin_styles, render_theme_picker
 
-    return _GUI_HTML.replace("<!--THEME_PICKER-->", render_theme_picker())
+    return (
+        _GUI_HTML.replace("__THEME__", ACTIVE_THEME_ID)
+        .replace("__EDGE__", ACTIVE_EDGE_ID)
+        .replace("<!--SKIN_STYLES-->", render_skin_styles())
+        .replace("<!--THEME_PICKER-->", render_theme_picker())
+    )
 
 
 def _artifact_runs_payload(

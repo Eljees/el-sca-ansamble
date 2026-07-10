@@ -270,33 +270,80 @@ def test_gui_never_paints_a_full_screen_overlay_over_content():
     assert "z-index:9998" not in gui
 
 
-def test_themes_catalogue_has_ten_variants_and_a_valid_active_one():
-    from resilient_updates.themes import ACTIVE_THEME_ID, THEMES, active_theme
+def test_skin_catalogues_have_ten_themes_and_ten_edges():
+    from resilient_updates.themes import (
+        ACTIVE_EDGE_ID,
+        ACTIVE_THEME_ID,
+        EDGES,
+        THEMES,
+        active_edge,
+        active_theme,
+    )
 
     assert len(THEMES) == 10
-    ids = [t["id"] for t in THEMES]
-    assert len(set(ids)) == 10, "theme ids must be unique"
-    assert ACTIVE_THEME_ID in ids
+    assert len(EDGES) == 10
+    assert len({t["id"] for t in THEMES}) == 10, "theme ids must be unique"
+    assert len({e["id"] for e in EDGES}) == 10, "edge ids must be unique"
+    assert ACTIVE_THEME_ID in {t["id"] for t in THEMES}
+    assert ACTIVE_EDGE_ID in {e["id"] for e in EDGES}
     assert active_theme()["name"] == "Rose Phosphor"
+    assert active_edge()["name"] == "Hazard-полоса"
     for t in THEMES:
         assert set(t["swatch"]) == {"bg", "panel", "fg", "accent", "accent2"}
         for value in t["swatch"].values():
             assert value.startswith("#"), f"{t['id']}: {value!r} is not a hex colour"
 
 
-def test_theme_picker_previews_all_themes_but_cannot_be_used():
-    """It must look inert: every "Выбрать" is disabled, one per theme."""
+def test_every_theme_keeps_the_same_error_colour():
+    """--err must not be themed: a failed stage has to stay recognisable."""
+    from resilient_updates.themes import ERR, THEMES
+
+    assert {t["vars"]["--err"] for t in THEMES} == {ERR}
+
+
+def test_edge_colour_comes_from_status_not_from_the_preset():
+    """Presets draw geometry; yellow/green/pink are bound to status classes."""
+    from resilient_updates.themes import (
+        EDGE_LEGACY,
+        EDGE_NEW,
+        EDGE_SCANNED,
+        EDGES,
+        render_skin_styles,
+    )
+
+    css = render_skin_styles()
+    assert f".artifact-card.st-new {{ --edge:{EDGE_NEW}; }}" in css
+    assert f".artifact-card.st-scanned {{ --edge:{EDGE_SCANNED}; }}" in css
+    assert f".artifact-card.st-legacy {{ --edge:{EDGE_LEGACY}; }}" in css
+    for colour in (EDGE_NEW, EDGE_SCANNED, EDGE_LEGACY):
+        for edge in EDGES:
+            assert colour not in edge["css"], f"{edge['id']} hardcodes {colour}"
+
+
+def test_animated_edges_respect_reduced_motion():
+    from resilient_updates.themes import EDGES, render_skin_styles
+
+    css = render_skin_styles()
+    animated = [e["id"] for e in EDGES if e["animated"]]
+    assert animated, "at least one preset animates"
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    for edge_id in animated:
+        assert f'data-edge="{edge_id}"' in css
+
+
+def test_skin_picker_is_wired_up_and_defaults_are_on_the_html_tag():
     from resilient_updates.dashboard import render_gui
-    from resilient_updates.themes import THEMES
+    from resilient_updates.themes import ACTIVE_EDGE_ID, ACTIVE_THEME_ID, EDGES, THEMES
 
     gui = render_gui()
-    assert "<!--THEME_PICKER-->" not in gui, "placeholder must be substituted"
-    assert 'class="theme-picker"' in gui
-    for theme in THEMES:
-        assert theme["name"] in gui
-    # exactly one disabled button per theme, and no enabled ones inside a card
-    assert gui.count('<button type="button" disabled') >= len(THEMES)
-    assert "Переключение тем ещё не реализовано" in gui
+    assert "<!--THEME_PICKER-->" not in gui and "<!--SKIN_STYLES-->" not in gui
+    assert "__THEME__" not in gui and "__EDGE__" not in gui
+    assert f'data-theme="{ACTIVE_THEME_ID}"' in gui
+    assert f'data-edge="{ACTIVE_EDGE_ID}"' in gui
+    for item in [*THEMES, *EDGES]:
+        assert item["name"] in gui
+        assert f'data-id="{item["id"]}"' in gui
+    assert "localStorage" in gui, "choice is persisted per browser, not on the server"
 
 
 def test_hidden_artifact_cards_lose_their_neon_outline():
@@ -306,10 +353,8 @@ def test_hidden_artifact_cards_lose_their_neon_outline():
 
     gui = render_gui()
     assert ".artifact-card:hover" in gui
-    assert (
-        ".artifact-card.deleted { opacity:.5; border-color:var(--line); "
-        "box-shadow:none; transition:none; }"
-    ) in gui
+    assert "opacity:.5; border-color:var(--line); box-shadow:none; transition:none;" in gui
+    assert ":root[data-edge] .artifact-card.deleted::before" in gui
 
 
 def test_gui_keeps_mutagen_barrels_acid_green():
