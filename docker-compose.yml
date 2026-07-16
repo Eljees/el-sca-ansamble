@@ -338,14 +338,19 @@ services:
     command:
       - |
         # Named DB volumes: only the uid-1001 containers write them -> chown 1001.
+        # Check the whole tree, not just the volume root: a root-run (or a
+        # non-recursive fix) can leave the root at 1001 while staging subdirs
+        # (internal-mirror-data/{tmp,candidates,previous}) stay root-owned, and
+        # then cve-bin-tool activation fails with EACCES on makedirs of
+        # tmp/run-<ts> (shutil.copytree in activate_best_cve_bin_tool_db).
         for d in /vol/grype-db /vol/grype-cache /vol/trivy-cache \
                  /vol/cve-bin-tool-cache /vol/internal-mirror-data; do
-          owner=$$(stat -c '%u' "$$d" 2>/dev/null || echo 0)
-          if [ "$$owner" != "1001" ]; then
-            echo "[volume-init] chown 1001:1001 $$d"
+          strays=$$(find "$$d" ! -uid 1001 -print -quit 2>/dev/null)
+          if [ -n "$$strays" ]; then
+            echo "[volume-init] chown 1001:1001 -R $$d (found non-1001 entries)"
             chown -R 1001:1001 "$$d"
           else
-            echo "[volume-init] ok (already 1001): $$d"
+            echo "[volume-init] ok (whole tree already 1001): $$d"
           fi
         done
         # ./artifacts is a host bind-mount written by BOTH the host deploy-user
