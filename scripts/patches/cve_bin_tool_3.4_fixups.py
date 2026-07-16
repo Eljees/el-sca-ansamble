@@ -17,21 +17,43 @@ silently shipping an unpatched image.
 
 Fixes
 -----
-EPSS (epss_source.py) has two bugs that both keep the source at count 0:
+1. cvedb.py ordering -- the ROOT CAUSE (upstream PR bundle: docs/upstream/).
 
-  1. ``get_cve_data`` calls ``await self.update_epss()`` but the method is
-     ``update_epss(self, cursor)`` -- a hard ``TypeError`` every run.
-  2. Ordering: ``cvedb.get_data`` fetches all sources (``get_cve_data``) *before*
-     ``cvedb.populate_metrics`` inserts the ``(1,"EPSS")`` row, so
-     ``EPSS_id_finder`` selects from an empty ``metrics`` table and IndexErrors.
+   ``CVEDB.refresh_cache_and_update_db()`` gathers every data source first
+   (``run_coroutine(self.refresh())`` -> ``get_data()`` ->
+   ``source.get_cve_data()``) and only then runs ``populate_db()``, whose
+   first statement ``populate_metrics()`` inserts the static metric rows
+   (1,'EPSS') / (2,'CVSS-2') / (3,'CVSS-3').  But ``Epss_Source`` resolves
+   its metric id *while fetching*: ``EPSS_id_finder`` does
+   ``SELECT metrics_id FROM metrics WHERE metrics_name = "EPSS"`` and then
+   ``fetchall()[0][0]`` -> ``IndexError``, because the ``metrics`` table is
+   still empty (or missing entirely on a fresh cache).
 
-Both are swallowed and surface only as "Unable to fetch EPSS, skipping".
+   Fix: create the schema and the static metric rows BEFORE the gather.
+   ``init_database()`` and ``populate_metrics()`` are both idempotent
+   (CREATE TABLE IF NOT EXISTS / INSERT OR REPLACE) and depend on no source
+   output, so hoisting them is safe.
 
-Fix: give ``get_cve_data`` a cursor onto the cve.db AND ensure the EPSS metric
-row exists first -- using cve-bin-tool's OWN constant (``populate_metrics``
-hardcodes ``(1, "EPSS")``), so nothing is guessed and the later
-``store_epss_data`` writes under the same id.  Reuses cve-bin-tool's own
-download/parse/store.  Worst case (no cve.db) degrades to the prior skip.
+2. epss_source.py -- kept in addition to fix 1:
+
+   a. ``get_cve_data`` calls ``await self.update_epss()`` but the method
+      signature is ``update_epss(self, cursor)`` -- a hard ``TypeError`` on
+      every run.  Fix 1 does NOT cure this; without a cursor EPSS still dies.
+   b. The same patch defensively creates/seeds the (1,'EPSS') metric row from
+      the source's own sqlite connection.  With fix 1 in place this is a
+      no-op belt-and-suspenders (protects a partially initialized cache or
+      standalone use of the source).
+
+Both bugs are swallowed by ``except Exception`` in ``get_cve_data`` and
+surface only as "Unable to fetch EPSS, skipping EPSS." at count 0.
+
+Version note: pinned to cve-bin-tool==3.4 (latest stable on PyPI as of
+2026-07).  Upstream main / 3.4.1rc0 rewrites epss_source.py -- update_epss()
+drops the cursor parameter and the metrics-table lookup entirely -- which
+masks the crash but keeps the populate-metrics-after-gather ordering that
+fix 1 corrects (fix 1's target text is unchanged there and still correct).
+On any version bump: DROP fix 2 (its patched call would pass a stray cursor)
+and re-audit fix 1.
 """
 
 from __future__ import annotations
@@ -62,6 +84,76 @@ def _replace_once(path: Path, old: str, new: str, *, marker: str) -> str:
             f"PATCH FAILED: {path.name}: expected exactly 1 match, found {text.count(old)}"
         )
     path.write_text(text.replace(old, new), encoding="utf-8")
+    return "patched"
+
+
+def fix_cvedb_metrics_ordering() -> str:
+    """Populate static metric definitions BEFORE the source gather (root cause)."""
+    path = _cvebt_dir() / "cvedb.py"
+
+    # Part 1: hoist schema init + metric definitions above the source gather.
+    old_gather = (
+        '        self.LOGGER.debug("Updating CVE data. This will take a few minutes.")\n'
+        "        # refresh the nvd cache\n"
+        "        run_coroutine(self.refresh())\n"
+        "\n"
+        "        # if the database isn't open, open it\n"
+        "        self.init_database()\n"
+        "        self.populate_db()\n"
+    )
+    new_gather = (
+        '        self.LOGGER.debug("Updating CVE data. This will take a few minutes.")\n'
+        "        # PATCH(el-sca): populate metric definitions before the source gather.\n"
+        "        # Root cause of the 3.4 EPSS crash: get_data() runs every source's\n"
+        "        # get_cve_data() -- and Epss_Source resolves its metrics_id from the\n"
+        "        # metrics table while fetching -- BEFORE populate_db() ->\n"
+        "        # populate_metrics() has inserted the (1,'EPSS') row, so the lookup\n"
+        "        # hits an empty table and raises IndexError.  Schema and static\n"
+        "        # metric rows depend on no source output and both calls are\n"
+        "        # idempotent (CREATE TABLE IF NOT EXISTS / INSERT OR REPLACE), so\n"
+        "        # do them first.  The cachedir may not exist yet on a fresh install\n"
+        "        # (upstream created it inside refresh()), hence the mkdir guard.\n"
+        "        if not self.cachedir.is_dir():\n"
+        "            self.cachedir.mkdir(parents=True)\n"
+        "        # if the database isn't open, open it\n"
+        "        self.init_database()\n"
+        "        self.populate_metrics()\n"
+        "        # refresh the nvd cache\n"
+        "        run_coroutine(self.refresh())\n"
+        "\n"
+        "        self.populate_db()\n"
+    )
+    part1 = _replace_once(
+        path,
+        old_gather,
+        new_gather,
+        marker="PATCH(el-sca): populate metric definitions before the source gather",
+    )
+
+    # Part 2: drop the now-too-late call inside populate_db().
+    old_late = (
+        "        self.populate_metrics()\n"
+        "        # EPSS uses metrics table to get the EPSS metric id.\n"
+        "        # It can't be run before creation of metrics table.\n"
+        "\n"
+    )
+    new_late = (
+        "        # PATCH(el-sca): populate_metrics() call moved up into\n"
+        "        # refresh_cache_and_update_db(), BEFORE the source gather -- the\n"
+        "        # EPSS source needs the metrics rows while it is fetching, which\n"
+        "        # happens before populate_db() ever runs.\n"
+        "\n"
+    )
+    part2 = _replace_once(
+        path,
+        old_late,
+        new_late,
+        marker="PATCH(el-sca): populate_metrics() call moved up",
+    )
+
+    parts = (part1, part2)
+    if all(p == "already-patched" for p in parts):
+        return "already-patched"
     return "patched"
 
 
@@ -104,7 +196,10 @@ def fix_epss() -> str:
 
 
 def main() -> int:
-    results = {"epss": fix_epss()}
+    results = {
+        "cvedb_metrics_ordering": fix_cvedb_metrics_ordering(),
+        "epss": fix_epss(),
+    }
     print("[cve-bin-tool 3.4 fixups]", results)
     if all(v == "already-patched" for v in results.values()) and os.environ.get(
         "CVEBT_PATCH_STRICT"
