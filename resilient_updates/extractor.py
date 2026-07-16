@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ._io import sha256_file as _sha256_file
+from ._io import hash_triple as _hash_triple
 
 ARCHIVE_SUFFIXES = (
     ".tar.gz",
@@ -512,17 +512,24 @@ def extract_artifacts(
         )
         # Guard the hash: a vanished/locked file must not abort the whole run
         # (this is computed before the try/except that wraps extraction).
+        # Hash the archive once (md5+sha1+sha256 in a single pass) so the
+        # manifest carries every digest the report UI shows.  Computed here,
+        # in-container, where the archive definitely exists — run_summary then
+        # reads these back instead of re-hashing on the host (the recorded
+        # "archive" path is a container path and would not resolve there).
         try:
-            archive_sha = _sha256_file(archive_path)
+            archive_hashes = _hash_triple(archive_path)
         except OSError as exc:
-            archive_sha = None
-            manifest["failures"].append({"archive": str(archive_path), "error": f"sha256 failed: {exc}"})
+            archive_hashes = {}
+            manifest["failures"].append({"archive": str(archive_path), "error": f"hash failed: {exc}"})
         item: dict[str, Any] = {
             "archive": str(archive_path),
             "relative_path": rel,
             "kind": kind,
             "depth": depth,
-            "sha256": archive_sha,
+            "md5": archive_hashes.get("md5"),
+            "sha1": archive_hashes.get("sha1"),
+            "sha256": archive_hashes.get("sha256"),
             "output_dir": str(target_dir),
             "status": "pending",
         }

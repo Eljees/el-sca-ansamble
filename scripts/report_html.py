@@ -42,20 +42,46 @@ def load_json(path: str | os.PathLike[str] | None):
 
 
 def hash_target(path: str | os.PathLike[str] | None) -> dict[str, str]:
+    """md5+sha1+sha256 of a file, or a stable content hash of a directory.
+
+    Only a *fallback* for CLI runs that pass a real ``--target`` path; the
+    pipeline normally supplies ``target_hashes`` via summary.json.  The
+    directory framing (sorted relpath + NUL + bytes + NUL) matches
+    ``resilient_updates._io.hash_triple_dir`` so both paths agree.
+    """
     if not path:
         return {}
     candidate = Path(path)
-    if not candidate.exists() or not candidate.is_file():
+    md5_d = hashlib.md5(usedforsecurity=False)
+    sha1_d = hashlib.sha1(usedforsecurity=False)
+    sha256_d = hashlib.sha256()
+    digests = (md5_d, sha1_d, sha256_d)
+    try:
+        if candidate.is_file():
+            with candidate.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    for d in digests:
+                        d.update(chunk)
+        elif candidate.is_dir():
+            for item in sorted(p for p in candidate.rglob("*") if p.is_file()):
+                frame = str(item.relative_to(candidate)).replace("\\", "/").encode("utf-8")
+                for d in digests:
+                    d.update(frame)
+                    d.update(b"\0")
+                with item.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        for d in digests:
+                            d.update(chunk)
+                for d in digests:
+                    d.update(b"\0")
+        else:
+            return {}
+    except OSError:
         return {}
-    sha1_digest = hashlib.sha1()
-    sha256_digest = hashlib.sha256()
-    with candidate.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            sha1_digest.update(chunk)
-            sha256_digest.update(chunk)
     return {
-        "sha1": sha1_digest.hexdigest(),
-        "sha256": sha256_digest.hexdigest(),
+        "md5": md5_d.hexdigest(),
+        "sha1": sha1_d.hexdigest(),
+        "sha256": sha256_d.hexdigest(),
     }
 
 
@@ -255,7 +281,9 @@ def load_report_metadata(artifacts_dir: str | os.PathLike[str], target_display: 
     run_manifest = load_json(artifacts / "run_manifest.json") or {}
     db_snapshot = load_json(artifacts / "db_snapshot.json") or {}
     status = load_json(artifacts / "status.json") or {}
-    target_hashes = hash_target(target_display)
+    target_hashes = (
+        summary.get("target_hashes") or run_manifest.get("target_hashes") or hash_target(target_display)
+    )
     input_hashes = summary.get("input_hashes") or run_manifest.get("input_hashes") or {}
     tools = {}
     raw_tools = db_snapshot.get("tools") or {}
@@ -294,10 +322,12 @@ def load_report_metadata(artifacts_dir: str | os.PathLike[str], target_display: 
             summary.get("input_sha256") or (run_manifest.get("input") or {}).get("sha256") or "UNKNOWN"
         ),
         "input_hashes": {
+            "md5": str(input_hashes.get("md5") or "UNKNOWN"),
             "sha1": str(input_hashes.get("sha1") or "UNKNOWN"),
             "sha256": str(input_hashes.get("sha256") or summary.get("input_sha256") or "UNKNOWN"),
         },
         "target_hashes": {
+            "md5": str(target_hashes.get("md5") or "UNKNOWN"),
             "sha1": str(target_hashes.get("sha1") or "UNKNOWN"),
             "sha256": str(target_hashes.get("sha256") or "UNKNOWN"),
         },
@@ -443,10 +473,12 @@ def render_metadata(metadata):
       <div class="section" style="margin-bottom:0">
         <div class="section-title">Artifact hashes</div>
         <div class="stats-block">
-          <div class="stat-row"><span class="stat-label">Final target SHA-1</span><span class="stat-value mono">{escape(metadata["target_hashes"]["sha1"])}</span></div>
-          <div class="stat-row"><span class="stat-label">Final target SHA-256</span><span class="stat-value mono">{escape(metadata["target_hashes"]["sha256"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Input artifact MD5</span><span class="stat-value mono">{escape(metadata["input_hashes"]["md5"])}</span></div>
           <div class="stat-row"><span class="stat-label">Input artifact SHA-1</span><span class="stat-value mono">{escape(metadata["input_hashes"]["sha1"])}</span></div>
           <div class="stat-row"><span class="stat-label">Input artifact SHA-256</span><span class="stat-value mono">{escape(metadata["input_hashes"]["sha256"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Final target MD5</span><span class="stat-value mono">{escape(metadata["target_hashes"]["md5"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Final target SHA-1</span><span class="stat-value mono">{escape(metadata["target_hashes"]["sha1"])}</span></div>
+          <div class="stat-row"><span class="stat-label">Final target SHA-256</span><span class="stat-value mono">{escape(metadata["target_hashes"]["sha256"])}</span></div>
         </div>
       </div>
       <div class="section" style="margin-bottom:0">

@@ -981,6 +981,17 @@ class JobRegistry:
         sc_env["CVE_BIN_TOOL_TARGET"] = "/scan-target"
         # Trivy defaults to scanning "alpine:latest"; point it at the artifact.
         sc_env["TRIVY_TARGET"] = "/scan-target"
+        # Report identity.  The report generators render SCAN_TARGET_DISPLAY as
+        # the object "Target" / header and CASE_ID as the report heading.  The
+        # dotenv load above may have injected the .env placeholder
+        # (/absolute/path/to/artifact-or-directory); override it with the
+        # uploaded artifact's own filename so every report says which object it
+        # is for.  CASE_ID likewise carries the CYBERSEC-id instead of the
+        # CYBERSEC-UNKNOWN default.
+        _display_name = os.path.basename(str(target_host)) or "UNKNOWN"
+        sc_env["SCAN_TARGET_DISPLAY"] = _display_name
+        if job.case_id:
+            sc_env["CASE_ID"] = job.case_id
 
         # Which analysers to run.  Default = all; EL_SCA_SKIP_CVEBT drops
         # cve-bin-tool.  Grype consumes the Syft SBOM, so syft is forced on with it.

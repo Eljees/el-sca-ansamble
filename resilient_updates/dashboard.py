@@ -1484,6 +1484,12 @@ def _artifact_runs_payload(
                 "markdown_report_path": _markdown_report(run_root),
             }
         )
+    # Newest run first: run ids embed a YYYYMMDD-HHMMSS stamp, so a reverse
+    # lexical sort is chronological.  This makes "open the artifact's report"
+    # (openArtifactReports picks the first run with a report) resolve to the
+    # LATEST scan of THIS artifact instead of an arbitrary/oldest one — the
+    # fix for a stale or wrong-looking report opening from the card.
+    out.sort(key=lambda r: str(r.get("id") or ""), reverse=True)
     return out
 
 

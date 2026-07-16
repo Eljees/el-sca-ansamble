@@ -506,12 +506,18 @@ def build_report(
     except Exception:
         diff_lines = []
 
-    # Collect input hashes (sha1 + sha256) from summary or run_manifest.
+    # Collect input + final-target hashes (md5/sha1/sha256) from summary or
+    # run_manifest.  Both are precomputed once by run_summary.derive().
     input_hashes: dict[str, str] = {}
     if isinstance(summary, dict) and isinstance(summary.get("input_hashes"), dict):
         input_hashes = summary["input_hashes"]
     elif isinstance(run_manifest, dict) and isinstance(run_manifest.get("input_hashes"), dict):
         input_hashes = run_manifest["input_hashes"]
+    target_hashes: dict[str, str] = {}
+    if isinstance(summary, dict) and isinstance(summary.get("target_hashes"), dict):
+        target_hashes = summary["target_hashes"]
+    elif isinstance(run_manifest, dict) and isinstance(run_manifest.get("target_hashes"), dict):
+        target_hashes = run_manifest["target_hashes"]
 
     # Collect per-tool DB metadata from db_snapshot.json for the metadata section.
     db_tools: dict[str, Any] = {}
@@ -526,8 +532,8 @@ def build_report(
         "## Объект анализа",
         "",
         f"- Target: `{target}`",
-        f"- SHA-256: `{digest or 'UNKNOWN'}`",
-        f"- Input archive SHA-256: `{input_sha or 'UNKNOWN'}`",
+        f"- Final target SHA-256: `{target_hashes.get('sha256') or digest or 'UNKNOWN'}`",
+        f"- Input archive SHA-256: `{input_hashes.get('sha256') or input_sha or 'UNKNOWN'}`",
         f"- DB snapshot: `{db_snapshot_id or 'UNKNOWN'}`",
         f"- DB drift: `{db_drift}`",
         f"- Tool failures: `{tool_failures}`",
@@ -538,14 +544,26 @@ def build_report(
         "## Hash sums",
         "",
     ]
-    if input_hashes:
-        if input_hashes.get("sha1"):
-            report.append(f"- SHA-1: `{input_hashes['sha1']}`")
-        if input_hashes.get("sha256"):
-            report.append(f"- SHA-256: `{input_hashes['sha256']}`")
-    elif input_sha:
-        report.append(f"- SHA-256: `{input_sha}`")
-    else:
+    _any_hash = False
+    for _title, _hashes, _sha_fallback in (
+        ("Input artifact", input_hashes, input_sha),
+        ("Final target", target_hashes, None),
+    ):
+        _md5 = _hashes.get("md5") if isinstance(_hashes, dict) else None
+        _sha1 = _hashes.get("sha1") if isinstance(_hashes, dict) else None
+        _sha256 = (_hashes.get("sha256") if isinstance(_hashes, dict) else None) or _sha_fallback
+        if not (_md5 or _sha1 or _sha256):
+            continue
+        _any_hash = True
+        report += [f"**{_title}**", ""]
+        if _md5:
+            report.append(f"- MD5: `{_md5}`")
+        if _sha1:
+            report.append(f"- SHA-1: `{_sha1}`")
+        if _sha256:
+            report.append(f"- SHA-256: `{_sha256}`")
+        report.append("")
+    if not _any_hash:
         report.append("- Hash information not available.")
     report += [
         "",

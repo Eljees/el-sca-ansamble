@@ -41,7 +41,8 @@ from pathlib import Path
 from typing import Any
 
 from ._io import (
-    hash_pair as _hash_path,
+    hash_triple as _hash_path,
+    hash_triple_dir as _hash_triple_dir,
     read_json as _read_json,
     short_hash as _short_hash,
 )
@@ -125,16 +126,43 @@ def _input_hashes(extraction_manifest: Any) -> dict[str, str]:
     items = _top_level_input_items(extraction_manifest)
     if len(items) != 1 or not isinstance(items[0], dict):
         return {}
-    archive = str(items[0].get("archive") or "").strip()
-    if not archive:
-        return {}
-    path = Path(archive)
-    if not path.exists() or not path.is_file():
-        return {}
+    item = items[0]
+    recorded = {key: str(item.get(key)) for key in ("md5", "sha1", "sha256") if item.get(key)}
+    # A "rich" record from the current extractor already carries sha1/md5 —
+    # trust it and skip re-hashing (the recorded ``archive`` is a container
+    # path that would not resolve on the host anyway).
+    if recorded.get("sha1") or recorded.get("md5"):
+        return recorded
+    # Older / sha256-only manifests: re-hash the actual file when reachable to
+    # recover the full md5+sha1+sha256 triple.
+    archive = str(item.get("archive") or "").strip()
+    if archive:
+        path = Path(archive)
+        if path.exists() and path.is_file():
+            try:
+                return _hash_path(path)
+            except OSError:
+                pass
+    # Last resort: whatever was recorded (possibly just sha256, possibly {}).
+    return recorded
+
+
+def _target_hashes(base: Path, extraction_manifest: Any) -> dict[str, str]:
+    """md5/sha1/sha256 of what the scanners actually ran on.
+
+    The pipeline re-points every scanner at ``extracted/current`` (the
+    unpacked tree), so that directory *is* the final target — hash its content
+    once (stable across platforms).  If nothing was extracted (the archive was
+    scanned directly), fall back to the input archive's digests so the field is
+    never a bare UNKNOWN.
+    """
+    extracted = base / "extracted" / "current"
     try:
-        return _hash_path(path)
+        if extracted.is_dir() and any(p.is_file() for p in extracted.rglob("*")):
+            return _hash_triple_dir(extracted)
     except OSError:
-        return {}
+        pass
+    return _input_hashes(extraction_manifest)
 
 
 def _grype_provenance_state(prov_grype: Any) -> dict[str, str]:
@@ -355,6 +383,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
     cve_count = _cve_bin_tool_count(cve)
     input_sha = _input_sha256(extraction)
     input_hashes = _input_hashes(extraction)
+    target_hashes = _target_hashes(base, extraction)
     grype_state = _grype_provenance_state(prov_grype)
     cve_state = _cve_provenance_state(prov_cve)
     trivy_state = _trivy_provenance_state(prov_trivy)
@@ -414,6 +443,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "update_cve_db": cve_state["update_cve_db"],
         "input_sha256": input_sha or "",
         "input_hashes": input_hashes,
+        "target_hashes": target_hashes,
         "db_snapshot_id": snapshot_id,
     }
     status = {
@@ -427,6 +457,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "timestamp_utc": timestamp,
         "input": {"sha256": input_sha or ""},
         "input_hashes": input_hashes,
+        "target_hashes": target_hashes,
         "db_snapshot_id": snapshot_id,
     }
     db_snapshot = {
