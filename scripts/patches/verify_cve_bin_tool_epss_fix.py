@@ -35,6 +35,12 @@ def main() -> int:
     assert not hasattr(Epss_Source, "EPSS_id_finder"), "EPSS_id_finder must be gone"
     assert EPSS_METRIC_ID == 1, "EPSS_METRIC_ID must match populate_metrics()"
 
+    # Hardening layer (fix_epss_hardening).
+    assert "empiricalsecurity" in Epss_Source.DATA_SOURCE_LINK, "current EPSS CDN"
+    assert "cyentia" in Epss_Source.BACKUP_DATA_SOURCE_LINK, "fallback mirror"
+    assert hasattr(Epss_Source, "_download_and_save"), "mirror-fallback helper"
+    assert hasattr(Epss_Source, "_fetch_epss_csv"), "download helper"
+
     with tempfile.TemporaryDirectory() as tmp:
         src = Epss_Source()
         src.epss_path = os.path.join(tmp, "epss")
@@ -72,6 +78,9 @@ def main() -> int:
         con.close()
         assert n == 2, f"expected 2 EPSS rows in cve_metrics, got {n}"
         assert metric_name == "EPSS", metric_name
+
+        # Hardening: garbage EPSS rows must be logged, never abort the update.
+        db.store_epss_data([("CVE-1", 1), ("CVE-2",)])
 
     print("[verify_cve_bin_tool_epss_fix] OK: patched EPSS pipeline works offline")
     return 0

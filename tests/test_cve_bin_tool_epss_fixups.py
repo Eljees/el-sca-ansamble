@@ -145,3 +145,52 @@ def test_total_download_failure_is_not_fatal(tmp_path, monkeypatch):
     monkeypatch.setattr(src, "download_epss_data", boom)
     data, name = asyncio.run(src.get_cve_data())
     assert (data, name) == (None, "EPSS")
+
+
+# ---------------------------------------------------------------------------
+# Hardening layer (fix_epss_hardening): mirror fallback, tolerant parser,
+# store that cannot abort the update.
+# ---------------------------------------------------------------------------
+
+SAMPLE_CSV_WITH_JUNK = SAMPLE_CSV + "BADROW\n\nCVE-2023-3333,0.5,0.7\n"
+
+
+def test_mirror_fallback_order(tmp_path, monkeypatch):
+    aiohttp = pytest.importorskip("aiohttp")
+    src = make_source(tmp_path)
+    os.makedirs(src.epss_path, exist_ok=True)
+    calls = []
+
+    async def fake_fetch(url):
+        calls.append(url)
+        if url == src.DATA_SOURCE_LINK:
+            raise aiohttp.ClientError("primary mirror down")
+        return b"payload"
+
+    monkeypatch.setattr(src, "_fetch_epss_csv", fake_fetch)
+    asyncio.run(src._download_and_save())
+
+    assert calls == [src.DATA_SOURCE_LINK, src.BACKUP_DATA_SOURCE_LINK]
+    with open(src.file_name, "rb") as f:
+        assert f.read() == b"payload"
+    assert "empiricalsecurity" in src.DATA_SOURCE_LINK
+    assert "cyentia" in src.BACKUP_DATA_SOURCE_LINK
+
+
+def test_malformed_rows_are_skipped(tmp_path):
+    src = make_source(tmp_path)
+    write_sample(src, SAMPLE_CSV_WITH_JUNK)
+    parsed = src.parse_epss_data()
+    ids = [row[0] for row in parsed]
+    assert "CVE-2023-3333" in ids and "BADROW" not in ids
+    assert len(parsed) == 3
+
+
+def test_store_epss_data_never_breaks_db_update(tmp_path):
+    cachedir = tmp_path / "cache"
+    cachedir.mkdir()
+    db = CVEDB(sources=[], cachedir=str(cachedir), version_check=False)
+    db.init_database()
+    db.populate_metrics()
+    # wrong arity / garbage rows: must be logged, not raised
+    db.store_epss_data([("CVE-1", 1), ("CVE-2",)])

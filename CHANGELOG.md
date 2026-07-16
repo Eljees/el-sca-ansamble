@@ -28,6 +28,14 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `scripts/patches/cve_bin_tool_3.4_fixups.py` (hardening поверх бекпорта):
+  EPSS-CDN обновлён на актуальный `epss.empiricalsecurity.com` (апстрим ушёл с
+  cyentia после 3.4.1rc0), старый URL оставлен фолбэк-зеркалом; два
+  скопированных блока скачивания дедуплицированы в `_download_and_save()`;
+  в лог пишется сам эксепшн (`Unable to fetch EPSS (<exc>)…`) — TypeError 3.4
+  год оставался незамеченным именно из-за скрытой причины; битые CSV-строки
+  пропускаются; `store_epss_data()` обёрнут в try/except — сбой EPSS не может
+  прервать обновление cve.db.
 - `scripts/patches/cve_bin_tool_3.4_fixups.py`: EPSS-фикс переведён с локального
   reorder + cursor-шима на бекпорт апстрим-решения «metric ids as constants»
   (ossf/cve-bin-tool `main`, смержено в 2025, в релизах отсутствует — последний

@@ -229,10 +229,204 @@ def fix_epss_source() -> str:
     return "patched"
 
 
+def fix_epss_hardening() -> str:
+    """Hardening on top of the backport: current CDN + mirror fallback,
+    visible failure reasons, tolerant parser, and a store that can never
+    abort the whole cve.db update.  Targets the post-backport text, so this
+    must run after fix_epss_source()."""
+    path = _cvebt_dir() / "data_sources" / "epss_source.py"
+
+    # (a) current EPSS home + fallback mirror.  Upstream main moved to
+    # empiricalsecurity.com after 3.4.1rc0; cyentia.com is kept as backup.
+    old_url = '    DATA_SOURCE_LINK = "https://epss.cyentia.com/epss_scores-current.csv.gz"\n'
+    new_url = (
+        "    # PATCH(el-sca): empiricalsecurity.com is the current home of EPSS\n"
+        "    # data (upstream main moved off cyentia after 3.4.1rc0); cyentia is\n"
+        "    # kept as a fallback mirror.\n"
+        '    DATA_SOURCE_LINK = "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz"\n'
+        '    BACKUP_DATA_SOURCE_LINK = "https://epss.cyentia.com/epss_scores-current.csv.gz"\n'
+    )
+    a = _replace_once(
+        path, old_url, new_url, marker="PATCH(el-sca): empiricalsecurity.com is the current home"
+    )
+
+    # (b) deduplicate the two copy-pasted download blocks into helpers with
+    # mirror fallback.
+    old_dl = (
+        "    async def download_epss_data(self):\n"
+        '        """Downloads the EPSS CSV file and saves it to the local filesystem.\n'
+        "        The download is only performed if the file is older than 24 hours.\n"
+        '        """\n'
+        "        os.makedirs(self.epss_path, exist_ok=True)\n"
+        "        # Check if the file exists\n"
+        "        if os.path.exists(self.file_name):\n"
+        "            # Get the modification time of the file\n"
+        "            modified_time = os.path.getmtime(self.file_name)\n"
+        "            last_modified = datetime.fromtimestamp(modified_time)\n"
+        "\n"
+        "            # Calculate the time difference between now and the last modified time\n"
+        "            time_difference = datetime.now() - last_modified\n"
+        "\n"
+        "            # Check if the file is older than 24 hours\n"
+        "            if time_difference > timedelta(hours=24):\n"
+        "                try:\n"
+        "                    async with aiohttp.ClientSession(\n"
+        "                        headers=HTTP_HEADERS, trust_env=True\n"
+        "                    ) as session:\n"
+        "                        async with session.get(self.DATA_SOURCE_LINK) as response:\n"
+        "                            response.raise_for_status()\n"
+        '                            self.LOGGER.info("Getting EPSS data...")\n'
+        "                            decompressed_data = gzip.decompress(await response.read())\n"
+        "\n"
+        "                    # Save the downloaded data to the file\n"
+        '                    with open(self.file_name, "wb") as file:\n'
+        "                        file.write(decompressed_data)\n"
+        "\n"
+        "                except aiohttp.ClientError as e:\n"
+        '                    self.LOGGER.error(f"An error occurred during updating epss {e}")\n'
+        "\n"
+        "            else:\n"
+        "                self.LOGGER.info(\n"
+        '                    "Utilizing the latest cache of EPSS data, which is less than 24 hours old."\n'
+        "                )\n"
+        "\n"
+        "        else:\n"
+        "            try:\n"
+        "                async with aiohttp.ClientSession(\n"
+        "                    headers=HTTP_HEADERS, trust_env=True\n"
+        "                ) as session:\n"
+        "                    async with session.get(self.DATA_SOURCE_LINK) as response:\n"
+        "                        response.raise_for_status()\n"
+        '                        self.LOGGER.info("Getting EPSS data...")\n'
+        "                        decompressed_data = gzip.decompress(await response.read())\n"
+        "\n"
+        "                # Save the downloaded data to the file\n"
+        '                with open(self.file_name, "wb") as file:\n'
+        "                    file.write(decompressed_data)\n"
+        "\n"
+        "            except aiohttp.ClientError as e:\n"
+        '                self.LOGGER.error(f"An error occurred during downloading epss {e}")\n'
+    )
+    new_dl = (
+        "    # PATCH(el-sca): download deduplicated into helpers with mirror fallback.\n"
+        "    async def _fetch_epss_csv(self, url):\n"
+        '        """Download and decompress the EPSS CSV file from one URL."""\n'
+        "        async with aiohttp.ClientSession(\n"
+        "            headers=HTTP_HEADERS, trust_env=True\n"
+        "        ) as session:\n"
+        "            async with session.get(url) as response:\n"
+        "                response.raise_for_status()\n"
+        '                self.LOGGER.info(f"Getting EPSS data from {url}")\n'
+        "                return gzip.decompress(await response.read())\n"
+        "\n"
+        "    async def _download_and_save(self):\n"
+        '        """Try each EPSS mirror in order and store the first successful result."""\n'
+        "        last_error = None\n"
+        "        for url in (self.DATA_SOURCE_LINK, self.BACKUP_DATA_SOURCE_LINK):\n"
+        "            try:\n"
+        "                decompressed_data = await self._fetch_epss_csv(url)\n"
+        '                with open(self.file_name, "wb") as file:\n'
+        "                    file.write(decompressed_data)\n"
+        "                return\n"
+        "            except (aiohttp.ClientError, gzip.BadGzipFile, OSError) as e:\n"
+        "                last_error = e\n"
+        '                self.LOGGER.warning(f"EPSS download failed from {url}: {e!r}")\n'
+        '        self.LOGGER.error(f"An error occurred during updating epss {last_error}")\n'
+        "\n"
+        "    async def download_epss_data(self):\n"
+        '        """Downloads the EPSS CSV file and saves it to the local filesystem.\n'
+        "        The download is only performed if the file is older than 24 hours.\n"
+        '        """\n'
+        "        os.makedirs(self.epss_path, exist_ok=True)\n"
+        "        # Check if the file exists\n"
+        "        if os.path.exists(self.file_name):\n"
+        "            # Get the modification time of the file\n"
+        "            modified_time = os.path.getmtime(self.file_name)\n"
+        "            last_modified = datetime.fromtimestamp(modified_time)\n"
+        "\n"
+        "            # Calculate the time difference between now and the last modified time\n"
+        "            time_difference = datetime.now() - last_modified\n"
+        "\n"
+        "            # Check if the file is older than 24 hours\n"
+        "            if time_difference > timedelta(hours=24):\n"
+        "                await self._download_and_save()\n"
+        "            else:\n"
+        "                self.LOGGER.info(\n"
+        '                    "Utilizing the latest cache of EPSS data, which is less than 24 hours old."\n'
+        "                )\n"
+        "        else:\n"
+        "            await self._download_and_save()\n"
+    )
+    b = _replace_once(
+        path, old_dl, new_dl, marker="PATCH(el-sca): download deduplicated into helpers"
+    )
+
+    # (c) tolerate malformed CSV rows instead of crashing on unpack.
+    old_rows = (
+        "        for row in reader:\n"
+        "            cve_id, epss_score, epss_percentile = row[:3]\n"
+    )
+    new_rows = (
+        "        for row in reader:\n"
+        "            # PATCH(el-sca): skip malformed rows instead of crashing on unpack.\n"
+        "            if len(row) < 3:\n"
+        '                self.LOGGER.debug(f"Skipping malformed EPSS row: {row!r}")\n'
+        "                continue\n"
+        "            cve_id, epss_score, epss_percentile = row[:3]\n"
+    )
+    c = _replace_once(
+        path, old_rows, new_rows, marker="PATCH(el-sca): skip malformed rows"
+    )
+
+    # (d) make the real failure reason visible -- the 3.4 TypeError went
+    # unnoticed precisely because this line hid it.
+    old_log = '            self.LOGGER.error("Unable to fetch EPSS, skipping EPSS.")\n'
+    new_log = (
+        "            # PATCH(el-sca): log the actual exception, not just the fact.\n"
+        '            self.LOGGER.error(f"Unable to fetch EPSS ({e!r}), skipping EPSS.")\n'
+    )
+    d = _replace_once(
+        path, old_log, new_log, marker="PATCH(el-sca): log the actual exception"
+    )
+
+    # (e) cvedb.store_epss_data(): EPSS is auxiliary data -- a failure here
+    # must never abort the whole cve.db update.
+    cvedb_path = _cvebt_dir() / "cvedb.py"
+    old_store = (
+        '        insert_cve_metrics = self.INSERT_QUERIES["insert_cve_metrics"]\n'
+        "        cursor = self.db_open_and_get_cursor()\n"
+        "        cursor.executemany(insert_cve_metrics, epss_data)\n"
+        "        self.connection.commit()\n"
+        "        self.db_close()\n"
+    )
+    new_store = (
+        '        insert_cve_metrics = self.INSERT_QUERIES["insert_cve_metrics"]\n'
+        "        cursor = self.db_open_and_get_cursor()\n"
+        "        # PATCH(el-sca): EPSS is auxiliary data -- a failure here must never\n"
+        "        # abort the whole cve.db update.\n"
+        "        try:\n"
+        "            cursor.executemany(insert_cve_metrics, epss_data)\n"
+        "            self.connection.commit()\n"
+        "        except Exception as e:\n"
+        '            LOGGER.error(f"Unable to insert EPSS data: {e!r}")\n'
+        "        finally:\n"
+        "            self.db_close()\n"
+    )
+    e = _replace_once(
+        cvedb_path, old_store, new_store, marker="PATCH(el-sca): EPSS is auxiliary data"
+    )
+
+    results = (a, b, c, d, e)
+    if all(r == "already-patched" for r in results):
+        return "already-patched"
+    return "patched"
+
+
 def main() -> int:
     results = {
         "cvedb_metric_constants": fix_cvedb_metric_constants(),
         "epss_source": fix_epss_source(),
+        "epss_hardening": fix_epss_hardening(),
     }
     print("[cve-bin-tool 3.4 fixups]", results)
     if all(v == "already-patched" for v in results.values()) and os.environ.get(
