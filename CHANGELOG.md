@@ -51,6 +51,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `scripts/patches/cve_bin_tool_3.4_fixups.py` (new) + `Dockerfile.cve-bin-tool`:
+  патч апстрим-бага EPSS в cve-bin-tool 3.4. `Epss_Source.get_cve_data()` звал
+  `await self.update_epss()` без обязательного аргумента `cursor` → `TypeError`
+  на каждом прогоне, глушился и превращался в «Unable to fetch EPSS». 3.4 —
+  последняя версия на PyPI, бампнуть не на что, поэтому патчим на месте:
+  открываем курсор к уже инициализированной cve.db (в её `metrics` есть строка
+  EPSS) и пробрасываем его; используется родной parse/store cve-bin-tool.
+  Патч идемпотентный и самопроверяющийся — сборка падает, если целевой код
+  сместился. Проверено: `patched` → импорт OK → повторный прогон
+  `already-patched`. OSV (память) и PURL2CPE (баг в core-store `cvedb.py` +
+  тяжёлый источник) пока остаются в `CVE_BIN_TOOL_ENRICH_DISABLE`. (аудит-fixup 2026-07-16)
 - `.dockerignore`: добавлен (его не было вовсе). Без него build-контекст на
   реальной развёртке — около 7 ГБ (`bundle/` ~4.3 ГБ, `artifacts/` ~1.9 ГБ,
   `_SCA_reports/` ~0.6 ГБ) и в демон уезжал локальный `.env`. Dockerfile'ы
