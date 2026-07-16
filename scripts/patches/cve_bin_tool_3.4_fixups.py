@@ -17,12 +17,21 @@ silently shipping an unpatched image.
 
 Fixes
 -----
-EPSS (epss_source.py): ``get_cve_data`` calls ``await self.update_epss()`` but
-the method signature is ``update_epss(self, cursor)`` -- a hard ``TypeError`` on
-every run, swallowed and reported as "Unable to fetch EPSS".  We open a cursor
-onto the already-initialised cve.db (its ``metrics`` table carries the EPSS
-metric id) and pass it through.  Worst case (no cve.db yet) degrades to exactly
-the prior behaviour: skip EPSS.
+EPSS (epss_source.py) has two bugs that both keep the source at count 0:
+
+  1. ``get_cve_data`` calls ``await self.update_epss()`` but the method is
+     ``update_epss(self, cursor)`` -- a hard ``TypeError`` every run.
+  2. Ordering: ``cvedb.get_data`` fetches all sources (``get_cve_data``) *before*
+     ``cvedb.populate_metrics`` inserts the ``(1,"EPSS")`` row, so
+     ``EPSS_id_finder`` selects from an empty ``metrics`` table and IndexErrors.
+
+Both are swallowed and surface only as "Unable to fetch EPSS, skipping".
+
+Fix: give ``get_cve_data`` a cursor onto the cve.db AND ensure the EPSS metric
+row exists first -- using cve-bin-tool's OWN constant (``populate_metrics``
+hardcodes ``(1, "EPSS")``), so nothing is guessed and the later
+``store_epss_data`` writes under the same id.  Reuses cve-bin-tool's own
+download/parse/store.  Worst case (no cve.db) degrades to the prior skip.
 """
 
 from __future__ import annotations
@@ -66,23 +75,32 @@ def fix_epss() -> str:
         '            self.LOGGER.error("Unable to fetch EPSS, skipping EPSS.")\n'
     )
     new = (
-        "        # PATCH(el-sca): 3.4 calls update_epss() without the required\n"
-        "        # cursor -> TypeError. Provide one from the initialised cve.db\n"
-        "        # (its metrics table holds the EPSS metric id).\n"
+        "        # PATCH(el-sca): EPSS is broken two ways in 3.4 -- update_epss()\n"
+        "        # is called without its required cursor, and sources are fetched\n"
+        "        # before populate_metrics() inserts the EPSS row. Provide a cursor\n"
+        "        # onto the cve.db and ensure the (1,'EPSS') metric row exists,\n"
+        "        # using cve-bin-tool's own constant, so store_epss_data writes\n"
+        "        # under the same id.\n"
         "        try:\n"
         "            import sqlite3 as _sqlite3\n"
         "            import os as _os\n"
         '            _db = _os.path.join(self.cachedir, "cve.db")\n'
         "            _conn = _sqlite3.connect(_db)\n"
         "            try:\n"
-        "                await self.update_epss(_conn.cursor())\n"
+        "                _cur = _conn.cursor()\n"
+        '                _cur.execute("CREATE TABLE IF NOT EXISTS metrics '
+        '(metrics_id INTEGER, metrics_name TEXT, PRIMARY KEY(metrics_id))")\n'
+        '                _cur.execute("INSERT OR IGNORE INTO metrics '
+        "(metrics_id, metrics_name) VALUES (1, 'EPSS')\")\n"
+        "                _conn.commit()\n"
+        "                await self.update_epss(_cur)\n"
         "            finally:\n"
         "                _conn.close()\n"
         "        except Exception as e:\n"
         '            self.LOGGER.debug(f"Error while fetching EPSS data: {e}")\n'
         '            self.LOGGER.error("Unable to fetch EPSS, skipping EPSS.")\n'
     )
-    return _replace_once(path, old, new, marker="PATCH(el-sca): 3.4 calls update_epss")
+    return _replace_once(path, old, new, marker="PATCH(el-sca): EPSS is broken two ways")
 
 
 def main() -> int:

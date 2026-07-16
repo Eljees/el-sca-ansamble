@@ -52,16 +52,23 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - `scripts/patches/cve_bin_tool_3.4_fixups.py` (new) + `Dockerfile.cve-bin-tool`:
-  патч апстрим-бага EPSS в cve-bin-tool 3.4. `Epss_Source.get_cve_data()` звал
-  `await self.update_epss()` без обязательного аргумента `cursor` → `TypeError`
-  на каждом прогоне, глушился и превращался в «Unable to fetch EPSS». 3.4 —
-  последняя версия на PyPI, бампнуть не на что, поэтому патчим на месте:
-  открываем курсор к уже инициализированной cve.db (в её `metrics` есть строка
-  EPSS) и пробрасываем его; используется родной parse/store cve-bin-tool.
-  Патч идемпотентный и самопроверяющийся — сборка падает, если целевой код
-  сместился. Проверено: `patched` → импорт OK → повторный прогон
-  `already-patched`. OSV (память) и PURL2CPE (баг в core-store `cvedb.py` +
-  тяжёлый источник) пока остаются в `CVE_BIN_TOOL_ENRICH_DISABLE`. (аудит-fixup 2026-07-16)
+  патч **двух** апстрим-багов EPSS в cve-bin-tool 3.4 (3.4 — последняя версия на
+  PyPI, бампнуть не на что). (1) `Epss_Source.get_cve_data()` звал
+  `update_epss()` без обязательного `cursor` → `TypeError`. (2) Порядок:
+  `cvedb.get_data` собирает источники раньше, чем `populate_metrics` вставляет
+  строку `(1,"EPSS")`, поэтому `EPSS_id_finder` читает пустую `metrics` и падает
+  `IndexError`. Оба глушились в «Unable to fetch EPSS». Патч даёт курсор к cve.db
+  и гарантирует строку `(1,'EPSS')` **той же константой апстрима**, дальше
+  работает родной `store_epss_data`. Идемпотентен и самопроверяется (сборка
+  падает, если код сместился); применение проверено: `patched` → import OK →
+  повтор `already-patched`.
+  ⚠️ На развёртке EPSS **пока не наполняется** и остаётся в
+  `CVE_BIN_TOOL_ENRICH_DISABLE`: сам CDN EPSS (`epss.cyentia.com` →
+  `empiricalsecurity.com`) в контуре зверски throttled — прямой `curl` через
+  корп-прокси даёт ~450 Б/с (15 981 байт за 35 c, затем таймаут), и загрузка не
+  завершается. Патч чинит *ингест*; чтобы источник заработал, CSV нужно
+  доставить офлайн (та же схема, что и S3-доставка баз). OSV (память) и PURL2CPE
+  (баг в core-store `cvedb.py`) тоже остаются отключёнными. (аудит-fixup 2026-07-16)
 - `.dockerignore`: добавлен (его не было вовсе). Без него build-контекст на
   реальной развёртке — около 7 ГБ (`bundle/` ~4.3 ГБ, `artifacts/` ~1.9 ГБ,
   `_SCA_reports/` ~0.6 ГБ) и в демон уезжал локальный `.env`. Dockerfile'ы
