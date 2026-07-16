@@ -33,6 +33,7 @@ Single source of truth: `versions.env` (CI enforces agreement with
 - **Resilient & offline-first:** runs from bundled images and prewarmed DBs; explicit (never silent) DB updates; `offline` / `airgap` compose profiles.
 - **FastAPI dashboard** (`:8088`): drag-drop upload, live per-stage pipeline + logs, report viewer, artifact catalog with `CYBERSEC-XXXXX` case IDs, DB-freshness "barrels", and proxy/route toggles.
 - **Run browser & report hand-off:** `/runs` lists every past run grouped by date (newest first); each run's final Markdown report is one click away — copy, download, or fetch it directly via `GET /api/runs/{run_id}/report.md` (served inline as `text/markdown`).
+- **Report identifies the object:** every report (web overview + Markdown) names the scanned archive and its `CYBERSEC-id`, and lists **MD5 + SHA-1 + SHA-256** for both the input archive and the final (extracted) target — digests are computed once during extraction and stored in `summary.json`. The Reports button opens the artifact's newest run.
 - **Artifact lifecycle:** upload, tag with a `CYBERSEC-XXXXX` case id, rescan, hide — or hard-delete from storage behind three confirmations plus a server-side `?confirm=<artifact_id>` guard. Saved run snapshots are evidence and are never purged.
 - **Phosphor CRT skin:** green monochrome, monospace, scanlines. The radioactive mutagen barrels stay acid green.
 - **Recoverable long runs:** stage checkpoints + per-run evidence snapshots (`artifacts/runs/<run-id>/`); resume from last completed stage.

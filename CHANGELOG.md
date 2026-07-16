@@ -51,6 +51,22 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `orchestrator.py` / `extractor.py` / `run_summary.py` / `reporting.py` /
+  `_io.py` / `scripts/report_html.py` / `dashboard.py`: итоговый отчёт (веб-обзор
+  и `.md`) теперь называет **сканируемый объект** и все его хэши. Раньше шапка
+  показывала заглушку `Target: /absolute/path/to/artifact-or-directory` и
+  `UNKNOWN` в хэшах — dashboard-скан не выставлял `SCAN_TARGET_DISPLAY` (оставался
+  дефолт из `.env`), а хэш финальной цели считался от несуществующего пути;
+  `Input SHA-1` терялся, т.к. `run_summary` перехэшировал контейнерный путь,
+  которого нет на хосте. Теперь: orchestrator проставляет `SCAN_TARGET_DISPLAY`
+  = имя загруженного архива и `CASE_ID` = CYBERSEC-id (перекрывая плейсхолдер);
+  extractor пишет `md5+sha1+sha256` архива в манифест одним проходом;
+  `run_summary.derive` добавляет `target_hashes` (хэш дерева `extracted/current`)
+  в `summary.json` / `run_manifest.json`; HTML и Markdown рендерят **MD5 + SHA-1
+  + SHA-256** и для входного архива, и для финальной цели; кнопка Reports
+  открывает **самый свежий** ран артефакта. Проверено живым сканом на
+  развёртке (`SCAgent_Linux_12_5_1.zip` → имя + 6 хэшей, без `UNKNOWN`).
+  (`c2a92c6`)
 - `scripts/patches/cve_bin_tool_3.4_fixups.py` (new) + `Dockerfile.cve-bin-tool`:
   патч **двух** апстрим-багов EPSS в cve-bin-tool 3.4 (3.4 — последняя версия на
   PyPI, бампнуть не на что). (1) `Epss_Source.get_cve_data()` звал
