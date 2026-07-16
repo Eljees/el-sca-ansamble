@@ -8,6 +8,12 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `scripts/patches/verify_cve_bin_tool_epss_fix.py`: офлайн self-check
+  пропатченного EPSS-пайплайна на этапе сборки образа cve-bin-tool (fetch без
+  БД → init → populate → store) — сборка падает при регрессе патча.
+- `tests/test_cve_bin_tool_epss_fixups.py`: офлайн регрессионные тесты
+  EPSS-бекпорта (оба слоя бага 3.4: TypeError без cursor и ordering); авто-skip,
+  если cve-bin-tool не установлен в окружении.
 - `resilient_updates/artifact_catalog.py`: новый модуль — каталог run-артефактов
   с индексацией по дате, инструменту и case_id; Dashboard GET `/api/artifacts` и
   GET `/api/artifacts/{run_id}/report` отдают список и HTML-отчёт. (`27d002b`)
@@ -22,6 +28,14 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `scripts/patches/cve_bin_tool_3.4_fixups.py`: EPSS-фикс переведён с локального
+  reorder + cursor-шима на бекпорт апстрим-решения «metric ids as constants»
+  (ossf/cve-bin-tool `main`, смержено в 2025, в релизах отсутствует — последний
+  тег v3.4). Фаза скачивания больше не читает БД; семантика идентична
+  `main`/3.4.1rc0, на бампе версии патчер отваливается громко и просто удаляется.
+- `docs/upstream/`: PR-бандл переупорядочивания снят как устаревший (апстрим уже
+  пофиксил корневую причину в `main` иначе — константами) → `STATUS.md` с
+  матрицей версий + `ISSUE_RELEASE_REQUEST.md` с просьбой выпустить 3.4.1.
 - `dashboard.py` (`tool_status`) + GUI: карточки БД отдают `db_updated_kind`
   (`built` | `imported` | `null`). Grype/Trivy показывают дату сборки базы
   апстримом, cve-bin-tool — время нашего импорта (у NVD JSON-фидов нет даты

@@ -1,1 +1,0 @@
-fix: populate static metric definitions before data sources are gathered
