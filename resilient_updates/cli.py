@@ -884,7 +884,16 @@ def main() -> int:
         )
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         input_is_file = Path(args.input).resolve().is_file()
-        if input_is_file and int(payload.get("extracted_count", 0)) == 0:
+        # Only fail when a RECOGNISED archive yielded nothing. A single
+        # non-archive file (installer/binary/config) is a valid passthrough,
+        # not an error: the scanners read the raw target directly. Guarding on
+        # input_was_archive stops a lone .exe from turning the stage red.
+        if (
+            input_is_file
+            and int(payload.get("extracted_count", 0)) == 0
+            and payload.get("input_was_archive")
+            and int(payload.get("passthrough_count", 0)) == 0
+        ):
             return EXIT_VALIDATION_FAILED
         return EXIT_SUCCESS if payload["status"] in {"pass", "warn"} else EXIT_VALIDATION_FAILED
     if args.command == "render-flags":

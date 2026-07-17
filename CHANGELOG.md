@@ -6,6 +6,19 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Экстрактор: одиночный не-архивный вход (Windows `.exe`/`.msi` инсталлятор,
+  бинарь, обычный файл) больше не помечает стадию Extract как `error`. Раньше
+  `_archive_kind()` возвращал None → 0 извлечённых → `cli extract` отдавал
+  `EXIT_VALIDATION_FAILED (3)` → оркестратор красил стадию красным, хотя все
+  сканеры и отчёт завершались (CYBERSEC-13388: avandoc `.exe`). Теперь такой
+  вход — благонадёжный passthrough: `manifest.status="pass"`,
+  `input_was_archive=False`, `passthrough_count=1`, exit 0. Распознанный, но
+  битый/пустой архив по-прежнему остаётся failure. Тесты:
+  `test_extract_artifacts_marks_non_archive_file_as_passthrough`,
+  `test_extract_cli_passes_when_file_input_is_non_archive`.
+
 ### Added
 
 - `resilient_updates/artifact_catalog.py`: новый модуль — каталог run-артефактов
