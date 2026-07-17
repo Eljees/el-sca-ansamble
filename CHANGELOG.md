@@ -40,6 +40,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mapNode("sbom","Syft")`, а в win-режиме стадия называется `win-analyzer` →
   ключа `sbom` нет → узел висел серым pending, хотя SBOM реально построен
   (3 компонента). Теперь узел выбирается по наличию стадии `win-analyzer`.
+- EPSS-сид: хост `epss.cyentia.com` мёртв (Cyentia → Empirical Security),
+  сидер качает с `epss.empiricalsecurity.com`, cyentia остался фоллбеком
+  (`cve_db_audit.seed_cve_bin_tool_aux_sources`). (`d3d7829`)
+- Sneakernet-обновление баз cve-bin-tool через Windows-хост: нода 10.2.108.47
+  не достаёт OSV/EPSS/PURL2CPE/RSD (egress-контур режет googleapis, first.org
+  и github.com — проверено пробами). Новые `scripts/sneakernet_build.sh`
+  (посточниковая сборка в изолированных HOME + sqlite-мерж — обход зависания
+  мультиисточникового `--update now` cve-bin-tool 3.4 на быстрой сети),
+  `scripts/sneakernet_export.ps1` (scp + импорт), `scripts/sneakernet_node_import.sh`
+  (распаковка в candidate root + штатные audit/activate). Runbook уровня
+  «промпт для ассистента»: `docs/db-sneakernet-ru.md`.
 
 ### Added
 
