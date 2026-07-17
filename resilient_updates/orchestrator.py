@@ -79,6 +79,51 @@ SCAN_STAGES: list[tuple[str, str, list[str]]] = [
     ("report", "Report", ["report-collector"]),
 ]
 
+# Windows-installer pipeline (2026-07-17). A lone .exe/.msi cannot be unpacked
+# by the generic archive extractor (NSIS/Inno/MSI are not tar/zip), so syft over
+# the raw file yields 0 components. Mirror the CLI run-scan.sh "win" branch: run
+# win-analyzer (7z/innoextract/msiextract + pefile) to build a PE SBOM, then feed
+# grype from that SBOM and point cve-bin-tool at the extracted installer tree.
+# The generic "sbom · Syft" stage is replaced by "Win-analyzer".
+SCAN_STAGES_WIN: list[tuple[str, str, list[str]]] = [
+    ("extract", "Extract", ["artifact-extractor"]),
+    ("win-analyzer", "Win-analyzer · SBOM", ["win-analyzer"]),
+    ("grype", "Grype", ["grype-static", "grype-db-importer", "grype-scanner"]),
+    ("trivy", "Trivy", ["trivy-scanner"]),
+    ("cve-bin-tool", "cve-bin-tool", ["cve-bin-tool-scanner"]),
+    ("report", "Report", ["report-collector"]),
+]
+
+_WIN_INSTALLER_SUFFIXES = (".exe", ".msi")
+
+
+def is_windows_installer_target(target_host: str) -> bool:
+    """True when the scan target is a Windows installer (.exe/.msi).
+
+    GUI uploads bind a single chosen file, so the ``is_file()`` branch is the
+    common path. A directory counts as a win target when it holds at least one
+    installer and no generic archive the normal extractor would handle instead.
+    """
+    try:
+        path = Path(target_host)
+    except TypeError:
+        return False
+    if path.is_file():
+        return path.suffix.lower() in _WIN_INSTALLER_SUFFIXES
+    if path.is_dir():
+        has_installer = False
+        for child in path.rglob("*"):
+            if not child.is_file():
+                continue
+            suffix = child.suffix.lower()
+            if suffix in _WIN_INSTALLER_SUFFIXES:
+                has_installer = True
+            elif suffix in {".zip", ".gz", ".tgz", ".tar", ".bz2", ".xz", ".zst", ".rpm", ".deb", ".7z", ".rar"}:
+                return False  # a real archive is present — let the generic path handle it
+        return has_installer
+    return False
+
+
 UPDATE_STAGES: list[tuple[str, str, list[str]]] = [
     ("trivy", "Trivy DB", ["trivy-updater"]),
     ("grype", "Grype DB", ["grype-updater", "grype-db-importer"]),
@@ -529,9 +574,14 @@ class JobRegistry:
             mode=mode,
             timestamp=time.time(),
         )
+        # A Windows installer needs the win-analyzer pipeline (see run-scan.sh):
+        # the GUI showed 0 syft components for a lone .exe because the generic
+        # stages never unpacked it. Pick the stage list up-front so the GUI
+        # renders "Win-analyzer" instead of "SBOM · Syft".
+        scan_stages = SCAN_STAGES_WIN if is_windows_installer_target(target_host) else SCAN_STAGES
         job = Job(
             "scan",
-            SCAN_STAGES,
+            scan_stages,
             target=target_host,
             artifacts_dir=self.artifacts_dir,
             run_dir=run_dir,
@@ -905,6 +955,10 @@ class JobRegistry:
         """
         compose = self.compose
         extracted_host = str((self.repo_root / "artifacts" / "extracted" / "current").resolve())
+        # Windows installers (.exe/.msi) run the win-analyzer branch: the generic
+        # extractor cannot unpack NSIS/Inno/MSI, so syft over the raw file finds
+        # nothing. Mirrors the run-scan.sh "win" branch.
+        win_mode = is_windows_installer_target(target_host)
         self._copy_input_to_run(job, target_host)
         self._checkpoint(job, "start", "running")
 
@@ -971,6 +1025,37 @@ class JobRegistry:
             pipeline_state.stage_end(self.artifacts_dir, "extract", ok=extract_ok, rc=rc)
             self._checkpoint(job, "extract", "done" if extract_ok else "error")
 
+        # Stage 1.5 — win-analyzer (Windows installers only). Runs the
+        # win-analyzer container against the RAW installer (/scan-target) to
+        # unpack NSIS/Inno/MSI, write a PE-derived SBOM to artifacts/sbom/syft.json
+        # and the extracted tree to artifacts/extracted/win-installer/. Replaces
+        # the generic "sbom · Syft" stage. Mirrors run-scan.sh FORMAT==win.
+        if win_mode:
+            job.begin_stage("win-analyzer")
+            if "win-analyzer" in skip_done:
+                job.feed_line("win-analyzer: пропущен — уже выполнен (чекпоинт, resume)")
+                pipeline_state.stage_skip(self.artifacts_dir, "win-analyzer")
+                job.end_stage("win-analyzer", True)
+            else:
+                pipeline_state.stage_start(self.artifacts_dir, "win-analyzer")
+                wa_env = dict(os.environ)
+                wa_env["SCAN_TARGET_HOST"] = target_host  # the raw installer on /scan-target
+                rc = self._run_stream(
+                    job,
+                    [*compose, "--profile", "win", "run", "--rm", "-u", "0", "win-analyzer"],
+                    wa_env,
+                )
+                # win-analyzer writes the SBOM even when it finds 0 PE binaries
+                # (a minimal SBOM); treat a present syft.json as success so a
+                # zero-component installer does not fail the whole scan.
+                sbom_written = (self.repo_root / "artifacts" / "sbom" / "syft.json").exists()
+                wa_ok = rc == 0 or sbom_written
+                if wa_ok and rc != 0:
+                    job.feed_line("win-analyzer: предупреждения, но SBOM собран — продолжаем")
+                job.end_stage("win-analyzer", wa_ok)
+                pipeline_state.stage_end(self.artifacts_dir, "win-analyzer", ok=wa_ok, rc=rc)
+                self._checkpoint(job, "win-analyzer", "done" if wa_ok else "error")
+
         # Re-point every scanner at the extracted directory.
         sc_env = dict(os.environ)
         _load_dotenv(sc_env, self.repo_root / ".env")
@@ -981,6 +1066,13 @@ class JobRegistry:
         sc_env["CVE_BIN_TOOL_TARGET"] = "/scan-target"
         # Trivy defaults to scanning "alpine:latest"; point it at the artifact.
         sc_env["TRIVY_TARGET"] = "/scan-target"
+        if win_mode:
+            # win-analyzer already produced the SBOM; grype consumes it instead
+            # of re-cataloguing the raw installer (which yields 0 components).
+            # cve-bin-tool scans the extracted installer tree win-analyzer wrote.
+            sc_env["SYFT_FROM"] = "sbom"
+            sc_env["SYFT_TARGET"] = "/workspace/artifacts/sbom/syft.json"
+            sc_env["CVE_BIN_TOOL_TARGET"] = "/workspace/artifacts/extracted/win-installer"
         # Report identity.  The report generators render SCAN_TARGET_DISPLAY as
         # the object "Target" / header and CASE_ID as the report heading.  The
         # dotenv load above may have injected the .env placeholder
@@ -1002,15 +1094,19 @@ class JobRegistry:
             enabled.add("syft")
         stage_tool = {"sbom": "syft", "grype": "grype", "trivy": "trivy", "cve-bin-tool": "cve-bin-tool"}
 
-        # (stage key, compose service, exit codes treated as success)
+        # (stage key, compose service, exit codes treated as success).
+        # In win_mode the "sbom" stage is omitted — win-analyzer (stage 1.5)
+        # already produced artifacts/sbom/syft.json, and re-running syft over the
+        # extracted tree would overwrite that richer PE SBOM.
         stages = [
-            ("sbom", "syft-sbom", {0}),
             ("grype", "grype-scanner", {0}),
             ("trivy", "trivy-scanner", {0}),
             # cve-bin-tool exits 1 when it FINDS CVEs — success, not failure.
             ("cve-bin-tool", "cve-bin-tool-scanner", {0, 1}),
             ("report", "report-collector", {0}),
         ]
+        if not win_mode:
+            stages.insert(0, ("sbom", "syft-sbom", {0}))
         for key, service, ok_codes in stages:
             job.begin_stage(key)
             tool = stage_tool.get(key)

@@ -18,6 +18,16 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   битый/пустой архив по-прежнему остаётся failure. Тесты:
   `test_extract_artifacts_marks_non_archive_file_as_passthrough`,
   `test_extract_cli_passes_when_file_input_is_non_archive`.
+- GUI-оркестратор: сканирование Windows-инсталлятора (`.exe`/`.msi`) больше не
+  даёт 0 компонентов. Раньше дашборд гонял общий пайплайн (extract → syft по
+  сырому файлу), а NSIS/Inno/MSI generic-экстрактор не вскрывает → syft
+  каталогизировал 0 компонентов (CYBERSEC-13388: avandoc `.exe`). Теперь
+  `orchestrator.py` повторяет ветку `run-scan.sh FORMAT==win`: детектит
+  инсталлятор (`is_windows_installer_target`), выбирает `SCAN_STAGES_WIN`
+  (стадия **Win-analyzer · SBOM** вместо **SBOM · Syft**), запускает
+  `win-analyzer` (7z/innoextract/msiextract + pefile) → PE-SBOM в
+  `artifacts/sbom/syft.json`; grype читает этот SBOM, cve-bin-tool сканит
+  `extracted/win-installer`. Тесты: `tests/test_win_installer_pipeline.py`.
 
 ### Added
 
