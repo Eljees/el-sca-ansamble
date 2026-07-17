@@ -117,7 +117,16 @@ def _source_count(
     if source_upper == "EPSS":
         return int(dir_infos["epss"]["file_count"]), "epss directory"
     if source_upper == "PURL2CPE":
-        return purl2cpe_total, "purl2cpe table"
+        if purl2cpe_total > 0:
+            return purl2cpe_total, "purl2cpe table"
+        # cve-bin-tool consumes the standalone purl2cpe/purl2cpe.db file next
+        # to cve.db; the embedded `purl2cpe` table only exists in json-mirror
+        # pre-built DBs.  Count the directory so a file-shipped PURL2CPE
+        # (sneakernet) audits as present.
+        p2c_files = int(dir_infos["purl2cpe"]["file_count"])
+        if p2c_files > 0:
+            return p2c_files, "purl2cpe directory"
+        return 0, "purl2cpe table"
     if source_upper == "RSD":
         return int(dir_infos["rsd"]["file_count"]), "rsd directory"
     return None, "not directly observable"

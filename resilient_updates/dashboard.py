@@ -423,15 +423,27 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
         for s in (os.environ.get("CVE_BIN_TOOL_ENRICH_DISABLE") or "").replace(",", " ").split()
         if s.strip()
     }
+    # File-based sources (OSV/EPSS/PURL2CPE/RSD) never write cve_range rows -
+    # their presence lives in the audit's source_status (counted by files in
+    # db_root). Prefer that; fall back to the row counts for NVD/GAD/etc.
+    cbt_source_status = _deep_find(cbt_db, "source_status")
+    if not isinstance(cbt_source_status, dict):
+        cbt_source_status = {}
+    cbt_source_status = {str(k).upper(): v for k, v in cbt_source_status.items()}
     cbt_sources = []
     for s in cbt_source_names:
         cnt = cbt_by_source.get(s)
-        has = isinstance(cnt, (int, float)) and cnt > 0
+        rows_present = isinstance(cnt, (int, float)) and cnt > 0
+        audit_entry = cbt_source_status.get(s)
+        audit_ok = isinstance(audit_entry, dict) and audit_entry.get("status") == "ok"
+        audit_count = audit_entry.get("count") if isinstance(audit_entry, dict) else None
+        has = rows_present or audit_ok
+        shown = cnt if rows_present else audit_count
         cbt_sources.append(
             {
                 "name": s,
                 "fill": 100 if has else 0,
-                "count": int(cnt) if has else 0,
+                "count": int(shown) if has and isinstance(shown, (int, float)) else 0,
                 "unavailable": (s in cbt_unavailable) and not has,
                 "update_target": f"cve-bin-tool:{s}",
             }
