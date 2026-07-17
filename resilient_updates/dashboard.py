@@ -875,13 +875,19 @@ function mapNode(key, label){
   return `<div class="map-node ${st}"><div>${label}</div><div class="ms">${st}</div></div>`;
 }
 function renderMap(){
-  // Артефакт → Extract → веер инструментов → Отчёт
+  // Артефакт → Extract → веер инструментов → Отчёт.
+  // Для Windows-инсталляторов SBOM собирает win-analyzer (стадия "win-analyzer"),
+  // а не syft — показываем соответствующий узел, иначе "Syft" висел бы серым
+  // pending, хотя SBOM реально построен (CYBERSEC-13388).
+  const sbomNode = ("win-analyzer" in stagesByKey)
+    ? mapNode("win-analyzer","Win-analyzer")
+    : mapNode("sbom","Syft");
   mapEl.innerHTML =
     `<div class="map-col"><div class="map-node">Артефакт</div></div>` +
     `<div class="map-arrow">→</div>` +
     `<div class="map-col">${mapNode("extract","Extract")}</div>` +
     `<div class="map-arrow">→</div>` +
-    `<div class="map-col">${mapNode("sbom","Syft")}${mapNode("grype","Grype")}${mapNode("trivy","Trivy")}${mapNode("cve-bin-tool","cve-bin-tool")}</div>` +
+    `<div class="map-col">${sbomNode}${mapNode("grype","Grype")}${mapNode("trivy","Trivy")}${mapNode("cve-bin-tool","cve-bin-tool")}</div>` +
     `<div class="map-arrow">→</div>` +
     `<div class="map-col">${mapNode("report","Отчёт")}</div>`;
 }

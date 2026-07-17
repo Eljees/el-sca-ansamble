@@ -35,6 +35,11 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Раньше каждый `_SCA_reports/<target>-<ts>/` становился отдельной
   `legacy-<run_id>` записью → N сканов avandoc.exe = N дублей. Тест:
   `test_catalog_dedups_repeated_scans_of_same_artifact`.
+- GUI «Карта анализа»: для Windows-инсталлятора узел SBOM показывает
+  **Win-analyzer** вместо серого «Syft». `renderMap()` жёстко рисовал
+  `mapNode("sbom","Syft")`, а в win-режиме стадия называется `win-analyzer` →
+  ключа `sbom` нет → узел висел серым pending, хотя SBOM реально построен
+  (3 компонента). Теперь узел выбирается по наличию стадии `win-analyzer`.
 
 ### Added
 
