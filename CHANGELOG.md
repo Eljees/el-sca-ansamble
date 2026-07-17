@@ -40,6 +40,13 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mapNode("sbom","Syft")`, а в win-режиме стадия называется `win-analyzer` →
   ключа `sbom` нет → узел висел серым pending, хотя SBOM реально построен
   (3 компонента). Теперь узел выбирается по наличию стадии `win-analyzer`.
+- GUI мини-бочки cve-bin-tool: OSV/EPSS/PURL2CPE/RSD красились по строкам
+  `cve_range_by_source`, но это файловые источники (строк в cve.db не пишут) →
+  вечно 0%/красные даже при наличии данных. Теперь `tool_status` берёт их
+  заполненность из `source_status` аудита (файлы в db_root), fallback на строки
+  для NVD/GAD/REDHAT/CURL. Аудит PURL2CPE считает и standalone-файл
+  `purl2cpe/purl2cpe.db`, а не только встроенную таблицу. Тесты:
+  `tests/test_dashboard_source_barrels.py`.
 - EPSS-сид: хост `epss.cyentia.com` мёртв (Cyentia → Empirical Security),
   сидер качает с `epss.empiricalsecurity.com`, cyentia остался фоллбеком
   (`cve_db_audit.seed_cve_bin_tool_aux_sources`). (`d3d7829`)
