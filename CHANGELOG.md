@@ -40,6 +40,24 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `mapNode("sbom","Syft")`, а в win-режиме стадия называется `win-analyzer` →
   ключа `sbom` нет → узел висел серым pending, хотя SBOM реально построен
   (3 компонента). Теперь узел выбирается по наличию стадии `win-analyzer`.
+- Активация БД на ноде упиралась в `No space left on device`: `activate_best_cve_bin_tool_db`
+  делает `shutil.copytree(candidate → tmp)` и затем публикует в active — файловые
+  источники OSV/RSD (~760k мелких JSON) существуют в ТРЁХ копиях на пике, что
+  переполняет 62 ГБ корень. Обход применён вручную (убрать OSV/RSD из кандидата →
+  активировать компактную базу NVD+GAD+REDHAT+EPSS+PURL2CPE = 5/8). TODO в коде:
+  заменить copytree файловых источников на `os.replace`/hardlink, чтобы снять
+  тройное дублирование (тогда OSV/RSD активируются даже на тесном диске).
+- Дашборд-контейнер (`el-sca-resilient-updater` образ) крутит код ИЗ ОБРАЗА, поэтому
+  фикс мини-бочек (`source_status`) не подхватывался. Временный обход на ноде:
+  bind-mount `./resilient_updates:/opt/app/resilient_updates:ro` + rw-подкаталог
+  `./artifacts/logs` (иначе падал `Read-only file system: dashboard.log`) в
+  `dashboard`-сервисе. Правильное решение — пересобрать образ; отражено в
+  `docs/db-update-manual-ru.md`. Внешний доступ 8088→контейнер:8080 держится
+  через `socat` (на ноде порт-маппинг только `127.0.0.1:8080`).
+- `scripts/sneakernet_build.sh`: CURL возвращён в сборку (best-effort, не фатально
+  при rc=33) — он крошечный (~200 строк про curl) и на проксируемом egress ноды
+  работает. Точечно доадить CURL к готовой базе нельзя: `cve-bin-tool --update`
+  не аддитивен (пересоздаёт БД, одиночный CURL → `CVEDataMissing` → откат).
 - GUI мини-бочки cve-bin-tool: OSV/EPSS/PURL2CPE/RSD красились по строкам
   `cve_range_by_source`, но это файловые источники (строк в cve.db не пишут) →
   вечно 0%/красные даже при наличии данных. Теперь `tool_status` берёт их

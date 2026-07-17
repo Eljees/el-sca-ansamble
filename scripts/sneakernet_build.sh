@@ -37,7 +37,12 @@ run_src() {
 
 run_src REDHAT "NVD,EPSS,PURL2CPE,OSV,RSD,Curl,GAD" 1200
 run_src GAD    "NVD,EPSS,PURL2CPE,OSV,RSD,Curl,REDHAT" 1500
-# CURL source crashes with rc=33 in 3.4 - skipped (the node keeps it green itself).
+# CURL is tiny (~200 rows about the curl utility) and works fine on the node's
+# proxied egress (it was green in the pre-existing DB).  It can rc=33 on some
+# fast networks, so it is best-effort: a failure does NOT abort the build.
+# Pass the host proxy for contours that need it (same as OSV_HTTP_PROXY).
+run_src CURL   "NVD,EPSS,PURL2CPE,OSV,RSD,GAD,REDHAT" 900 "${OSV_HTTP_PROXY:-}" || \
+  echo "=== CURL skipped (rc=33 / unreachable) — non-fatal ==="
 # OSV via cve-bin-tool hangs even single-source; NOT needed: the audit counts
 # OSV/EPSS/PURL2CPE/RSD by FILES in db_root (see cve_db_audit._source_count),
 # and our `seed cve-bin-tool-aux` below downloads those files via requests
@@ -71,13 +76,10 @@ con.close()
 PY
 echo "=== merge rc=$? ==="
 
-# Copy aux dirs (source caches) from per-source homes into the final root so
-# the node's cve-bin-tool sees fresh caches too.
-for h in /tmp/b_*/.cache/cve-bin-tool; do
-  for d in "$h"/*/; do
-    [ -d "$d" ] && cp -rn "$d" "$DB/" 2>/dev/null
-  done
-done
+# NOTE: per-source caches (gad/, redhat/ yaml trees) are deliberately NOT
+# copied into the final root: the audit counts GAD/REDHAT by cve.db rows,
+# and 35k small files only bloat the tar and the scp (and crawl through
+# WSL2 bind mounts).
 
 # NVD via our own feed importer (adds into the merged db). Route through the
 # host proxy when provided - requests honours these env vars.
