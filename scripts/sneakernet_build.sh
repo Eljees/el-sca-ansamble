@@ -14,12 +14,18 @@ DB=/tmp/build/.cache/cve-bin-tool
 mkdir -p "$DB" /tmp/empty
 
 run_src() {
-  name="$1"; disable="$2"; tmo="$3"
+  name="$1"; disable="$2"; tmo="$3"; proxy="${4:-}"
   home="/tmp/b_$name"
+  # Idempotent: a previous run's db (also mountable from the host) is kept.
+  if [ -s "$home/.cache/cve-bin-tool/cve.db" ]; then
+    echo "=== SRC $name SKIP (cve.db already present) ==="
+    return 0
+  fi
   rm -rf "$home"; mkdir -p "$home/.cache"
   for try in 1 2; do
-    echo "=== SRC $name try $try $(date -u +%H:%M:%S) ==="
+    echo "=== SRC $name try $try $(date -u +%H:%M:%S) proxy=${proxy:-none} ==="
     HOME="$home" XDG_CACHE_HOME="$home/.cache" \
+      HTTP_PROXY="$proxy" HTTPS_PROXY="$proxy" http_proxy="$proxy" https_proxy="$proxy" \
       timeout "$tmo" cve-bin-tool --update now --disable-version-check \
       --disable-data-source "$disable" /tmp/empty
     rc=$?
@@ -31,8 +37,11 @@ run_src() {
 
 run_src REDHAT "NVD,EPSS,PURL2CPE,OSV,RSD,Curl,GAD" 1200
 run_src GAD    "NVD,EPSS,PURL2CPE,OSV,RSD,Curl,REDHAT" 1500
-run_src CURL   "NVD,EPSS,PURL2CPE,OSV,RSD,GAD,REDHAT" 900
-run_src OSV    "NVD,EPSS,PURL2CPE,RSD,Curl,GAD,REDHAT" 3600
+# CURL source crashes with rc=33 in 3.4 - skipped (the node keeps it green itself).
+# OSV via cve-bin-tool hangs even single-source; NOT needed: the audit counts
+# OSV/EPSS/PURL2CPE/RSD by FILES in db_root (see cve_db_audit._source_count),
+# and our `seed cve-bin-tool-aux` below downloads those files via requests
+# (honours HTTP(S)_PROXY env - set OSV_HTTP_PROXY for blocked hosts).
 
 # Merge all per-source cve.db files into $DB/cve.db.
 python - <<'PY'
@@ -70,14 +79,21 @@ for h in /tmp/b_*/.cache/cve-bin-tool; do
   done
 done
 
-# NVD via our own feed importer (adds into the merged db).
+# NVD via our own feed importer (adds into the merged db). Route through the
+# host proxy when provided - requests honours these env vars.
+export HTTP_PROXY="${OSV_HTTP_PROXY:-}" HTTPS_PROXY="${OSV_HTTP_PROXY:-}"
+export http_proxy="${OSV_HTTP_PROXY:-}" https_proxy="${OSV_HTTP_PROXY:-}"
 python resilient_updates/nvd_feed_import.py --db-root "$DB"
 echo "=== NVD feed import rc=$? ==="
 
-# EPSS seed (fixed empiricalsecurity URL).
+# OSV + EPSS + RSD seed files (this is what the audit/dashboard actually
+# counts for those sources). requests + proxy env, fixed empiricalsecurity URL.
 python -m resilient_updates.cli --config configs/feed_sources.yaml seed cve-bin-tool-aux \
-  --db-root "$DB" --seed-epss --timeout 300
-echo "=== EPSS seed rc=$? ==="
+  --db-root "$DB" --seed-epss --seed-rsd --timeout 600 \
+  --osv-ecosystem Debian --osv-ecosystem Ubuntu --osv-ecosystem Alpine \
+  --osv-ecosystem Go --osv-ecosystem PyPI --osv-ecosystem Maven \
+  --osv-ecosystem npm --osv-ecosystem Rust
+echo "=== seed rc=$? ==="
 
 # PURL2CPE: standalone sqlite, mounted in.
 mkdir -p "$DB/purl2cpe"

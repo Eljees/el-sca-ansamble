@@ -23,4 +23,11 @@ sudo docker compose --profile update run --rm -u 0 \
   '
 rc=$?
 echo "ACTIVATE_RC=$rc"
+# Snapshot the activated DB to the stack-local S3 (SeaweedFS) so it survives
+# volume loss: scripts/s3_storage.sh db-push packs the active roots and uploads.
+if [ "$rc" -eq 0 ]; then
+  sudo bash scripts/s3_storage.sh init 2>&1 | tail -2
+  sudo bash scripts/s3_storage.sh db-push 2>&1 | tail -5
+  echo "S3_PUSH_RC=$?"
+fi
 exit $rc

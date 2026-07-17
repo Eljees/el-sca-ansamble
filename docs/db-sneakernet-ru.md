@@ -90,11 +90,25 @@ asyncio; на ноде не проявляется, потому что прок
 `--update now` каждый раз пересоздаёт cachedir и затирает предыдущий
 результат), затем sqlite-мерж. Готовый скрипт: `scripts/sneakernet_build.sh`.
 
-### 4.4 (открыто) RSD-source падает rc=33
+Важное упрощение: OSV через cve-bin-tool вообще не нужен. Audit и дашборд
+считают OSV/EPSS/PURL2CPE/RSD по **файлам в db_root** (osv/, epss/, rsd/,
+purl2cpe/ — см. `cve_db_audit`), а файлы качает наш
+`seed cve-bin-tool-aux` обычным requests (уважает HTTP(S)_PROXY).
+cve-bin-tool-прогоны нужны только для REDHAT/GAD (строки в cve.db).
 
-Таска RustSec в 3.4 падает с Traceback (ErrorHandler, cli.py:908) даже
-одиночным прогоном. Пока исключён из сборки (`--disable-data-source ... RSD`);
-бочка RSD останется красной до отдельного разбирательства.
+### 4.5 storage.googleapis.com блокирован и с хоста (РКН)
+
+OSV-хост недоступен из RU-сетей напрямую. Решение: локальный прокси
+(v2rayN/xray) на хосте, из контейнера — `http://host.docker.internal:10808`.
+Скрипту сборки он передаётся env-переменной `OSV_HTTP_PROXY`; через него
+идут NVD-фиды и все сиды.
+
+### 4.4 CURL-source падает rc=33; RSD закрывается сидом
+
+Таска Curl в 3.4 падает с Traceback (ErrorHandler, cli.py:908) даже
+одиночным прогоном — исключена из сборки (бочку CURL нода держит зелёной
+сама). RSD же закрывается сид-файлами (`--seed-rsd`, gitlab-зеркало
+RustSec) — cve-bin-tool-прогон для него не нужен (см. 4.3).
 
 ## 5. Процедура sneakernet (полный прогон)
 
@@ -116,21 +130,31 @@ New-Item -ItemType Directory -Force -Path D:\tmp\cvebt_pack, D:\tmp\cvebt_aux | 
 docker compose --profile update run -d --name cvebt_build -u 0 `
   -e HTTP_PROXY= -e HTTPS_PROXY= -e ALL_PROXY= `
   -e http_proxy= -e https_proxy= -e all_proxy= `
+  -e OSV_HTTP_PROXY=http://host.docker.internal:10808 `
   -v D:\tmp\cvebt_aux:/aux:ro `
   -v D:\tmp\cvebt_pack:/out `
   --entrypoint sh `
   cve-bin-tool-updater /workspace/scripts/sneakernet_build.sh
 ```
 
+`OSV_HTTP_PROXY` — HTTP-порт локального прокси на хосте (см. 4.5); без
+него NVD-фиды и OSV-сид не скачаются из RU-сети. Проверить порт:
+`Invoke-WebRequest -Proxy http://127.0.0.1:10808 -Method Head https://osv-vulnerabilities.storage.googleapis.com/ecosystems.txt`
+(ожидаемо 200). Прокси должен быть доступен и контейнеру:
+порт проверяется коннектом на `host.docker.internal:10808` изнутри.
+
 Важно: если compose лезет собирать образ и падает с
 `auth.docker.io ... TLS handshake timeout` — тег `EL_SCA_VERSION` не
 существует локально; поставьте тег, который есть в `docker images`.
 
-Скрипт сам: применит fixups (4.2) -> соберёт REDHAT, GAD, CURL, OSV по
-одному (4.3) -> смержит sqlite -> зальёт NVD из статических фидов
-(resilient_updates/nvd_feed_import.py) -> посеет EPSS с живого хоста
-(4.1) -> положит purl2cpe.db (если он лежит в D:\tmp\cvebt_aux) ->
-audit -> `D:\tmp\cvebt_pack\cvebt_db.tgz`.
+Скрипт сам: применит fixups (4.2) -> соберёт REDHAT и GAD по одному в
+изолированных HOME (4.3; готовые cve.db можно подмонтировать в
+`/tmp/b_REDHAT`, `/tmp/b_GAD` — тогда шаг скипается) -> смержит sqlite ->
+зальёт NVD из статических фидов (resilient_updates/nvd_feed_import.py,
+через прокси) -> посеет OSV+EPSS+RSD файлами (`seed cve-bin-tool-aux
+--seed-epss --seed-rsd --osv-ecosystem ...`, через прокси; 4.1/4.3) ->
+положит purl2cpe.db из D:\tmp\cvebt_aux -> audit ->
+`D:\tmp\cvebt_pack\cvebt_db.tgz`.
 
 Контроль прогресса:
 
@@ -165,9 +189,17 @@ RC=0 -> активировано.
 
 ### Шаг 3. Верификация
 
-1. На ноде: `cat /tmp/import.log` — в конце `ACTIVATE_RC=0`.
-2. Дашборд -> карта баз: OSV, EPSS, PURL2CPE зелёные (RSD — см. 4.4).
+1. На ноде: `cat /tmp/import.log` — в конце `ACTIVATE_RC=0` и `S3_PUSH_RC=0`.
+2. Дашборд -> карта баз: OSV, EPSS, PURL2CPE, RSD зелёные.
 3. Контрольный скан любого артефакта: находки обогащены EPSS-колонкой.
+
+### Шаг 4. S3-снапшот (чтобы не потерять базу)
+
+`sneakernet_node_import.sh` после успешной активации сам выполняет
+`scripts/s3_storage.sh init && scripts/s3_storage.sh db-push` — снапшот
+активной базы уезжает в стековый SeaweedFS/S3 (bucket `el-sca`).
+Проверка: `sudo bash scripts/s3_storage.sh ls db/` на ноде.
+Восстановление: `sudo bash scripts/s3_storage.sh db-pull latest`.
 
 ## 6. Регулярность
 
