@@ -70,6 +70,37 @@ def test_catalog_legacy_override_and_hidden_runs(tmp_path: Path):
     assert catalog.deleted_run_ids() == {run_dir.name}
 
 
+def test_catalog_dedups_repeated_scans_of_same_artifact(tmp_path: Path):
+    # 2026-07-17: re-scanning one .exe must NOT clone a card per run. Two runs
+    # of the same input (same sha256) collapse into a single artifact with two
+    # runs; a genuinely different file stays a separate card.
+    catalog = ArtifactCatalog(tmp_path)
+
+    def _mk_run(run_id: str, sha: str, host: str = "C:/drops/avandoc.exe") -> dict:
+        rd = tmp_path / "runs" / run_id
+        rd.mkdir(parents=True)
+        (rd / "MANIFEST.json").write_text(
+            '{"case_id":"CYBERSEC-13388","target":{"host":"%s","sha256":"%s"}}' % (host, sha),
+            encoding="utf-8",
+        )
+        return {"id": run_id, "path": str(rd), "manifest_present": True,
+                "provenance_tools": [], "report_count": 0}
+
+    legacy = [
+        _mk_run("CYBERSEC-13388-20260717-120000", "aaa"),
+        _mk_run("CYBERSEC-13388-20260717-132028", "aaa"),          # same file, rescan
+        _mk_run("CYBERSEC-13388-20260717-140000", "bbb", "C:/drops/other.exe"),
+    ]
+    artifacts = catalog.list_artifacts(legacy_runs=legacy)
+    # avandoc collapses to ONE card with TWO runs; other.exe is its own card.
+    avandoc = [a for a in artifacts if a["sha256"] == "aaa"]
+    assert len(avandoc) == 1
+    assert avandoc[0]["run_count"] == 2
+    # newest run is surfaced as latest
+    assert avandoc[0]["latest_run_id"] == "CYBERSEC-13388-20260717-132028"
+    assert len(artifacts) == 2
+
+
 def _blob(data: bytes):
     import io
 

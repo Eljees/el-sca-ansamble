@@ -28,6 +28,13 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `win-analyzer` (7z/innoextract/msiextract + pefile) → PE-SBOM в
   `artifacts/sbom/syft.json`; grype читает этот SBOM, cve-bin-tool сканит
   `extracted/win-installer`. Тесты: `tests/test_win_installer_pipeline.py`.
+- Каталог артефактов: повторные сканы одного файла больше не плодят карточки-клоны
+  в GUI. `ArtifactCatalog._legacy_artifacts` группирует прогоны `_SCA_reports/`
+  по артефакту (ключ = sha256 входа, fallback — имя+case_id): один артефакт →
+  одна карточка с историей прогонов (`runs[]`, новейший = `latest_run_id`).
+  Раньше каждый `_SCA_reports/<target>-<ts>/` становился отдельной
+  `legacy-<run_id>` записью → N сканов avandoc.exe = N дублей. Тест:
+  `test_catalog_dedups_repeated_scans_of_same_artifact`.
 
 ### Added
 
