@@ -30,7 +30,17 @@ run_src() {
       --disable-data-source "$disable" /tmp/empty
     rc=$?
     echo "=== SRC $name rc=$rc ==="
-    if [ "$rc" -le 1 ] && [ -s "$home/.cache/cve-bin-tool/cve.db" ]; then return 0; fi
+    # rc<=1 = clean. But a single-source run can exit 33 (CVEDataMissing:
+    # cve-bin-tool validates the WHOLE db as "non-empty" and a lone source
+    # looks empty to it) AFTER already writing that source's rows. So also
+    # accept when the source actually landed rows in its cve.db.
+    if [ -s "$home/.cache/cve-bin-tool/cve.db" ]; then
+      rows=$(python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('SELECT COUNT(*) FROM cve_range').fetchone()[0])" "$home/.cache/cve-bin-tool/cve.db" 2>/dev/null || echo 0)
+      if [ "$rc" -le 1 ] || [ "${rows:-0}" -gt 0 ]; then
+        echo "=== SRC $name accepted (rc=$rc rows=$rows) ==="
+        return 0
+      fi
+    fi
   done
   return 1
 }
