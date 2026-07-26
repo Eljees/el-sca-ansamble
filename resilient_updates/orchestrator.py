@@ -1142,6 +1142,10 @@ class JobRegistry:
         job.finalize()
         pipeline_state.finish_run(self.artifacts_dir, status=job.status)
 
+    # Inputs at or above this size are hardlinked into the run dir instead of
+    # copied: a 3.5 GB upload must not double its disk cost on every run.
+    _INPUT_LINK_THRESHOLD = 512 * 1024 * 1024  # 512 MiB
+
     def _copy_input_to_run(self, job: Job, target_host: str) -> None:
         if not job.run_dir:
             return
@@ -1151,6 +1155,19 @@ class JobRegistry:
         try:
             dest = job.run_dir / "input" / target.name
             dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                return  # resume: snapshot already in place
+            size = target.stat().st_size
+            if size >= self._INPUT_LINK_THRESHOLD:
+                try:
+                    os.link(target, dest)  # same-fs hardlink: zero extra bytes
+                    job.feed_line(
+                        f"input snapshot: hardlink ({size >> 20} MiB) — большой файл не дублируем"
+                    )
+                    return
+                except OSError:
+                    # cross-device link / fs without hardlinks — fall back to copy
+                    job.feed_line("input snapshot: hardlink недоступен, копирую")
             shutil.copy2(target, dest)
         except Exception as exc:  # pragma: no cover - defensive
             job.feed_line(f"WARN: input snapshot failed: {exc!r}")

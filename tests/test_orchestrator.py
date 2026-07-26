@@ -869,3 +869,32 @@ def test_prune_update_logs_keeps_newest(tmp_path, monkeypatch):
 
     assert not old.exists()
     assert new.exists()
+
+
+def test_copy_input_hardlinks_big_files(tmp_path):
+    """Inputs >= _INPUT_LINK_THRESHOLD are hardlinked into the run dir (same
+    inode, zero extra bytes) instead of copied — a 3.5 GB artifact must not
+    double its disk cost on every run."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 4096)
+    job = Job("scan", SCAN_STAGES, target=str(big))
+    job.run_dir = tmp_path / "run-big"
+    with patch.object(JobRegistry, "_INPUT_LINK_THRESHOLD", 1024):
+        reg._copy_input_to_run(job, str(big))
+    dest = job.run_dir / "input" / "big.bin"
+    assert dest.is_file()
+    assert os.stat(dest).st_ino == os.stat(big).st_ino  # hardlink, not a copy
+
+
+def test_copy_input_still_copies_small_files(tmp_path):
+    """Small inputs keep the plain-copy behaviour (independent inode)."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    small = tmp_path / "small.bin"
+    small.write_bytes(b"y" * 16)
+    job = Job("scan", SCAN_STAGES, target=str(small))
+    job.run_dir = tmp_path / "run-small"
+    reg._copy_input_to_run(job, str(small))
+    dest = job.run_dir / "input" / "small.bin"
+    assert dest.is_file()
+    assert os.stat(dest).st_ino != os.stat(small).st_ino  # real copy
