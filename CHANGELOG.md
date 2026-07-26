@@ -120,6 +120,15 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/architecture.md`, `docs/operations.md`: актуализированы текущие
   указатели, test-count и описания snapshot/monitor/CI overlay behaviour.
 
+### Changed (perf)
+
+- `orchestrator.py` (`_copy_input_to_run`): входной артефакт ≥ 512 МиБ больше
+  не копируется в `_SCA_reports/<run>/input/`, а **хардлинкуется** (та же ФС →
+  0 лишних байт; inode переживает purge каталожной копии, evidence целы).
+  Мелкие файлы — копия как раньше; cross-device — автоматический фолбэк на
+  копию; resume не перекопирует уже лежащий снапшот. Мотивация: артефакты по
+  3.5 ГБ удваивали место на каждый прогон. (`ccc9a87`)
+
 ### Fixed
 
 - `orchestrator.py` / `extractor.py` / `run_summary.py` / `reporting.py` /
