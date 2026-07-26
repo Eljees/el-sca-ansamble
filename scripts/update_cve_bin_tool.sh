@@ -460,8 +460,11 @@ PY
       # discarded and `set -e` aborting the whole scan on any non-zero rc —
       # a stale DB (rc=4, EXIT_STALE_REJECTED) killed the stage with zero
       # output and the report then showed "0 findings" off a stale [].
-      if ! python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null; then
-        _audit_rc=$?
+      # set -e-safe rc capture (NB: `$?` right after `if ! cmd` is already
+      # inverted by the `!`, which once produced a "failed rc=0" absurdity).
+      _audit_rc=0
+      python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null || _audit_rc=$?
+      if [ "$_audit_rc" -ne 0 ]; then
         if [ "$DB_POLICY" = "degraded-ok" ] && [ "$_audit_rc" -eq 4 ]; then
           echo "[cve-bin-tool] WARN: DB is stale (audit rc=4) — scanning anyway (policy=degraded-ok); update the DB soon" >&2
         else
