@@ -322,13 +322,51 @@ def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
     Findings are not execution errors. A scanner that ran successfully and
     found zero vulnerabilities must not be marked as failed.
 
-    The only hard failure signal we currently persist explicitly is the
-    cve-bin-tool timeout flag written by the wrapper. Missing-report cases are
-    handled upstream by report collection placeholders and warnings.
+    Hard failure signals, in order of directness:
+
+    1. the cve-bin-tool timeout flag written by the wrapper;
+    2. a scanner stage recorded as ``error`` in ``pipeline_state.json``;
+    3. a per-tool report file *older than this run's extraction manifest* —
+       i.e. a stale leftover from a previous run.  Exactly this combination
+       (stage errored + old ``[]`` placeholder survived) once rendered as
+       "0 findings, tool failures: none", masking a dead cve-bin-tool stage.
     """
     failed: list[str] = []
     if (root / "reports" / "cve-bin-tool" / "timeout.flag").exists():
         failed.append("cve-bin-tool")
+
+    stage_tool = {
+        "sbom": "syft",
+        "grype": "grype",
+        "trivy": "trivy",
+        "cve-bin-tool": "cve-bin-tool",
+    }
+    state = _read_json(root / "pipeline_state.json")
+    stages = state.get("stages") if isinstance(state, dict) else None
+    if isinstance(stages, dict):
+        for key, tool in stage_tool.items():
+            info = stages.get(key)
+            if isinstance(info, dict) and info.get("status") == "error":
+                failed.append(f"{tool}: stage error (rc={info.get('rc', '?')})")
+
+    manifest = root / "extracted" / "current" / "extraction_manifest.json"
+    if manifest.exists():
+        try:
+            anchor = manifest.stat().st_mtime
+            for tool, rel in (
+                ("syft", "sbom/syft.json"),
+                ("grype", "reports/grype/report.json"),
+                ("trivy", "reports/trivy/report.json"),
+                ("cve-bin-tool", "reports/cve-bin-tool/report.json"),
+            ):
+                report = root / rel
+                # 60s slack: extract finishes before scanners start, so a
+                # report legitimately written this run is always newer.
+                if report.exists() and report.stat().st_mtime < anchor - 60:
+                    failed.append(f"{tool}: stale report (predates this run's extraction)")
+        except OSError:
+            pass
+
     # De-duplicate, preserve order.
     seen: set[str] = set()
     return [item for item in failed if not (item in seen or seen.add(item))]

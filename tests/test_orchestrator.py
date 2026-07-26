@@ -148,6 +148,10 @@ def test_run_scan_extracts_then_scans_extracted_dir(tmp_path):
 
     assert [c[0] for c in calls] == [
         "artifact-extractor",
+        # volume-init runs before the scanners: a root-owned cve.db (left by a
+        # root-run DB activation) must be re-chowned to 1001 or the appuser
+        # cve-bin-tool-scanner dies on open (2026-07-26 incident).
+        "volume-init",
         "syft-sbom",
         "grype-scanner",
         "trivy-scanner",
@@ -156,8 +160,8 @@ def test_run_scan_extracts_then_scans_extracted_dir(tmp_path):
         "down",
     ]
     assert calls[0][1].endswith("app.tar.gz")  # extract: raw upload
-    assert calls[1][1].endswith(os.path.join("artifacts", "extracted", "current"))  # scanners: extracted dir
-    assert calls[1][2] == "dir"
+    assert calls[2][1].endswith(os.path.join("artifacts", "extracted", "current"))  # scanners: extracted dir
+    assert calls[2][2] == "dir"
     snap = job.snapshot()
     assert snap["status"] == "done"  # rc=1 from cve-bin-tool is OK
     assert all(s["status"] == "done" for s in snap["stages"])

@@ -1085,6 +1085,13 @@ class JobRegistry:
         if job.case_id:
             sc_env["CASE_ID"] = job.case_id
 
+        # Volumes must be uid-1001 for the appuser scanner (cve-bin-tool) just
+        # like for the updaters: a root-run DB activation leaves cve.db
+        # root-owned and the scanner dies on open.  Updates already normalise;
+        # scans got the same guard after exactly that failure mode shipped a
+        # `[]` report while the stage errored (2026-07-26).  Best-effort.
+        self._normalise_volumes(job, sc_env)
+
         # Which analysers to run.  Default = all; EL_SCA_SKIP_CVEBT drops
         # cve-bin-tool.  Grype consumes the Syft SBOM, so syft is forced on with it.
         enabled = set(tools) if tools else {"syft", "grype", "trivy", "cve-bin-tool"}

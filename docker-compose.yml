@@ -343,9 +343,15 @@ services:
         # (internal-mirror-data/{tmp,candidates,previous}) stay root-owned, and
         # then cve-bin-tool activation fails with EACCES on makedirs of
         # tmp/run-<ts> (shutil.copytree in activate_best_cve_bin_tool_db).
+        # NB: busybox find has no GNU "-uid" (it errors "unrecognized: -uid");
+        # with stderr swallowed that made this check silently pass forever and
+        # root-owned DB files (e.g. cve.db after a root-run activation) were
+        # never fixed -> cve-bin-tool-scanner (uid 1001) died instantly on a
+        # database it could not open.  "! -user 1001" is busybox-compatible
+        # (numeric uid accepted) and errors are no longer discarded.
         for d in /vol/grype-db /vol/grype-cache /vol/trivy-cache \
                  /vol/cve-bin-tool-cache /vol/internal-mirror-data; do
-          strays=$$(find "$$d" ! -uid 1001 -print -quit 2>/dev/null)
+          strays=$$(find "$$d" ! -user 1001 -print -quit)
           if [ -n "$$strays" ]; then
             echo "[volume-init] chown 1001:1001 -R $$d (found non-1001 entries)"
             chown -R 1001:1001 "$$d"
