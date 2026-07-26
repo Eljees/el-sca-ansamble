@@ -279,6 +279,10 @@ services:
       dockerfile: Dockerfile.cve-bin-tool
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
+    # Run the wrapper from the ALWAYS-mounted workspace, not the copy baked
+    # into the image at build time: wrapper fixes then deploy via git pull
+    # alone (the image bakes /opt/app/scripts as a fallback for bare runs).
+    entrypoint: ["/bin/sh", "/workspace/scripts/update_cve_bin_tool.sh"]
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
       # cve-bin-tool resolves its DB at $HOME/.cache/cve-bin-tool/cve.db. The
@@ -288,6 +292,9 @@ services:
       HOME: /home/appuser
       XDG_CACHE_HOME: /home/appuser/.cache
       CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}
+      # Pre-scan DB audit toggle (1=verify, 0=skip).  Must be whitelisted here
+      # or a host-side export never reaches the container.
+      CVE_BIN_TOOL_VERIFY_DB: ${CVE_BIN_TOOL_VERIFY_DB:-1}
       # SBOM fast-path: set to a CycloneDX/SPDX path to skip binary scanning.
       CVE_BIN_TOOL_SBOM_PATH: ${CVE_BIN_TOOL_SBOM_PATH:-}
       CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}

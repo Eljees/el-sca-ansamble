@@ -456,7 +456,20 @@ PY
     ;;
   scan)
     if [ "${CVE_BIN_TOOL_VERIFY_DB:-1}" = "1" ]; then
-      python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null
+      # NB: never die silently here.  This audit used to run with stdout
+      # discarded and `set -e` aborting the whole scan on any non-zero rc —
+      # a stale DB (rc=4, EXIT_STALE_REJECTED) killed the stage with zero
+      # output and the report then showed "0 findings" off a stale [].
+      if ! python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null; then
+        _audit_rc=$?
+        if [ "$DB_POLICY" = "degraded-ok" ] && [ "$_audit_rc" -eq 4 ]; then
+          echo "[cve-bin-tool] WARN: DB is stale (audit rc=4) — scanning anyway (policy=degraded-ok); update the DB soon" >&2
+        else
+          echo "[cve-bin-tool] FATAL: pre-scan DB audit failed rc=$_audit_rc (db-root=$DB_ROOT, policy=$DB_POLICY)" >&2
+          echo "[cve-bin-tool] hint: refresh the DB, or set CVE_BIN_TOOL_DB_POLICY=degraded-ok to scan on a stale-but-valid DB" >&2
+          exit "$_audit_rc"
+        fi
+      fi
     fi
     SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}"
     SBOM_PATH="${CVE_BIN_TOOL_SBOM_PATH:-}"
