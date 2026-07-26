@@ -6,6 +6,18 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/register_local_artifact.sh` (new) + `docs/big-artifacts.md` (new):
+  штатный маршрут для гигабайтных артефактов — доставка на сервер (rsync с
+  `--partial --append-verify` / WinSCP / scp), регистрация в каталоге без
+  HTTP-загрузки (hardlink в `artifacts/uploads/`, метаданные 1-в-1 как у
+  `create_upload` → полноценная карточка), опциональный автозапуск скана
+  (`-s`). Гайд включает настройку WinSCP (приватный ключ → `.ppk`, туннель
+  только для запасного маршрута) и ручной fallback без скрипта. Проверено на
+  3.4 ГБ (CYBERSEC-13529): доставка 5:27 @ ~10 МБ/с, скан ~4 мин, sha256
+  сошлись на всех трёх точках (источник → сервер → отчёт).
+
 ### Fixed
 
 - Экстрактор: одиночный не-архивный вход (Windows `.exe`/`.msi` инсталлятор,
