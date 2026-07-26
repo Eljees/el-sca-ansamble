@@ -20,6 +20,26 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Сага «cve-bin-tool: 0 находок» (2026-07-26, четыре бага одним копом):**
+  стадия cve-bin-tool молча падала с ~20.07, а отчёт показывал «0 findings,
+  tool failures: none» с протухшего `[]`-плейсхолдера. Цепочка: (1) активация
+  БД под root оставила `cve.db` root-овым — appuser-сканер умирал на открытии;
+  (2) страж volume-init не лечил это, т.к. busybox-find не знает GNU `-uid`,
+  а ошибка глоталась `2>/dev/null` → чекер вечно рапортовал «ok» — теперь
+  `! -user 1001` и stderr не глушится (`df03ad1`); (3) volinit гонялся только
+  перед обновлениями — теперь и перед сканами (самолечение, `df03ad1`);
+  (4) pre-scan аудит БД убивал скан безмолвно (`set -e` + stdout в /dev/null):
+  stale-вердикт (rc=4) при `CVE_BIN_TOOL_DB_POLICY=degraded-ok` теперь
+  громкий WARN + скан продолжается, прочие коды — внятный FATAL; попутно
+  исправлен POSIX-захват rc (`$?` после `if !` инвертирован) и
+  `CVE_BIN_TOOL_VERIFY_DB` добавлен в whitelist compose (`07c4039`,
+  `2ed5e8d`). Entrypoint сканера переведён на обёртку из **workspace** —
+  фиксы едут git pull'ом без ребилда образа. `run_summary._tool_failures`
+  теперь ловит стадию-error из `pipeline_state.json` и отчёты старше
+  extraction-манифеста — маскировка «нулём» невозможна (`df03ad1`).
+  Верификация: CYBERSEC-13529 (3.4 ГБ) → **cve-bin-tool: 48 находок**
+  (ansible 2.10.4 и др.), итог 61 finding, policy fail CRITICAL=1.
+
 - Экстрактор: одиночный не-архивный вход (Windows `.exe`/`.msi` инсталлятор,
   бинарь, обычный файл) больше не помечает стадию Extract как `error`. Раньше
   `_archive_kind()` возвращал None → 0 извлечённых → `cli extract` отдавал
