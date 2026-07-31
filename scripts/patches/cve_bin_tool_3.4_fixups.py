@@ -58,9 +58,7 @@ def _replace_once(path: Path, old: str, new: str, *, marker: str) -> str:
             f"--- expected ---\n{old}"
         )
     if text.count(old) != 1:
-        raise SystemExit(
-            f"PATCH FAILED: {path.name}: expected exactly 1 match, found {text.count(old)}"
-        )
+        raise SystemExit(f"PATCH FAILED: {path.name}: expected exactly 1 match, found {text.count(old)}")
     path.write_text(text.replace(old, new), encoding="utf-8")
     return "patched"
 
@@ -107,9 +105,7 @@ def fix_epss() -> str:
 def main() -> int:
     results = {"epss": fix_epss()}
     print("[cve-bin-tool 3.4 fixups]", results)
-    if all(v == "already-patched" for v in results.values()) and os.environ.get(
-        "CVEBT_PATCH_STRICT"
-    ):
+    if all(v == "already-patched" for v in results.values()) and os.environ.get("CVEBT_PATCH_STRICT"):
         print("WARNING: every fix already applied -- unexpected on a clean install", file=sys.stderr)
     return 0
 

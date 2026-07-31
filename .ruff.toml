@@ -18,6 +18,11 @@ extend-exclude = [
   "-prompts",
   "--exps",
   "to_analyze",
+  # ruff >=0.16 also formats ```python blocks inside Markdown.  Our docs quote
+  # *fragments* (a keyword argument, half a call), which the formatter happily
+  # rewrites into different code — `backoff_seconds=int(x),` became
+  # `backoff_seconds = (int(x),)`.  Docs are prose; keep ruff out of them.
+  "*.md",
 ]
 
 [lint]

@@ -80,15 +80,20 @@ def test_catalog_dedups_repeated_scans_of_same_artifact(tmp_path: Path):
         rd = tmp_path / "runs" / run_id
         rd.mkdir(parents=True)
         (rd / "MANIFEST.json").write_text(
-            '{"case_id":"CYBERSEC-13388","target":{"host":"%s","sha256":"%s"}}' % (host, sha),
+            f'{{"case_id":"CYBERSEC-13388","target":{{"host":"{host}","sha256":"{sha}"}}}}',
             encoding="utf-8",
         )
-        return {"id": run_id, "path": str(rd), "manifest_present": True,
-                "provenance_tools": [], "report_count": 0}
+        return {
+            "id": run_id,
+            "path": str(rd),
+            "manifest_present": True,
+            "provenance_tools": [],
+            "report_count": 0,
+        }
 
     legacy = [
         _mk_run("CYBERSEC-13388-20260717-120000", "aaa"),
-        _mk_run("CYBERSEC-13388-20260717-132028", "aaa"),          # same file, rescan
+        _mk_run("CYBERSEC-13388-20260717-132028", "aaa"),  # same file, rescan
         _mk_run("CYBERSEC-13388-20260717-140000", "bbb", "C:/drops/other.exe"),
     ]
     artifacts = catalog.list_artifacts(legacy_runs=legacy)

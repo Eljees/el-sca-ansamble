@@ -376,8 +376,21 @@ def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
     if extracted_root.is_dir():
         try:
             archive_suffixes = (
-                ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tgz", ".txz", ".tbz2",
-                ".tar", ".zip", ".rar", ".7z", ".rpm", ".deb", ".gz", ".zst",
+                ".tar.gz",
+                ".tar.xz",
+                ".tar.bz2",
+                ".tar.zst",
+                ".tgz",
+                ".txz",
+                ".tbz2",
+                ".tar",
+                ".zip",
+                ".rar",
+                ".7z",
+                ".rpm",
+                ".deb",
+                ".gz",
+                ".zst",
             )
             files = [p for p in extracted_root.rglob("*") if p.is_file()]
             payload = [p for p in files if p.name != "extraction_manifest.json"]

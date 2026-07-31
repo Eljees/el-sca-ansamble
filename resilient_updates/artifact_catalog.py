@@ -344,7 +344,9 @@ class ArtifactCatalog:
                     "original_filename": filename,
                     "stored_filename": filename,
                     "stored_path": stored_path,
-                    "display_name": (str(override.get("display_name") or Path(filename).stem or run_id)).strip(),
+                    "display_name": (
+                        str(override.get("display_name") or Path(filename).stem or run_id)
+                    ).strip(),
                     "case_id": normalize_case_id(str(override.get("case_id") or default_case_id)),
                     "sha1": "",
                     "sha256": sha256,

@@ -6,6 +6,7 @@ components. The GUI orchestrator now mirrors the CLI run-scan.sh "win" branch:
 detect the installer, run win-analyzer to build a PE SBOM, and render a
 dedicated "Win-analyzer" stage instead of "SBOM . Syft" (CYBERSEC-13388).
 """
+
 from __future__ import annotations
 
 from pathlib import Path

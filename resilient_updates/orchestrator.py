@@ -118,7 +118,19 @@ def is_windows_installer_target(target_host: str) -> bool:
             suffix = child.suffix.lower()
             if suffix in _WIN_INSTALLER_SUFFIXES:
                 has_installer = True
-            elif suffix in {".zip", ".gz", ".tgz", ".tar", ".bz2", ".xz", ".zst", ".rpm", ".deb", ".7z", ".rar"}:
+            elif suffix in {
+                ".zip",
+                ".gz",
+                ".tgz",
+                ".tar",
+                ".bz2",
+                ".xz",
+                ".zst",
+                ".rpm",
+                ".deb",
+                ".7z",
+                ".rar",
+            }:
                 return False  # a real archive is present — let the generic path handle it
         return has_installer
     return False
@@ -1168,9 +1180,7 @@ class JobRegistry:
             if size >= self._INPUT_LINK_THRESHOLD:
                 try:
                     os.link(target, dest)  # same-fs hardlink: zero extra bytes
-                    job.feed_line(
-                        f"input snapshot: hardlink ({size >> 20} MiB) — большой файл не дублируем"
-                    )
+                    job.feed_line(f"input snapshot: hardlink ({size >> 20} MiB) — большой файл не дублируем")
                     return
                 except OSError:
                     # cross-device link / fs without hardlinks — fall back to copy

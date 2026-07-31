@@ -6,7 +6,7 @@
 # - python merges the per-source cve.db files into one, then our own importers
 #   add NVD (feeds), EPSS (seed) and PURL2CPE (file).
 set -x
-cd /workspace
+cd /workspace || exit 1
 python /workspace/scripts/patches/cve_bin_tool_3.4_fixups.py
 echo "=== fixups rc=$? ==="
 

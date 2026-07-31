@@ -520,7 +520,7 @@ services:
     working_dir: /workspace
     command:
       [
-        "--input",  "/scan-target",
+        "--input", "/scan-target",
         "--output", "/workspace/artifacts",
       ]
     volumes:
@@ -541,7 +541,7 @@ services:
     working_dir: /workspace
     command:
       [
-        "--input",  "/scan-target",
+        "--input", "/scan-target",
         "--output", "/workspace/artifacts",
       ]
     volumes:
@@ -717,7 +717,7 @@ services:
     environment:
       PUID: ${LOCAL_UID:-1000}
       PGID: ${LOCAL_GID:-1000}
-      TZ:   ${TZ:-Etc/UTC}
+      TZ: ${TZ:-Etc/UTC}
     networks: [scanner-net]
 
   # ───────────────────────────────────────────────────────────────────────

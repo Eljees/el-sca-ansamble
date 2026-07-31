@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 exec > /tmp/import.log 2>&1
 set -x
 cd /home/SCA/el-sca-ansamble || exit 9

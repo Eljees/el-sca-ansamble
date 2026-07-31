@@ -168,6 +168,13 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   compose-config:
     runs-on: ubuntu-latest
+    # SCAN_TARGET_HOST / EXTRACT_INPUT_HOST are declared `${VAR:?...}` in
+    # docker-compose.yml so a real scan can never start against an unset path.
+    # Schema validation still has to interpolate them — point both at the
+    # checkout, the same placeholder the docker-build job uses.
+    env:
+      SCAN_TARGET_HOST: ${{ github.workspace }}
+      EXTRACT_INPUT_HOST: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - name: docker compose config (base)

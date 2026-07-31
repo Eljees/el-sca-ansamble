@@ -29,12 +29,16 @@ repos:
         args: ["--maxkb=5000"]
       - id: check-yaml
         args: ["--allow-multiple-documents"]
+        # docker-compose.prod.example.yml uses compose's own `!reset` tag,
+        # which PyYAML's safe loader cannot construct.  yamllint still lints
+        # the file; only the PyYAML-based parse is skipped.
         exclude: |
           (?x)^(
             artifacts/.*
             |_el_cvebt_source_research/.*
             |--exps/.*
             |-prompts/.*
+            |docker-compose\.prod\.example\.yml
           )$
       - id: check-json
       - id: check-toml

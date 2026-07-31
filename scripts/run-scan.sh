@@ -495,7 +495,8 @@ if [[ $EXTRACT -eq 1 ]]; then
   else
     run_stage extract 0 docker compose --profile extract run --rm artifact-extractor
   fi
-  export SCAN_TARGET_HOST="$(realpath "$EXTRACT_HOST")"
+  SCAN_TARGET_HOST="$(realpath "$EXTRACT_HOST")"
+  export SCAN_TARGET_HOST
   export SCAN_TARGET_DISPLAY="$TARGET_RESOLVED -> $SCAN_TARGET_HOST"
   export SYFT_TARGET="/scan-target"
   export SYFT_FROM="dir"
@@ -520,7 +521,8 @@ if [[ "$FORMAT" == "apk" ]]; then
   if [[ -d "$NATIVE_DIR" ]] && [[ -n "$(find "$NATIVE_DIR" -name '*.so' 2>/dev/null)" ]]; then
     echo "[apk] Running cve-bin-tool on native .so files..."
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/apk-native"
-    export SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
+    SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
+    export SCAN_TARGET_HOST
     db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
     run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
@@ -663,7 +665,7 @@ echo "[stage] report-html (host $PYTHON_BIN)"
     --case-id "$CASE_ID"
     --mode "$ARTIFACT_MODE"
     --stage final
-    --status done
+    --status "done"
   )
   if [[ "${EL_SCA_ARCHIVE_EXTRACTED_TREE:-0}" =~ ^(1|true|yes|on)$ ]]; then
     archive_args+=(--include-extracted-tree)
