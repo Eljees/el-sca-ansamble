@@ -681,7 +681,9 @@ PYEOF
       set +e
       # --sbom-file = path to the SBOM (NOT the positional [directory] argument)
       # --sbom      = format: cyclonedx | spdx | swid
-      timeout "$SCAN_TIMEOUT" cve-bin-tool --offline \
+      # --metrics: enrich findings with EPSS probability/percentile from the
+      # local DB (populated offline; see docs/big-artifacts.md EPSS section).
+      timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --metrics \
         --sbom "$SBOM_FORMAT" --sbom-file "$SBOM_PATH" \
         --format json --output-file "$REPORT_DIR/report.json"
       scan_rc=$?
@@ -833,7 +835,7 @@ PYEOF
     echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$EFFECTIVE_TARGET"
     set +e
     # shellcheck disable=SC2086
-    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline $PARALLEL_FLAGS $CHECKER_FLAGS $EXCLUDE_FLAGS --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
+    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --metrics $PARALLEL_FLAGS $CHECKER_FLAGS $EXCLUDE_FLAGS --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
     scan_rc=$?
     set -e
     if [ "$scan_rc" -eq 124 ]; then
