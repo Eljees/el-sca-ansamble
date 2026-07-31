@@ -94,6 +94,7 @@ def fix_epss() -> str:
         "(metrics_id, metrics_name) VALUES (1, 'EPSS')\")\n"
         "                _conn.commit()\n"
         "                await self.update_epss(_cur)\n"
+        "                _conn.commit()  # PATCH(el-sca): persist ingested rows (close() alone rolls back)\n"
         "            finally:\n"
         "                _conn.close()\n"
         "        except Exception as e:\n"
