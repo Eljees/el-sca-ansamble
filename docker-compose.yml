@@ -203,8 +203,14 @@ services:
         "/input",
         "--output",
         "${EXTRACT_OUTPUT:-/workspace/artifacts/extracted/current}",
+        # Nested archives MUST be unpacked: a delivery zip usually contains
+        # tar.gz / .deb / .rpm payloads, and the scanners can only see real
+        # files.  With depth 0 (the old default) such an artifact produced a
+        # silent all-zero report — extraction "passed", Syft catalogued 0
+        # components, every scanner found nothing.  4 matches the CLI and
+        # ExtractLimits defaults; runaway growth is bounded by --max-bytes.
         "--max-depth",
-        "${EXTRACT_MAX_DEPTH:-0}",
+        "${EXTRACT_MAX_DEPTH:-4}",
         "--max-files",
         "${EXTRACT_MAX_FILES:-20000}",
         "--max-bytes",

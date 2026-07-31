@@ -367,6 +367,30 @@ def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
         except OSError:
             pass
 
+    # Un-unpacked payload: the extracted tree still consists of archives, so the
+    # scanners had nothing real to look at and every count is a truthful-looking
+    # zero.  Caused by an extraction depth that is too small for a nested
+    # delivery archive (zip -> tar.gz/.deb -> files).  Surfacing it as a failure
+    # is the difference between "clean artifact" and "we never looked inside".
+    extracted_root = root / "extracted" / "current"
+    if extracted_root.is_dir():
+        try:
+            archive_suffixes = (
+                ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tgz", ".txz", ".tbz2",
+                ".tar", ".zip", ".rar", ".7z", ".rpm", ".deb", ".gz", ".zst",
+            )
+            files = [p for p in extracted_root.rglob("*") if p.is_file()]
+            payload = [p for p in files if p.name != "extraction_manifest.json"]
+            if payload:
+                archives = [p for p in payload if p.name.lower().endswith(archive_suffixes)]
+                if len(archives) == len(payload):
+                    failed.append(
+                        f"extraction: {len(archives)} nested archive(s) left unpacked "
+                        f"(raise EXTRACT_MAX_DEPTH) — scanners saw no real files"
+                    )
+        except OSError:
+            pass
+
     # De-duplicate, preserve order.
     seen: set[str] = set()
     return [item for item in failed if not (item in seen or seen.add(item))]
