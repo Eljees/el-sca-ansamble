@@ -160,9 +160,15 @@ lint-yaml:  ## yamllint with .yamllint config.
 # ─────────────────────────────────────────────────────────────────────────
 # Locking + tooling install
 # ─────────────────────────────────────────────────────────────────────────
-.PHONY: lock hooks
+.PHONY: lock lock-py310 hooks
 lock:  ## Re-generate requirements.txt from requirements.in via pip-tools.
 	pip-compile --strip-extras --generate-hashes --output-file requirements.txt requirements.in
+
+lock-py310:  ## Re-generate the 3.10 test lockfile (see the header of requirements.in).
+	docker run --rm -v "$(CURDIR)":/w -w /w python:3.10-slim bash -c \
+	  "pip install -q 'pip-tools>=7.4' typing_extensions && \
+	   pip-compile --strip-extras --generate-hashes \
+	     --output-file requirements-py310.txt requirements.in"
 
 hooks:  ## Install pre-commit hooks locally.
 	pre-commit install
