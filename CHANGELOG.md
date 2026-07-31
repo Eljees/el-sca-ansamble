@@ -8,6 +8,23 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **EPSS наконец работает** (2026-07-31): офлайн-доставка вместо дохлого CDN.
+  Через корп-прокси epss.cyentia.com отдаёт ~450 Б/с (скачивание невозможно);
+  с рабочей станции тот же CSV скачивается за 14 с. Схема: локально скачать
+  `epss_scores-current.csv.gz` → доставить на сервер → положить распакованным
+  в `cve-bin-tool-cache:/cve-bin-tool/epss/epss_scores-current.csv` **и** в
+  `internal-mirror-data:/candidates/*/.cache/cve-bin-tool/epss/` (preseed-
+  активация копирует каталог целиком и иначе стирает файл) → прогон
+  `cve-bin-tool -u latest --disable-data-source "CURL,GAD,NVD,OSV,PURL2CPE,REDHAT,RSD"`.
+  Свежий файл (<24 ч) парсится локально, сеть не нужна. Итог: **354 176
+  EPSS-скоров в cve.db** (строка-в-строку с CSV от 30.07). Попутно два фикса:
+  (1) `cve_bin_tool_3.4_fixups.py` — недоставало `_conn.commit()` после
+  `update_epss()`: вставки уходили в rollback при `close()`, счётчик оставался
+  0 (`822be59`); (2) `update_cve_bin_tool.sh` — сканы теперь с `--metrics`,
+  иначе EPSS из базы не попадает в report.json (`d239319`). Проверено сканом:
+  15/15 находок с `epss_probability`/`epss_percentile`. OSV/PURL2CPE/RSD
+  остаются отключёнными (апстрим-баги 3.4 / sneakernet-источник).
+
 - `scripts/register_local_artifact.sh` (new) + `docs/big-artifacts.md` (new):
   штатный маршрут для гигабайтных артефактов — доставка на сервер (rsync с
   `--partial --append-verify` / WinSCP / scp), регистрация в каталоге без

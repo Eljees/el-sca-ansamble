@@ -1,5 +1,8 @@
 # Большие артефакты (гигабайтные): доставка, регистрация, скан
 
+> Здесь же: [обновление EPSS офлайн](#epss-офлайн-обновление-скорoв) — тот же
+> принцип «скачай чистым каналом, довези файлом».
+
 Веб-загрузка через морду годится для файлов до нескольких сотен МБ. Для
 гигабайтных артефактов (3–10 ГБ и больше) она **не рекомендуется**: у браузера
 нет докачки (обрыв на 90% = всё заново), uvicorn складывает загрузку во
@@ -154,3 +157,45 @@ curl -X POST "http://127.0.0.1:8088/api/artifacts/$AID/scan"
 
 Поля — точная копия того, что пишет `create_upload`; после этого карточка
 появляется в морде как обычная.
+
+## EPSS: офлайн-обновление скорoв
+
+EPSS CDN (`epss.cyentia.com`) через корп-прокси отдаёт ~450 Б/с — скачивание с
+сервера невозможно. С рабочей станции тот же файл (≈2.5 МБ) скачивается за
+секунды. Процедура обновления (повторять раз в несколько дней):
+
+```bash
+# 1. локально (WSL): скачать свежий CSV
+curl -sL -o /tmp/epss.csv.gz https://epss.cyentia.com/epss_scores-current.csv.gz
+gunzip -f /tmp/epss.csv.gz
+
+# 2. доставить на сервер
+scp /tmp/epss.csv yuriy.tumanov@10.2.108.47:/tmp/epss.csv
+
+# 3. на сервере: разложить в кэш И в candidates (preseed-активация копирует
+#    каталог целиком — без второй копии файл сотрётся при следующей активации)
+sudo docker run --rm \
+  -v el-sca-ansamble_cve-bin-tool-cache:/c \
+  -v el-sca-ansamble_internal-mirror-data:/m \
+  -v /tmp/epss.csv:/in/epss.csv:ro alpine:3.20 sh -c '
+    mkdir -p /c/cve-bin-tool/epss
+    cp /in/epss.csv /c/cve-bin-tool/epss/epss_scores-current.csv
+    for d in /m/candidates/*/.cache/cve-bin-tool; do
+      mkdir -p "$d/epss"; cp /in/epss.csv "$d/epss/epss_scores-current.csv"
+    done
+    chown -R 1001:1001 /c/cve-bin-tool/epss /m/candidates
+    touch /c/cve-bin-tool/epss/epss_scores-current.csv'
+
+# 4. на сервере: разовый ingest (только EPSS; свежий файл парсится локально)
+cd /home/SCA/el-sca-ansamble && EL_SCA_VERSION=0.1.1 \
+SCAN_TARGET_HOST=/tmp/noscan EXTRACT_INPUT_HOST=/tmp/noscan \
+sudo -E docker compose run --rm --entrypoint /bin/sh cve-bin-tool-scanner -c \
+  'cve-bin-tool -u latest --disable-data-source "CURL,GAD,NVD,OSV,PURL2CPE,REDHAT,RSD" /tmp'
+```
+
+Проверка: `SELECT COUNT(*) FROM cve_metrics WHERE metric_id=1` в `cve.db`
+(ожидается ~350 тыс.). Сканы идут с `--metrics`, поэтому каждая находка в
+`report.json` несёт `epss_probability` / `epss_percentile`.
+
+Важно: `-u now` для этого НЕ использовать — он сносит кэш-каталог целиком
+вместе с базой. Только `-u latest`.

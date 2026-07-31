@@ -35,6 +35,19 @@
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`docs/RELEASING.md`](docs/RELEASING.md) · [`CHANGELOG.md`](CHANGELOG.md)
 - [`docs/audit/660-analysis-2026-07-09.md`](docs/audit/660-analysis-2026-07-09.md) — последний аудит
 
+## Что нового (2026-07-31)
+
+- **EPSS-скоры в отчётах — впервые.** В `cve.db` загружено **354 176** EPSS-оценок
+  (свежий срез 30.07); каждая находка cve-bin-tool в `report.json` теперь несёт
+  `epss_probability` и `epss_percentile` — сортируй по вероятности эксплуатации,
+  а не только по CVSS. CDN EPSS в контуре душится прокси (~450 Б/с), поэтому
+  данные доставляются офлайн — процедура в
+  [`docs/big-artifacts.md`](docs/big-artifacts.md) (раздел EPSS). Попутно
+  добит патч 3.4 (недостающий `commit` после ingest'а) и сканы получили
+  `--metrics`. OSV/PURL2CPE/RSD пока отключены (апстрим-баги 3.4 / sneakernet).
+- **Базы обновлены**: ядро cve-bin-tool (NVD+GAD+RedHat+Curl), Grype и Trivy —
+  все от 31.07; strict-аудит зелёный.
+
 ## Что нового (2026-07-26)
 
 - **Гигабайтные артефакты — штатный маршрут.** Веб-загрузка для файлов от
