@@ -241,6 +241,12 @@ services:
     # trigger this explicitly.
     profiles: ["update"]
     working_dir: /workspace
+    # Run the wrapper from the ALWAYS-mounted workspace, not the copy baked
+    # into the image: the 0.1.1 rebuild (2026-08-01) shipped without
+    # /opt/app/scripts entirely, so the baked ENTRYPOINT died instantly with
+    # "cannot open /opt/app/scripts/update_cve_bin_tool.sh". Same treatment
+    # as cve-bin-tool-scanner: wrapper fixes deploy by git pull, no rebuild.
+    entrypoint: ["/bin/sh", "/workspace/scripts/update_cve_bin_tool.sh"]
     command: ["update", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
       <<: *proxy-env
