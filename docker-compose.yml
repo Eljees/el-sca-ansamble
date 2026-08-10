@@ -39,7 +39,7 @@ services:
     networks: [scanner-net]
 
   trivy-updater:
-    image: aquasec/trivy:${TRIVY_VERSION:-0.64.1}
+    image: aquasec/trivy:${TRIVY_VERSION:-0.73.0}
     # Updater services are opt-in only.  `update` is the explicit refresh
     # profile.  They are deliberately NOT in `default` (so `docker compose
     # up` without any profile never reaches out to upstream DB sources) and
@@ -61,7 +61,7 @@ services:
     networks: [scanner-net]
 
   trivy-scanner:
-    image: aquasec/trivy:${TRIVY_VERSION:-0.64.1}
+    image: aquasec/trivy:${TRIVY_VERSION:-0.73.0}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
@@ -104,7 +104,7 @@ services:
     networks: [scanner-net]
 
   grype-db-importer:
-    image: ghcr.io/anchore/grype:${GRYPE_VERSION:-v0.112.0}
+    image: anchore/grype:${GRYPE_VERSION:-v0.116.1}
     profiles: ["default", "update", "offline", "airgap"]
     environment:
       GRYPE_DB_CACHE_DIR: /grype-db-cache
@@ -138,7 +138,7 @@ services:
       start_period: 10s
 
   grype-scanner:
-    image: ghcr.io/anchore/grype:${GRYPE_VERSION:-v0.112.0}
+    image: anchore/grype:${GRYPE_VERSION:-v0.116.1}
     profiles: ["default", "scan", "offline", "airgap"]
     depends_on:
       grype-static:
@@ -159,7 +159,7 @@ services:
     networks: [scanner-net]
 
   syft-sbom:
-    image: ghcr.io/anchore/syft:${SYFT_VERSION:-v1.20.0}
+    image: anchore/syft:${SYFT_VERSION:-v1.50.0}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     environment:
