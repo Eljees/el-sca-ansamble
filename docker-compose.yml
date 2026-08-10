@@ -303,7 +303,14 @@ services:
       # with "Database does not exist" (exit 40) despite a populated cve.db.
       HOME: /home/appuser
       XDG_CACHE_HOME: /home/appuser/.cache
-      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}
+      # Sized for the SBOM fast-path, not for byte-wise binary scanning: since
+      # nested archives are extracted properly, a single delivery can yield a
+      # 25k-component CycloneDX (makarov-i-886188.gz -> 14 GB tree, 25 637
+      # components) and the per-component DB lookup blew straight through the
+      # old 600s/1800s budgets.  A timeout here is not fatal — an empty report
+      # is written and the pipeline continues — which is exactly why it must be
+      # generous: a too-small value silently costs you every cve-bin-tool CVE.
+      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-3600}
       # Pre-scan DB audit toggle (1=verify, 0=skip).  Must be whitelisted here
       # or a host-side export never reaches the container.
       CVE_BIN_TOOL_VERIFY_DB: ${CVE_BIN_TOOL_VERIFY_DB:-1}
