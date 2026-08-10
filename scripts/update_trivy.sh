@@ -55,7 +55,15 @@ case "$MODE" in
 EOF
     ;;
   scan)
-    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --format json --output "$REPORT_DIR/report.json" "$TARGET"
+    # --offline-scan is NOT optional in this contour.  Without it Trivy tries to
+    # resolve Java POM parents from repo.maven.apache.org; egress here goes
+    # through a corporate proxy, the request comes back "429 Too Many Requests",
+    # and Trivy treats that as FATAL -> the whole stage dies and the report stays
+    # empty.  Observed the moment we moved 0.64.1 -> 0.73.0 (2026-08-10): the
+    # scan silently dropped from 6 findings to 0.  The trade-off is accepted:
+    # offline mode may miss a JAR that carries no embedded pom.properties, which
+    # is strictly better than a hard failure that reports nothing at all.
+    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
     ;;
   offline)
     trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
