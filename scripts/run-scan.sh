@@ -599,14 +599,13 @@ else
       db_status grype /var/lib/resilient-db/grype/active
       db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
       run_stage sbom 0           docker compose --profile "$PROFILE" run --rm syft-sbom
-      run_stage sbom-ingest 0 docker compose --profile "$PROFILE" run --rm sbom-ingest
       run_stage trivy 0          docker compose --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
       run_stage grype 0          docker compose --profile "$PROFILE" run --rm grype-scanner
       run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
     syft)
       run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom
-      run_stage sbom-ingest 0 docker compose --profile "$PROFILE" run --rm sbom-ingest ;;
+      ;;
     grype)
       if [[ $UPDATE_DB -eq 1 ]]; then
         run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
@@ -614,7 +613,6 @@ else
       fi
       db_status grype /var/lib/resilient-db/grype/active
       run_stage sbom 0  docker compose --profile "$PROFILE" run --rm syft-sbom
-      run_stage sbom-ingest 0 docker compose --profile "$PROFILE" run --rm sbom-ingest
       run_stage grype 0 docker compose --profile "$PROFILE" run --rm grype-scanner
       ;;
     trivy)

@@ -35,6 +35,38 @@
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`docs/RELEASING.md`](docs/RELEASING.md) · [`CHANGELOG.md`](CHANGELOG.md)
 - [`docs/audit/660-analysis-2026-07-09.md`](docs/audit/660-analysis-2026-07-09.md) — последний аудит
 
+## Что нового (2026-08-10)
+
+- **Поставили SBOM вместо сборок — теперь анализируются они.** Раньше Syft
+  каталогизировал *архив с json-файлами*: компонентов ноль, и отчёт честно
+  говорил «ничего не найдено» — только не о том.
+  [`resilient_updates/sbom_ingest.py`](resilient_updates/sbom_ingest.py) ищет
+  CycloneDX / SPDX / Syft-документы в распакованном дереве **по содержимому**
+  (реальные файлы называются `CycloneDX-Sbom-BACK-SI.json`, `bom.json` — по
+  маске не поймать), сливает их с SBOM от Syft в
+  `artifacts/sbom/scan-input.cdx.json` и отдаёт сканерам. Слияние, а не
+  замена: в поставке могут быть и SBOM, и бинарники; дедуп по `purl`.
+  CYBERSEC-13860: 2 SBOM → 701 уникальный компонент → **231 находка**
+  (9 Critical) там, где было 0.
+- **Движки обновлены:** Syft `v1.50.0`, Grype `v0.116.1`, Trivy `0.73.0`.
+  Grype и Syft переехали на Docker Hub — `ghcr.io` в контуре режет
+  TLS-инспекция. Пины **не** переводить на `latest`: экосистему Trivy дважды
+  компрометировали в марте 2026 (CVE-2026-33634).
+- **Три тихих отказа вычищены.** Апдейтер cve-bin-tool падал за 4 с с
+  1 августа (пересобранный образ приехал без `/opt/app/scripts`); Trivy 0.73
+  падал в FATAL на Maven Central без `--offline-scan`; cve-bin-tool не
+  укладывался в таймаут 600 с на SBOM в 25 тыс. компонентов. Главное —
+  провал стадии больше **нельзя замаскировать нулём**: `tool_failures` ловит
+  стадию с `status=error` и отчёт старше распаковки этого прогона.
+- **Кириллица в именах больше не съедает имя.** `Сборки на проверку ИБ.zip`
+  сохранялся как `zip` → теперь `Sborki-na-proverku-IB.zip`; path traversal
+  по-прежнему режется.
+- **Ручной запуск:** отдельного шага для SBOM добавлять не нужно —
+  `sbom-ingest` объявлен зависимостью `grype-scanner` и подтягивается сам во
+  всех сценариях (`run-scan.sh`, `scan_archive.sh`, дашборд, ручные
+  `docker compose run`). Для гигабайтных поставок браузер не использовать —
+  [`docs/big-artifacts.md`](docs/big-artifacts.md): rsync + hardlink-регистрация.
+
 ## Что нового (2026-07-31)
 
 - **EPSS-скоры в отчётах — впервые.** В `cve.db` загружено **354 176** EPSS-оценок
@@ -498,6 +530,18 @@ docker compose --profile update run --rm cve-bin-tool-updater
 ```powershell
 docker compose --profile scan run --rm syft-sbom
 ```
+
+> **Если в поставке лежат готовые SBOM** (заказчик прислал CycloneDX/SPDX
+> вместо самих сборок) — ничего дополнительно делать не нужно. Сервис
+> `sbom-ingest` находит их в распакованном дереве **по содержимому**, а не по
+> имени файла, и подмешивает их компоненты к SBOM от Syft в
+> `artifacts/sbom/scan-input.cdx.json`. Он объявлен зависимостью
+> `grype-scanner`, поэтому запускается сам при любом способе запуска. Прогнать
+> его отдельно (например, чтобы посмотреть, что нашлось):
+>
+> ```powershell
+> docker compose --profile scan run --rm sbom-ingest
+> ```
 
 #### Шаг 4. Запустить все сканеры
 

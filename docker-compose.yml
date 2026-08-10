@@ -161,6 +161,13 @@ services:
     depends_on:
       grype-static:
         condition: service_healthy
+      # Guarantees scan-input.cdx.json exists before matching, in EVERY entry
+      # point — run-scan.sh, scan_archive.sh, the dashboard and the hand-typed
+      # `docker compose run --rm grype-scanner` in the README alike.  Wiring it
+      # per-call-site would mean patching six recipes and silently breaking any
+      # we missed, so the dependency lives with the consumer instead.
+      sbom-ingest:
+        condition: service_completed_successfully
     environment:
       GRYPE_DB_UPDATE_URL: http://grype-static:8080
       GRYPE_DB_VALIDATE_BY_HASH_ON_START: "true"
