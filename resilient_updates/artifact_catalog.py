@@ -46,10 +46,47 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
+# Cyrillic -> Latin so a real-world delivery keeps a readable stored name.
+# Without this "Сборки на проверку ИБ.zip" collapsed to the single word "zip":
+# every non-ASCII character became "-", and .strip(".-") then ate the dashes
+# together with the dot, taking the extension with them.  The artifact card,
+# the run directory and the report's "Target" all inherited that "zip".
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def _transliterate(text: str) -> str:
+    out: list[str] = []
+    for ch in text:
+        low = ch.lower()
+        if low in _TRANSLIT:
+            rep = _TRANSLIT[low]
+            out.append(rep.upper() if ch.isupper() and rep else rep)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _safe_filename(name: str) -> str:
+    """ASCII-safe on-disk name that still resembles what the customer sent.
+
+    The extension is preserved separately: it drives archive-type detection
+    and, when the stem is entirely non-ASCII, it used to be the only thing
+    left standing — which is how a 1.3 GB delivery ended up stored as "zip".
+    """
     base = Path(name or "artifact.bin").name
-    cleaned = _SAFE_NAME_RE.sub("-", base).strip(".-")
-    return cleaned or "artifact.bin"
+    suffix = Path(base).suffix
+    stem = base[: -len(suffix)] if suffix else base
+    stem = _SAFE_NAME_RE.sub("-", _transliterate(stem)).strip(".-")
+    suffix = _SAFE_NAME_RE.sub("", _transliterate(suffix))
+    if not stem:
+        stem = "artifact"
+    return f"{stem}{suffix}" if suffix else stem
 
 
 def normalize_case_id(value: str | None) -> str:
