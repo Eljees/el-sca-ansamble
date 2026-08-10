@@ -1153,6 +1153,10 @@ class JobRegistry:
             job.end_stage(key, rc in ok_codes)
             pipeline_state.stage_end(self.artifacts_dir, key, ok=rc in ok_codes, rc=rc)
             self._checkpoint(job, key, "done" if rc in ok_codes else "error")
+            # Between SBOM generation and matching: fold any SBOM that arrived
+            # *inside* the delivery into the document the matchers consume.
+            if key == "sbom":
+                self._ingest_provided_sboms(job)
 
         self._checkpoint(job, "final", "done")
         self._publish_results_if_enabled(job)
@@ -1164,6 +1168,49 @@ class JobRegistry:
     # Inputs at or above this size are hardlinked into the run dir instead of
     # copied: a 3.5 GB upload must not double its disk cost on every run.
     _INPUT_LINK_THRESHOLD = 512 * 1024 * 1024  # 512 MiB
+
+    def _ingest_provided_sboms(self, job: Job) -> None:
+        """Merge SBOMs shipped inside the delivery into the scan input.
+
+        A delivery is sometimes the SBOM itself rather than the software
+        (CYBERSEC-13860: two CycloneDX files, 713 Maven components, 231 known
+        CVEs).  Syft can only catalogue the *file* holding such a document, so
+        without this step the matchers see an empty component list and the
+        report truthfully says "nothing found" about the wrong thing.
+
+        Always writes ``artifacts/sbom/scan-input.cdx.json`` so the scanner
+        services can point at one stable path; when no SBOM was delivered the
+        file is simply Syft's own output.  Best-effort: a failure here leaves
+        the normal Syft SBOM in place and is reported, never fatal.
+        """
+        from .sbom_ingest import build_scan_input
+
+        try:
+            result = build_scan_input(
+                self.repo_root / "artifacts" / "extracted" / "current",
+                base_cyclonedx=self.repo_root / "artifacts" / "sbom" / "cyclonedx.json",
+                output=self.repo_root / "artifacts" / "sbom" / "scan-input.cdx.json",
+                repo_root=self.repo_root,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            job.feed_line(f"WARN: sbom-ingest failed: {exc!r} — используется только SBOM от Syft")
+            return
+
+        provided = result.get("provided_sboms") or []
+        if provided:
+            job.feed_line(
+                f"sbom-ingest: найдено готовых SBOM в поставке — {len(provided)}; "
+                f"+{result['components_from_provided']} компонентов "
+                f"(итого {result['components_total']})"
+            )
+            for item in provided[:10]:
+                rel = str(item["path"]).replace(str(self.repo_root), "").lstrip("/\\")
+                job.feed_line(f"  · {item['format']}: {rel} ({item['components']} компонентов)")
+        else:
+            job.feed_line(
+                f"sbom-ingest: готовых SBOM в поставке нет — "
+                f"матчинг по SBOM от Syft ({result['components_total']} компонентов)"
+            )
 
     def _copy_input_to_run(self, job: Job, target_host: str) -> None:
         if not job.run_dir:

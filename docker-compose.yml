@@ -103,6 +103,24 @@ services:
       - internal-mirror-data:/workspace/artifacts/mirror
     networks: [scanner-net]
 
+  # Folds SBOMs that arrived INSIDE the delivery into the document the
+  # matchers read.  Runs between syft-sbom and grype-scanner; always writes
+  # artifacts/sbom/scan-input.cdx.json so the scanners have one stable path.
+  sbom-ingest:
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.5}
+    profiles: ["default", "scan", "offline", "airgap"]
+    working_dir: /workspace
+    entrypoint: ["python", "-m", "resilient_updates.cli"]
+    command: ["ingest-sboms",
+              "--extracted-dir", "/workspace/artifacts/extracted/current",
+              "--base-cyclonedx", "/workspace/artifacts/sbom/cyclonedx.json",
+              "--output", "/workspace/artifacts/sbom/scan-input.cdx.json",
+              "--repo-root", "/workspace"]
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+    networks: [scanner-net]
+
   grype-db-importer:
     image: anchore/grype:${GRYPE_VERSION:-v0.116.1}
     profiles: ["default", "update", "offline", "airgap"]
@@ -151,7 +169,11 @@ services:
       GRYPE_DB_CACHE_DIR: /grype-db-cache
       GRYPE_DB_AUTO_UPDATE: "false"
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
-    command: ["sbom:/workspace/artifacts/sbom/syft.json", "-o", "json", "--file", "/workspace/artifacts/reports/grype/report.json"]
+    # Matches against the merged scan input, not Syft's raw output: when the
+    # delivery *is* an SBOM (vendor ships CycloneDX instead of the binaries),
+    # sbom-ingest folds those components in — otherwise the file is simply
+    # Syft's own SBOM converted to CycloneDX.  See resilient_updates/sbom_ingest.py.
+    command: ["sbom:/workspace/artifacts/sbom/scan-input.cdx.json", "-o", "json", "--file", "/workspace/artifacts/reports/grype/report.json"]
     volumes:
       - ./:/workspace
       - grype-cache:/grype-db-cache

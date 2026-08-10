@@ -500,6 +500,7 @@ PY
       # syft.json (native Syft format) is NOT accepted by cve-bin-tool's --sbom flag.
       # Only cyclonedx and spdx are valid; try cyclonedx first (richer component data).
       for candidate in \
+        /workspace/artifacts/sbom/scan-input.cdx.json \
         /workspace/artifacts/sbom/cyclonedx.json \
         /workspace/artifacts/sbom/spdx.json; do
         if [ -s "$candidate" ]; then
