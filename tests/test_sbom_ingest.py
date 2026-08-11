@@ -107,6 +107,34 @@ def test_output_always_written_even_without_delivered_sboms(tmp_path: Path):
     assert r["components_total"] == 1
 
 
+def test_base_falls_back_to_synthetic_syft_json(tmp_path: Path):
+    """APK/Windows analyzers skip Syft and write syft.json only — the merged
+    scan input must not come out empty (that briefly broke the CLI APK path)."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    sbom_dir = tmp_path / "sbom"
+    sbom_dir.mkdir()
+    (sbom_dir / "syft.json").write_text(
+        json.dumps(
+            {
+                "descriptor": {"name": "syft"},
+                "artifacts": [
+                    {"name": "libqt6core", "version": "6.4.2", "purl": "pkg:generic/qt6core@6.4.2"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "scan-input.cdx.json"
+
+    r = build_scan_input(tree, base_cyclonedx=sbom_dir / "cyclonedx.json", output=out)
+
+    assert r["components_from_syft"] == 1
+    assert r["components_total"] == 1
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["components"][0]["name"] == "libqt6core"
+
+
 def test_rerun_is_idempotent_and_skips_our_own_output(tmp_path: Path):
     """Re-running must not fold a previous merge into itself."""
     repo = tmp_path

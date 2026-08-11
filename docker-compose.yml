@@ -343,6 +343,10 @@ services:
       # Pre-scan DB audit toggle (1=verify, 0=skip).  Must be whitelisted here
       # or a host-side export never reaches the container.
       CVE_BIN_TOOL_VERIFY_DB: ${CVE_BIN_TOOL_VERIFY_DB:-1}
+      # 0 = skip the SBOM fast-path and binary-scan the target dir.  The APK
+      # branch sets this: grype owns the SBOM leg there, cve-bin-tool's value
+      # is the native .so scan, which auto-SBOM would otherwise bypass.
+      CVE_BIN_TOOL_AUTO_SBOM: ${CVE_BIN_TOOL_AUTO_SBOM:-1}
       # SBOM fast-path: set to a CycloneDX/SPDX path to skip binary scanning.
       CVE_BIN_TOOL_SBOM_PATH: ${CVE_BIN_TOOL_SBOM_PATH:-}
       CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}

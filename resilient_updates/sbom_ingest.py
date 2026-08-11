@@ -210,6 +210,17 @@ def build_scan_input(
             base_count = len(merged)
         except (OSError, ValueError):
             base_count = 0
+    if base_count == 0 and base_path is not None:
+        # Specialized pipelines (APK / Windows analyzers) skip Syft and write a
+        # synthetic syft.json instead of cyclonedx.json.  Without this fallback
+        # the merged scan input would be empty and Grype would match nothing —
+        # exactly the regression that briefly broke the CLI APK path when the
+        # scanners moved to scan-input.cdx.json.
+        syft_side = base_path.parent / "syft.json"
+        if syft_side.is_file():
+            for comp in components_of(syft_side, "syft"):
+                merged.setdefault(_key(comp), comp)
+            base_count = len(merged)
 
     provided = detect_sboms(tree, repo_root=repo_root)
     added = 0
