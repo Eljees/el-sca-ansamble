@@ -110,6 +110,11 @@ services:
     image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.5}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
+    # Root, same as report-collector: the dashboard's host-side ingest (root)
+    # writes scan-input.cdx.json first, and an appuser container cannot
+    # overwrite that 0644 file — the very first generic-path run after the
+    # depends_on wiring died exactly there (exit 1 → grype never started).
+    user: "0"
     entrypoint: ["python", "-m", "resilient_updates.cli"]
     command: ["ingest-sboms",
               "--extracted-dir", "/workspace/artifacts/extracted/current",

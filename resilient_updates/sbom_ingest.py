@@ -248,6 +248,12 @@ def build_scan_input(
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        # The pipeline mixes uids (host-side root, appuser containers); a 0644
+        # root-owned scan input blocks every later rewrite from uid 1001.
+        out.chmod(0o666)
+    except OSError:
+        pass
 
     return {
         "output": str(out),
