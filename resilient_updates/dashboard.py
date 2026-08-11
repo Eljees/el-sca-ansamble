@@ -304,10 +304,14 @@ def render_run(artifacts_dir: Path, run_id: str) -> str | None:
 # ── Tool DB status (last update + versions) ─────────────────────────────────
 
 # Compose image-tag defaults (mirror docker-compose.yml ${VAR:-default}).
+# LAST-RESORT fallback only: versions.env is the source of truth and is read
+# first (see _read_env_versions).  These constants once went stale for a whole
+# engine upgrade — the barrels kept showing v0.112.0/0.64.1 while 0.73.0 was
+# actually scanning — because nothing forced them to move with versions.env.
 COMPOSE_VERSION_DEFAULTS = {
-    "TRIVY_VERSION": "0.64.1",
-    "GRYPE_VERSION": "v0.112.0",
-    "SYFT_VERSION": "v1.20.0",
+    "TRIVY_VERSION": "0.73.0",
+    "GRYPE_VERSION": "v0.116.1",
+    "SYFT_VERSION": "v1.50.0",
 }
 
 
@@ -329,31 +333,35 @@ def _deep_find(obj: Any, key: str) -> Any | None:
 
 
 def _read_env_versions(repo_root: Path) -> dict[str, str]:
-    """Read ``*_VERSION`` keys from .env (falling back to .env.example, then
-    the compose defaults) so tool cards show the version that will actually run.
-    """
-    versions = dict(COMPOSE_VERSION_DEFAULTS)
-    env_path = repo_root / ".env"
-    if env_path.is_file():
-        for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = raw.strip()
-            if line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip()
-            if k.endswith("_VERSION") and v:
-                versions[k] = v
+    """``*_VERSION`` for the tool cards, in compose-interpolation order.
 
-    example_path = repo_root / ".env.example"
-    if example_path.is_file():
-        for raw in example_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    Precedence mirrors what actually runs: the deploy ``.env`` overrides
+    everything (compose reads it), then ``versions.env`` — the repo's single
+    source of truth that CI keeps consistent with docker-compose.yml — then
+    ``.env.example``, then the hardcoded last resort.  versions.env used to be
+    missing from this chain, which is exactly how the cards kept advertising
+    engines two upgrades old.
+    """
+
+    def _harvest(path: Path, into: dict[str, str], *, override: bool) -> None:
+        if not path.is_file():
+            return
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
             line = raw.strip()
             if line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
             k, v = k.strip(), v.strip()
             if k.endswith("_VERSION") and v:
-                versions.setdefault(k, v)
+                if override:
+                    into[k] = v
+                else:
+                    into.setdefault(k, v)
+
+    versions = dict(COMPOSE_VERSION_DEFAULTS)
+    _harvest(repo_root / "versions.env", versions, override=True)
+    _harvest(repo_root / ".env", versions, override=True)  # deploy override wins
+    _harvest(repo_root / ".env.example", versions, override=False)
     return versions
 
 
