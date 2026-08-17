@@ -193,9 +193,27 @@ sudo -E docker compose run --rm --entrypoint /bin/sh cve-bin-tool-scanner -c \
   'cve-bin-tool -u latest --disable-data-source "CURL,GAD,NVD,OSV,PURL2CPE,REDHAT,RSD" /tmp'
 ```
 
-Проверка: `SELECT COUNT(*) FROM cve_metrics WHERE metric_id=1` в `cve.db`
-(ожидается ~350 тыс.). Сканы идут с `--metrics`, поэтому каждая находка в
+Проверка (работает офлайн — python из образа; `apk add sqlite` в alpine без
+сети не поставится, не пытайся):
+
+```bash
+sudo docker run --rm -v el-sca-ansamble_cve-bin-tool-cache:/c \
+  --entrypoint python elariaphd/el-sca-cve-bin-tool:0.1.1 -c "
+import sqlite3
+print(sqlite3.connect('/c/cve-bin-tool/cve.db')
+      .execute('SELECT COUNT(*) FROM cve_metrics WHERE metric_id=1')
+      .fetchone()[0])"
+```
+
+Ожидается ~350–360 тыс. Сканы идут с `--metrics`, поэтому каждая находка в
 `report.json` несёт `epss_probability` / `epss_percentile`.
+
+Ещё две ожидаемые странности ingest-шага: в конце он падает с
+`TypeError: 'NoneType' object is not subscriptable` — это загрузка
+KEV-каталога (known-exploited) после EPSS, которой нужен интернет; на данные
+не влияет, EPSS к этому моменту уже записан. Rich-консоль cve-bin-tool без
+tty буферизует вывод — долгая «тишина» после строк `Disabling data source…`
+нормальна (~10 мин на 360 тыс. вставок).
 
 Важно: `-u now` для этого НЕ использовать — он сносит кэш-каталог целиком
 вместе с базой. Только `-u latest`.
