@@ -29,6 +29,7 @@
 - [`docs/runbook.md`](docs/runbook.md) — траблшутинг · [`docs/failure-modes.md`](docs/failure-modes.md) — классификация отказов
 - [`docs/proxy.md`](docs/proxy.md) и [`docs/network-design.md`](docs/network-design.md) — прокси, VPN, авто-маршрут
 - [`docs/s3-storage.md`](docs/s3-storage.md) — внутренний S3 (SeaweedFS) · [`docs/airgap.md`](docs/airgap.md) — работа без сети
+- [`docs/big-artifacts.md`](docs/big-artifacts.md) — гигабайтные артефакты: доставка rsync/WinSCP/scp с реальным подключением, регистрация без HTTP-загрузки, офлайн-обновление EPSS
 - [`docs/distribution.md`](docs/distribution.md) и [`docs/SHIP_AND_DEPLOY.md`](docs/SHIP_AND_DEPLOY.md) — сборка и передача бандла
 - [`docs/reproducibility.md`](docs/reproducibility.md) — контракт воспроизводимости
 - [`SECURITY.md`](SECURITY.md) и [`docs/security-notes.md`](docs/security-notes.md) — модель угроз и заметки
