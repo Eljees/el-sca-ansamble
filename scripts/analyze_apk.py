@@ -59,6 +59,38 @@ def find_apk(path: Path) -> Path | None:
     if path.suffix.lower() == ".apk" and path.is_file():
         return path
 
+    if path.is_file() and path.suffix == "":
+        # Docker bind-mounts the scan target at the fixed container path
+        # /scan-target, with no extension — the ONLY way a standalone .apk
+        # reaches this script (docker-compose.yml apk-analyzer service mounts
+        # ${SCAN_TARGET_HOST} straight to /scan-target). Suffix-based checks
+        # above and below never match this path, so every standalone-APK run
+        # failed with "no .apk file found" until content sniffing was added
+        # here (2026-08-18, CYBERSEC-13942). An APK *is* a ZIP, so detect it
+        # by content: real APK contents (AndroidManifest.xml/classes.dex) at
+        # the top level, or a ZIP-of-ZIP wrapper carrying an inner .apk.
+        if zipfile.is_zipfile(path):
+            try:
+                with zipfile.ZipFile(path) as zf:
+                    names = zf.namelist()
+            except Exception as e:
+                log(f"  WARNING: failed to read zip contents at {path}: {e}")
+                return None
+            if "AndroidManifest.xml" in names or any(
+                n.lower().endswith("classes.dex") for n in names
+            ):
+                return path
+            apk_members = [n for n in names if n.lower().endswith(".apk")]
+            if apk_members:
+                tmp = Path(tempfile.mkdtemp(prefix="apk_"))
+                member = apk_members[0]
+                out = tmp / Path(member).name
+                with zipfile.ZipFile(path) as zf, zf.open(member) as src, open(out, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                log(f"  Extracted inner APK from extension-less mount: {out.name}")
+                return out
+        return None
+
     if path.is_dir():
         # First: look for a nested .apk file
         for candidate in sorted(path.rglob("*.apk")):
