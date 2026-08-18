@@ -447,8 +447,8 @@ def test_tool_status_reports_versions_and_freshness(tmp_path: Path):
     by_name = {t["name"]: t for t in data["tools"]}
     assert {"Syft", "Grype", "Trivy", "cve-bin-tool"} <= set(by_name)
     # Engine versions fall back to compose defaults when no .env present.
-    assert by_name["Grype"]["version"].startswith("v0.112")
-    assert by_name["Trivy"]["version"] == "0.64.1"
+    assert by_name["Grype"]["version"].startswith("v0.116")
+    assert by_name["Trivy"]["version"] == "0.73.0"
     # DB freshness picked up from provenance.
     assert by_name["Grype"]["db_status"] == "active"
     assert by_name["Grype"]["db_updated"] == "2026-06-04T07:57:06Z"
