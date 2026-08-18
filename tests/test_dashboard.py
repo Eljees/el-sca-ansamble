@@ -631,6 +631,59 @@ def test_api_artifact_patch_and_scan(tmp_path: Path, monkeypatch):
     assert case_id == "CYBERSEC-77777"
 
 
+def test_api_artifact_scan_maps_busy_error_to_409(tmp_path: Path, monkeypatch):
+    """Regression for CYBERSEC-13942: the dashboard endpoint must turn a
+    ScanBusyError (another scan/update already running) into a clear HTTP 409
+    instead of a raw 500, so the GUI can show 'busy, try again' rather than
+    just failing silently."""
+    import io
+
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import JobRegistry, ScanBusyError
+
+    client = _client(tmp_path)
+    artifact = client.post(
+        "/api/artifacts/upload",
+        files={"file": ("plain.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+    ).json()["artifact"]
+
+    def busy_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
+        raise ScanBusyError("уже выполняется scan (job scan-1, цель: other.apk) — дождитесь завершения")
+
+    monkeypatch.setattr(JobRegistry, "start_scan", busy_start_scan)
+    resp = client.post(f"/api/artifacts/{artifact['id']}/scan")
+    assert resp.status_code == 409
+    assert "дождитесь завершения" in resp.json()["detail"]
+
+
+def test_api_scan_upload_maps_busy_error_to_409_and_keeps_upload(tmp_path: Path, monkeypatch):
+    """Same guard on the upload-and-scan endpoint: the file must still be
+    saved (visible via its card) even though the scan itself is refused."""
+    import io
+
+    pytest.importorskip("fastapi")
+    from resilient_updates.orchestrator import JobRegistry, ScanBusyError
+
+    client = _client(tmp_path)
+
+    def busy_start_scan(self, target_host, tools=None, *, resume=False, case_id=None):
+        raise ScanBusyError("уже выполняется scan (job scan-1) — дождитесь завершения")
+
+    monkeypatch.setattr(JobRegistry, "start_scan", busy_start_scan)
+    resp = client.post(
+        "/api/scan",
+        files={"file": ("plain.zip", io.BytesIO(b"PK\x03\x04"), "application/zip")},
+        data={"case_id": "CYBERSEC-77777"},
+    )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "файл загружен" in detail
+    assert "карточки позже" in detail
+    # The upload itself must have gone through despite the scan being refused.
+    listed = client.get("/api/artifacts").json()["artifacts"]
+    assert any(a["case_id"] == "CYBERSEC-77777" for a in listed)
+
+
 def test_api_artifact_runs_and_run_file(tmp_path: Path, monkeypatch):
     import io
 

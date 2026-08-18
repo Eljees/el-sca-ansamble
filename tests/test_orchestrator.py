@@ -406,6 +406,80 @@ def test_start_scan_registers_run_dir_and_log(tmp_path: Path, monkeypatch):
     assert job.log_path.is_file()
 
 
+def test_start_scan_rejects_second_scan_while_first_is_running(tmp_path: Path, monkeypatch):
+    """Regression for CYBERSEC-13942 (2026-08-17): start_scan had no mutual
+    exclusion, so a second scan starting mid-run overwrote the shared
+    artifacts/ (extracted/current, sbom/, reports/) of the first — a PIX
+    Studio upload landed on top of an in-progress iDocs run and the iDocs
+    report came out with PIX's component count. start_scan must now refuse
+    a second job while one is already running, and let it through once the
+    first has finished.
+    """
+    from resilient_updates.orchestrator import ScanBusyError
+
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    release = threading.Event()
+
+    def blocking_run_scan(job, target_host, tools=None, *, resume=False):
+        release.wait(timeout=5)
+        job.finish(0)
+
+    monkeypatch.setattr(reg, "_run_scan", blocking_run_scan)
+    target = tmp_path / "input.zip"
+    target.write_bytes(b"PK")
+
+    first = reg.start_scan(str(target))
+    try:
+        assert first.status == "running"
+        try:
+            reg.start_scan(str(target))
+        except ScanBusyError as exc:
+            assert first.id in str(exc)
+        else:
+            raise AssertionError("second start_scan should have raised ScanBusyError")
+    finally:
+        release.set()
+
+    first_thread = next(t for t in threading.enumerate() if t.name == f"job-{first.id}")
+    first_thread.join(timeout=5)
+    assert first.status == "done"
+
+    # Now that the first job has finished, a new scan must be accepted again.
+    monkeypatch.setattr(reg, "_run_scan", lambda job, target_host, tools=None, *, resume=False: job.finish(0))
+    second = reg.start_scan(str(target))
+    assert second.id != first.id
+
+
+def test_start_update_rejects_while_a_scan_is_running(tmp_path: Path, monkeypatch):
+    """Same guard, the other direction: an update must not race a live scan —
+    it rewrites the DB volumes the scan's containers are reading."""
+    from resilient_updates.orchestrator import ScanBusyError
+
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    release = threading.Event()
+
+    def blocking_run_scan(job, target_host, tools=None, *, resume=False):
+        release.wait(timeout=5)
+        job.finish(0)
+
+    monkeypatch.setattr(reg, "_run_scan", blocking_run_scan)
+    target = tmp_path / "input.zip"
+    target.write_bytes(b"PK")
+    scan_job = reg.start_scan(str(target))
+    try:
+        try:
+            reg.start_update("grype")
+        except ScanBusyError:
+            pass
+        else:
+            raise AssertionError("start_update should have raised ScanBusyError")
+    finally:
+        release.set()
+    threading.enumerate()  # let the daemon thread be joined by the OS at test exit
+    scan_thread = next(t for t in threading.enumerate() if t.name == f"job-{scan_job.id}")
+    scan_thread.join(timeout=5)
+
+
 def test_publish_results_if_enabled_calls_s3_publisher(tmp_path: Path, monkeypatch):
     reg = JobRegistry(tmp_path, compose=["docker", "compose"])
     run_dir = tmp_path / "_SCA_reports" / "app-20260707-120000"
