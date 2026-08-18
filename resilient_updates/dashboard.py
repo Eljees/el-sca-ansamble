@@ -1534,7 +1534,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         StreamingResponse,
     )
 
-    from .orchestrator import JobRegistry, sse_stream
+    from .orchestrator import JobRegistry, ScanBusyError, sse_stream
 
     root = Path(artifacts_dir)
     rroot = Path(repo_root) if repo_root is not None else root.resolve().parent
@@ -1681,9 +1681,12 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if not target_path.is_file():
             raise HTTPException(status_code=409, detail=f"artifact file is missing: {target_path}")
         selected = {t.strip() for t in tools.split(",") if t.strip()} or None
-        job = registry.start_scan(
-            str(target_path), tools=selected, case_id=str(artifact.get("case_id") or "")
-        )
+        try:
+            job = registry.start_scan(
+                str(target_path), tools=selected, case_id=str(artifact.get("case_id") or "")
+            )
+        except ScanBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job.run_dir:
             catalog.add_run(artifact_id, run_id=job.run_dir.name, run_dir=job.run_dir)
         return {
@@ -1715,7 +1718,18 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         # tools = comma-separated subset of syft,grype,trivy,cve-bin-tool; empty = all.
         selected = {t.strip() for t in tools.split(",") if t.strip()} or None
         target_path = str(Path(str(artifact["stored_path"])).resolve())
-        job = registry.start_scan(target_path, tools=selected, case_id=str(artifact.get("case_id") or ""))
+        try:
+            job = registry.start_scan(
+                target_path, tools=selected, case_id=str(artifact.get("case_id") or "")
+            )
+        except ScanBusyError as exc:
+            # The upload itself SUCCEEDED and the card is in the catalog —
+            # tell the operator so they scan it from the card once the running
+            # job finishes, instead of re-uploading.
+            raise HTTPException(
+                status_code=409,
+                detail=f"{exc} · файл загружен (карточка {artifact['id']}) — запусти скан с карточки позже",
+            ) from exc
         if job.run_dir:
             catalog.add_run(str(artifact["id"]), run_id=job.run_dir.name, run_dir=job.run_dir)
         return {
@@ -1741,9 +1755,12 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
             raise HTTPException(status_code=409, detail=f"цель чекпоинта недоступна: {target}")
         tool_key = str(state.get("tool") or "all")
         tools_set = None if tool_key in ("", "all") else {t for t in tool_key.split(",") if t}
-        job = registry.start_scan(
-            target, tools=tools_set, resume=True, case_id=str(state.get("case_id") or "")
-        )
+        try:
+            job = registry.start_scan(
+                target, tools=tools_set, resume=True, case_id=str(state.get("case_id") or "")
+            )
+        except ScanBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
             "job_id": job.id,
             "target": target,
@@ -1805,7 +1822,10 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         if not active_enabled:
             raise HTTPException(status_code=403, detail="active DB update is disabled for this dashboard")
         # target: all | trivy | grype | cve-bin-tool | cve-bin-tool:<SOURCE>
-        job = registry.start_update(target=target)
+        try:
+            job = registry.start_update(target=target)
+        except ScanBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"job_id": job.id, "target": target, "log": str(job.log_path) if job.log_path else ""}
 
     @app.get("/api/jobs/{job_id}")

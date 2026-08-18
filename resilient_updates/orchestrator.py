@@ -206,6 +206,10 @@ def _initial_stage_list(stages: list[tuple[str, str, list[str]]]) -> list[dict[s
 # ── Job state machine ───────────────────────────────────────────────────────
 
 
+class ScanBusyError(RuntimeError):
+    """Another scan/update is already running over the shared artifacts/."""
+
+
 class Job:
     """A single scan/update invocation and its live state.
 
@@ -563,6 +567,14 @@ class JobRegistry:
         with self._lock:
             self._jobs[job.id] = job
 
+    def active_job(self, kind: str | None = None) -> Job | None:
+        """The currently running job of ``kind`` (or any kind), if one exists."""
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status == "running" and (kind is None or job.kind == kind):
+                    return job
+        return None
+
     def start_scan(
         self,
         target_host: str,
@@ -571,6 +583,19 @@ class JobRegistry:
         resume: bool = False,
         case_id: str | None = None,
     ) -> Job:
+        # ONE scan at a time — this is architectural, not a nicety.  Every run
+        # shares artifacts/ (extracted/current, sbom/, reports/): two parallel
+        # scans overwrite each other mid-flight, and the result is worse than a
+        # crash — a plausible-looking report about the WRONG object (observed
+        # 2026-08-17: a PIX Studio tree was extracted into an in-progress iDocs
+        # run; the report said "iDocs", the 818 components were PIX's).  Updates
+        # rewrite the same DB volumes the scanners read, so they block too.
+        busy = self.active_job()
+        if busy is not None:
+            raise ScanBusyError(
+                f"уже выполняется {busy.kind} (job {busy.id}, цель: "
+                f"{os.path.basename(str(busy.target or '?'))}) — дождитесь завершения"
+            )
         # tools = which analysers to run (subset of syft/grype/trivy/cve-bin-tool).
         # None = all enabled.  grype needs the SBOM, so syft is forced on with it.
         # resume = skip stages already completed for the SAME target+tools
@@ -624,6 +649,13 @@ class JobRegistry:
     def start_update(self, target: str = "all") -> Job:
         """Run a DB update.  ``target`` selects scope:
         all | trivy | grype | cve-bin-tool | cve-bin-tool:<SOURCE>."""
+        # Same exclusivity as start_scan: updaters rewrite the DB volumes the
+        # scanners read mid-scan, and two updates would race each other too.
+        busy = self.active_job()
+        if busy is not None:
+            raise ScanBusyError(
+                f"уже выполняется {busy.kind} (job {busy.id}) — дождитесь завершения"
+            )
         job = Job("update", UPDATE_STAGES)
         self._register(job)
         env = dict(os.environ)
