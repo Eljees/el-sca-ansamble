@@ -344,6 +344,35 @@ def extract_native_libs_from_dir(apk_dir: Path, dest: Path) -> list[Path]:
 
 SYFT_SCHEMA = "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.4.json"
 
+# Native Qt6 libraries were always emitted with version="unknown" and
+# purl=pkg:generic/<name>@unknown — grype has nothing to compare a vulnerable
+# range against without a version, so 70 Qt6 components matched 0 CVEs on
+# every APK regardless of how fresh the DB was (CYBERSEC-13942, 2026-08-18).
+# Fix: not every Qt module embeds its own "Qt X.Y.Z" string, but every Qt6
+# library shipped in one APK build comes from the same Qt release, so finding
+# the string once (libQt6Core/libQt6Gui reliably carry it) is enough to
+# version-tag every libQt6*.so component.
+_QT_LIB_PREFIX = "libqt6"
+_QT_VERSION_RE = re.compile(rb"Qt\s?(\d+\.\d+\.\d+)")
+
+
+def _detect_qt_version(native_dir: Path | None) -> str | None:
+    """Best-effort Qt version from embedded strings in extracted libQt6*.so files."""
+    if native_dir is None or not native_dir.is_dir():
+        return None
+    candidates = sorted(p for p in native_dir.glob("*.so") if p.name.lower().startswith(_QT_LIB_PREFIX))
+    # libQt6Core / libQt6Gui carry the string most reliably — try those first.
+    candidates.sort(key=lambda p: 0 if "core" in p.name.lower() or "gui" in p.name.lower() else 1)
+    for so_path in candidates:
+        try:
+            data = so_path.read_bytes()
+        except OSError:
+            continue
+        m = _QT_VERSION_RE.search(data)
+        if m:
+            return m.group(1).decode()
+    return None
+
 
 def build_syft_sbom(apk_path: Path, meta: dict[str, Any], display_name: str | None = None) -> dict[str, Any]:
     """Build a minimal syft-json SBOM from APK metadata."""
@@ -378,21 +407,33 @@ def build_syft_sbom(apk_path: Path, meta: dict[str, Any], display_name: str | No
     )
 
     # Native libraries as separate components
+    qt_version = meta.get("qt_version_detected")
     for so_path in meta.get("native_libs", []):
         lib_name = Path(so_path).name.removesuffix(".so")
         lib_id = str(uuid.uuid4())
+        if qt_version and lib_name.lower().startswith(_QT_LIB_PREFIX):
+            # Tag every Qt6 module with the release detected from its
+            # sibling libraries (vendor/product "qt"/"qt" — confirmed present
+            # in the cve-bin-tool DB) instead of an unmatchable "unknown".
+            version = qt_version
+            cpes = [f"cpe:2.3:a:qt:qt:{qt_version}:*:*:*:*:*:*:*"]
+            purl = f"pkg:generic/qt@{qt_version}"
+        else:
+            version = "unknown"
+            cpes = [f"cpe:2.3:a:*:{lib_name}:*:*:*:*:*:android:*:*"]
+            purl = f"pkg:generic/{lib_name}@unknown"
         artifacts.append(
             {
                 "id": lib_id,
                 "name": lib_name,
-                "version": "unknown",
+                "version": version,
                 "type": "binary",
                 "foundBy": "apk-analyzer",
                 "locations": [{"path": so_path}],
                 "licenses": [],
                 "language": "",
-                "cpes": [f"cpe:2.3:a:*:{lib_name}:*:*:*:*:*:android:*:*"],
-                "purl": f"pkg:generic/{lib_name}@unknown",
+                "cpes": cpes,
+                "purl": purl,
                 "metadataType": "",
                 "metadata": {},
             }
@@ -460,6 +501,7 @@ def write_text_report(apk_path: Path, meta: dict[str, Any], report_path: Path) -
         f"Min SDK     : {meta.get('min_sdk', '?')}",
         f"Target SDK  : {meta.get('target_sdk', '?')}",
         "",
+        f"Qt version (detected): {meta.get('qt_version_detected', 'not detected')}",
         f"Native libs ({len(meta.get('native_libs', []))}):",
     ]
     for lib in meta.get("native_libs", []):
@@ -484,7 +526,9 @@ def write_text_report(apk_path: Path, meta: dict[str, Any], report_path: Path) -
     lines += [
         "",
         "NOTE: Java library versions are unknown (no gradle/maven metadata in APK).",
-        "      CVE matching is only reliable for native .so libraries.",
+        "      Native .so libraries are version-unknown too UNLESS the binary embeds a",
+        "      recognizable string (currently: Qt6 modules, via their 'Qt X.Y.Z' string).",
+        "      CVE matching for everything else needs a real version to compare against.",
         "      For deeper analysis use MobSF or jadx + manual review.",
         "=" * 60,
     ]
@@ -549,6 +593,11 @@ def main() -> int:
         extract_native_libs_from_dir(apk_path, native_dir)
     else:
         extract_native_libs(apk_path, native_dir)
+
+    qt_version = _detect_qt_version(native_dir)
+    if qt_version:
+        log(f"  detected Qt version {qt_version} from embedded strings — tagging all libQt6*.so components")
+        meta["qt_version_detected"] = qt_version
 
     # Use a stable display name regardless of whether we got file or dir
     display_name = apk_path.name if not is_extracted_dir else (meta.get("package") or apk_path.name)
