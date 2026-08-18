@@ -20,6 +20,29 @@
 регистрация мгновенная, полный скан ~4 мин, файл занимает место на диске
 **один раз** независимо от числа прогонов.
 
+## Быстрый рецепт: «мне скинули архив на N ГБ»
+
+Три команды, если торопишься (детали и альтернативы — ниже по разделам).
+Из WSL/Git Bash, ключ `elaria_rostel`, прямой канал (VPN поднят):
+
+```bash
+# 1. доставка (докачается сама, если оборвётся — просто перезапусти команду)
+mkdir -p /home/SCA/_incoming/CYBERSEC-XXXXX  # на сервере, один раз через ssh
+rsync -e "ssh -m hmac-sha2-256 -i ~/.ssh/elaria_rostel -o IdentitiesOnly=yes" \
+      --partial --append-verify --info=progress2 \
+      /путь/к/archive.zip \
+      yuriy.tumanov@10.2.108.47:/home/SCA/_incoming/CYBERSEC-XXXXX/
+
+# 2+3. регистрация в каталоге + сразу скан — с сервера
+ssh -m hmac-sha2-256 -i ~/.ssh/elaria_rostel yuriy.tumanov@10.2.108.47 \
+  'cd /home/SCA/el-sca-ansamble && scripts/register_local_artifact.sh \
+     -f /home/SCA/_incoming/CYBERSEC-XXXXX/archive.zip -c CYBERSEC-XXXXX -s'
+```
+
+Дальше отчёт (Markdown/HTML) забирается с карточки в морде
+(`http://10.2.108.47:8088/`) или тем же `scp` из `_SCA_reports/<run>/` —
+см. «Шаг 3» ниже.
+
 ## Шаг 1 — доставка на сервер
 
 Целевой каталог — `/home/SCA/_incoming/<CYBERSEC-XXXXX>/` (создать при
@@ -28,10 +51,23 @@
 
 ### Вариант А: rsync (рекомендуется — докачка после обрыва)
 
-Из WSL / Linux / Git Bash:
+Из WSL / Linux / Git Bash. Рабочее подключение (прямой маршрут, FortiClient
+VPN поднят, без прыжка через `toshiba`) — ключ `elaria_rostel`, шифр MAC
+`hmac-sha2-256` (без него у некоторых клиентов алгоритм не согласуется):
 
 ```bash
-rsync -e "ssh -i ~/.ssh/<приватный-ключ> -o IdentitiesOnly=yes" \
+rsync -e "ssh -m hmac-sha2-256 -i ~/.ssh/elaria_rostel -o IdentitiesOnly=yes" \
+      --partial --append-verify --info=progress2 \
+      /путь/к/artifact.gz \
+      yuriy.tumanov@10.2.108.47:/home/SCA/_incoming/CYBERSEC-XXXXX/
+```
+
+Из PowerShell/WSL с ключом на Windows-стороне (путь как в личном
+однострочнике для `ssh`, см. ниже) — то же самое, просто указывается путь на
+диске C:
+
+```bash
+rsync -e "ssh -m hmac-sha2-256 -i /mnt/c/Users/314he/.ssh/elaria_rostel -o IdentitiesOnly=yes" \
       --partial --append-verify --info=progress2 \
       /путь/к/artifact.gz \
       yuriy.tumanov@10.2.108.47:/home/SCA/_incoming/CYBERSEC-XXXXX/
@@ -41,8 +77,11 @@ rsync -e "ssh -i ~/.ssh/<приватный-ключ> -o IdentitiesOnly=yes" \
   докачает с места разрыва, сверив уже переданный кусок контрольной суммой.
 - rsync на сервере установлен (`sudo dnf install rsync`, внутреннее зеркало
   RedOS).
-- Если прямой маршрут (FortiClient VPN) лежит, добавь прыжок:
-  `-e "ssh -J <jump-host> -i ~/.ssh/<ключ> ..."`.
+- Если прямой маршрут лежит (VPN не поднят / нет прямой видимости), добавь
+  прыжок через `toshiba`: `-e "ssh -m hmac-sha2-256 -J toshiba -i ~/.ssh/elaria_rostel ..."`.
+- Оценка времени для 10 ГБ при ~10 МБ/с (как на проверенном 3.4 ГБ-артефакте)
+  — около 17 минут; на более быстром канале пропорционально меньше. `--info=progress2`
+  покажет текущую скорость и ETA сразу после старта.
 
 ### Вариант Б: WinSCP (GUI, докачка встроена)
 
@@ -65,10 +104,11 @@ rsync -e "ssh -i ~/.ssh/<приватный-ключ> -o IdentitiesOnly=yes" \
    Preferences → Transfer → Endurance → «Enable transfer resume /
    transfer to temporary filename» (порог 100 КБ).
 
-Эквивалент консольного подключения, с которого списаны эти настройки:
+Эквивалент консольного подключения, с которого списаны эти настройки
+(рабочий, проверен 2026-08-18):
 
 ```text
-ssh -m hmac-sha2-256 -i C:\Users\<user>\.ssh\elaria_rostel yuriy.tumanov@10.2.108.47
+ssh -m hmac-sha2-256 -i C:\Users\314he\.ssh\elaria_rostel yuriy.tumanov@10.2.108.47
 ```
 
 ### Вариант В: scp (одним куском, без докачки)
