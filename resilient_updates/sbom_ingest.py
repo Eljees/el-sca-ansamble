@@ -124,6 +124,20 @@ def _components_from_syft(doc: dict[str, Any]) -> list[dict[str, Any]]:
         }
         if art.get("purl"):
             comp["purl"] = str(art["purl"])
+        # syft/apk-analyzer emit a "cpes" LIST; CycloneDX components carry a
+        # single "cpe" STRING. Dropping this silently defeated the Qt6
+        # version-tagging fix (CYBERSEC-13942, 2026-08-18): apk-analyzer wrote
+        # a correct cpe:2.3:a:qt:qt:6.10.2:... into syft.json, but grype never
+        # scans that file directly — it consumes scan-input.cdx.json, produced
+        # by this function, which had no code path to carry the cpe across.
+        # grype has no ecosystem matcher for a "pkg:generic/..." purl and
+        # won't reconstruct a CPE from it on its own, so the component was
+        # unmatchable despite having a real version.
+        cpes = art.get("cpes")
+        if cpes:
+            first_cpe = cpes[0] if isinstance(cpes, list) else cpes
+            if first_cpe:
+                comp["cpe"] = str(first_cpe)
         out.append(comp)
     return out
 

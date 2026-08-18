@@ -135,6 +135,48 @@ def test_base_falls_back_to_synthetic_syft_json(tmp_path: Path):
     assert doc["components"][0]["name"] == "libqt6core"
 
 
+def test_syft_fallback_carries_the_cpe_through_to_the_scan_input(tmp_path: Path):
+    """Regression for CYBERSEC-13942 (2026-08-18): apk-analyzer started tagging
+    Qt6 native libs with a real cpe:2.3:a:qt:qt:<version>:... (previously
+    "unknown"), but grype never scans syft.json directly — it consumes the
+    CycloneDX doc this function writes. The syft->CycloneDX conversion only
+    copied name/version/purl, silently dropping "cpes", so grype still had
+    nothing to match against despite the version fix. CycloneDX components
+    carry a single "cpe" string (not syft's "cpes" list) — take the first.
+    """
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    sbom_dir = tmp_path / "sbom"
+    sbom_dir.mkdir()
+    (sbom_dir / "syft.json").write_text(
+        json.dumps(
+            {
+                "descriptor": {"name": "syft"},
+                "artifacts": [
+                    {
+                        "name": "libQt6Core_arm64-v8a",
+                        "version": "6.10.2",
+                        "purl": "pkg:generic/qt@6.10.2",
+                        "cpes": ["cpe:2.3:a:qt:qt:6.10.2:*:*:*:*:*:*:*"],
+                    },
+                    # a component with no cpe (the common "unknown"-version case)
+                    # must not blow up and must simply have no "cpe" key.
+                    {"name": "libcrypto_3", "version": "unknown", "purl": "pkg:generic/libcrypto_3@unknown"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = tmp_path / "scan-input.cdx.json"
+
+    build_scan_input(tree, base_cyclonedx=sbom_dir / "cyclonedx.json", output=out)
+
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    by_name = {c["name"]: c for c in doc["components"]}
+    assert by_name["libQt6Core_arm64-v8a"]["cpe"] == "cpe:2.3:a:qt:qt:6.10.2:*:*:*:*:*:*:*"
+    assert "cpe" not in by_name["libcrypto_3"]
+
+
 def test_rerun_is_idempotent_and_skips_our_own_output(tmp_path: Path):
     """Re-running must not fold a previous merge into itself."""
     repo = tmp_path
