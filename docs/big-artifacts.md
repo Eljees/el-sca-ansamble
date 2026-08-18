@@ -22,8 +22,9 @@
 
 ## Быстрый рецепт: «мне скинули архив на N ГБ»
 
-Три команды, если торопишься (детали и альтернативы — ниже по разделам).
-Из WSL/Git Bash, ключ `elaria_rostel`, прямой канал (VPN поднят):
+Пять шагов от файла на диске до отчёта у себя. Из WSL/Git Bash, ключ
+`elaria_rostel`, прямой канал (VPN поднят). Полный проверенный прогон —
+CYBERSEC-10661, 10.3 ГБ, 2026-08-18, всё ниже — реальные пути из него.
 
 ```bash
 # 1. доставка (докачается сама, если оборвётся — просто перезапусти команду)
@@ -39,9 +40,45 @@ ssh -m hmac-sha2-256 -i ~/.ssh/elaria_rostel yuriy.tumanov@10.2.108.47 \
      -f /home/SCA/_incoming/CYBERSEC-XXXXX/archive.zip -c CYBERSEC-XXXXX -s'
 ```
 
-Дальше отчёт (Markdown/HTML) забирается с карточки в морде
-(`http://10.2.108.47:8088/`) или тем же `scp` из `_SCA_reports/<run>/` —
-см. «Шаг 3» ниже.
+Ответ команды **важно сохранить** — в нём `run_dir`/`log`, по которым
+следить и потом забирать отчёт. Реальный пример:
+
+```json
+{"job_id":"6680657a0dfb","artifact_id":"artifact-20260818-143319-2fd98f",
+ "target":"/home/SCA/el-sca-ansamble/artifacts/uploads/artifact-20260818-143319-2fd98f/archive.zip",
+ "run_dir":"/home/SCA/el-sca-ansamble/_SCA_reports/CYBERSEC-XXXXX-20260818-143354",
+ "log":"/home/SCA/el-sca-ansamble/_SCA_reports/CYBERSEC-XXXXX-20260818-143354/job.log"}
+```
+
+**Регистрация** — это НЕ скан: она просто заводит карточку (hardlink файла +
+хэши), выполняется мгновенно. `-s` сразу после неё дёргает API и возвращает
+`job_id` немедленно — сам скан идёт в фоне на сервере ещё долго (10 ГБ ≈
+15 минут: extract → sbom → grype → trivy → cve-bin-tool → report).
+
+```bash
+# 4. следить за прогрессом (Ctrl+C просто перестаёт показывать, скан не прерывает)
+ssh -m hmac-sha2-256 -i ~/.ssh/elaria_rostel yuriy.tumanov@10.2.108.47 \
+  'tail -f /home/SCA/el-sca-ansamble/_SCA_reports/CYBERSEC-XXXXX-20260818-143354/job.log'
+```
+
+Конец лога — `# --- finished status=done rc=0 duration=...s` (готово) или
+`status=error` (что-то упало, `--resume` тут не поможет — это ран через
+дашборд, не `run-scan.sh`; смотри `job.log` на конкретную упавшую стадию).
+
+```bash
+# 5. забрать готовый отчёт к себе — из RUN_DIR/reports/final/
+mkdir -p /mnt/w/_dev_common/_SCA/CYBERSEC-XXXXX/report-20260818-143354
+scp -o ControlPath=/tmp/ssh-e11 \
+  'yuriy.tumanov@10.2.108.47:/home/SCA/el-sca-ansamble/_SCA_reports/CYBERSEC-XXXXX-20260818-143354/reports/final/*' \
+  /mnt/w/_dev_common/_SCA/CYBERSEC-XXXXX/report-20260818-143354/
+```
+
+Полный список файлов в `reports/final/`: `index.html` (сводная страница,
+открывать её — остальное подтянется по ссылкам), `cve_analysis_report_generated_ru.md`,
+`grype.html`, `trivy.html`, `cve-bin-tool.html`, `syft.html`.
+
+Либо без ssh вручную — карточка в браузере: `http://10.2.108.47:8088/` →
+артефакт `artifact-20260818-143319-2fd98f` → кнопка **Reports**.
 
 ## Шаг 1 — доставка на сервер
 
@@ -159,11 +196,39 @@ scripts/register_local_artifact.sh \
 
 - Скан: кнопка **Scan** на карточке, либо флаг `-s` при регистрации, либо
   вручную: `curl -X POST http://127.0.0.1:8088/api/artifacts/<id>/scan`.
-- Отчёты: кнопка **Reports** (открывает свежайший ран артефакта), список ранов
-  на `/runs`, Markdown — `GET /api/runs/<run-id>/report.md`.
+  Ответ — `{"job_id", "run_dir", "log", ...}`, сохрани его: `run_dir` —
+  это твой путь ко всему остальному.
+- Прогресс — `tail -f <run_dir>/job.log` на сервере; конец —
+  `# --- finished status=done rc=0 ...` или `status=error`.
+- Готовые отчёты лежат на сервере в **`<run_dir>/reports/final/`**:
+  `index.html` (открой её — остальное подтянется по ссылкам),
+  `cve_analysis_report_generated_ru.md`, `grype.html`, `trivy.html`,
+  `cve-bin-tool.html`, `syft.html`. Забрать одной командой:
+  `scp 'yuriy.tumanov@10.2.108.47:<run_dir>/reports/final/*' /mnt/w/_dev_common/_SCA/CYBERSEC-XXXXX/`
+- То же самое из браузера: кнопка **Reports** на карточке (открывает
+  свежайший ран артефакта), список всех ранов — `/runs`.
 - В отчёте проверяй блок «Объект анализа»: имя файла, CYBERSEC-id и полный
   набор хэшей (MD5 + SHA-1 + SHA-256 для входного архива и распакованной цели);
   sha256 входа должен совпасть с тем, что ты считала при доставке.
+
+### Известные пробелы в покрытии распаковки
+
+Экстрактор (`resilient_updates/extractor.py`) может законно **пропустить**
+часть содержимого — это не ошибка пайплайна, но отчёт не покроет эти файлы,
+и стоит знать, когда перепроверять руками (`extraction_manifest.json` в
+`<run_dir>/extracted/current/`, поле `failures`):
+
+- **`unsafe archive member path`** — член zip-архива с абсолютным путём
+  (`/foo.sh` вместо `foo.sh`) отклоняется защитой от zip-slip. У некоторых
+  вендорских инсталляторов так упакованы `.sh`-скрипты — они не сканируются
+  вообще. Если это важные исполняемые файлы — достань и прогони отдельно
+  (`unzip -p archive.zip 'foo.sh' > foo.sh`, потом `run-scan.sh -t foo.sh`).
+- **`extracted size exceeds max_bytes=...`** — общий объём распаковки упёрся
+  в лимит: **10 ГиБ по умолчанию** (`EXTRACT_MAX_BYTES`, `docker-compose.yml`),
+  не зависит от размера входа — просто суммарный объём того, что успело
+  распаковаться. Для входа под завязку 10 ГБ последние по очереди файлы в
+  глубоко вложенных архивах не попадут в отчёт. Поднять лимит: `EXTRACT_MAX_BYTES=<байты>`
+  в `.env` перед сканом (например `21474836480` для 20 ГиБ).
 
 ## Совсем руками (если скрипт недоступен)
 
