@@ -79,6 +79,7 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
                 "provenance_tools": sorted(prov.keys()),
                 "report_count": len(reports),
                 "markdown_report_path": _markdown_report(artifacts_dir),
+                "xlsx_report_path": _xlsx_report(artifacts_dir),
             }
         )
 
@@ -96,6 +97,7 @@ def list_runs(artifacts_dir: Path) -> list[dict[str, Any]]:
                 "provenance_tools": sorted(run_prov.keys()),
                 "report_count": len(run_reports),
                 "markdown_report_path": _markdown_report(run_dir),
+                "xlsx_report_path": _xlsx_report(run_dir),
             }
         )
     return out
@@ -169,6 +171,7 @@ def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
         "provenance": _provenance(root),
         "reports": _reports(root),
         "markdown_report_path": _markdown_report(root),
+        "xlsx_report_path": _xlsx_report(root),
     }
 
 
@@ -177,7 +180,7 @@ def _report_candidates(run_dir: Path) -> list[str]:
     if not reports_root.is_dir():
         return []
     preferred: list[Path] = []
-    for pattern in ("index.html", "*.html", "*.md"):
+    for pattern in ("index.html", "*.html", "*.md", "*.xlsx"):
         preferred.extend(sorted(reports_root.rglob(pattern)))
     seen: set[Path] = set()
     out: list[str] = []
@@ -199,6 +202,21 @@ def _markdown_report(run_dir: Path) -> str:
     if not reports_root.is_dir():
         return ""
     for path in sorted(reports_root.rglob("*.md")):
+        if path.is_file():
+            return str(path.relative_to(run_dir)).replace("\\", "/")
+    return ""
+
+
+def _xlsx_report(run_dir: Path) -> str:
+    """Run-relative path of the Excel workbook, or ``""`` when absent.
+
+    Same first-class treatment as the Markdown report: triage happens in a
+    spreadsheet, so operators must not have to dig for it in ``report_paths``.
+    """
+    reports_root = run_dir / "reports" / "final"
+    if not reports_root.is_dir():
+        return ""
+    for path in sorted(reports_root.rglob("*.xlsx")):
         if path.is_file():
             return str(path.relative_to(run_dir)).replace("\\", "/")
     return ""
@@ -233,6 +251,8 @@ def render_index(artifacts_dir: Path) -> str:
             if r.get("markdown_report_path")
             else ""
         )
+        if r.get("xlsx_report_path"):
+            md += f" · <a href='/api/runs/{quote(r['id'], safe='')}/report.xlsx'>report.xlsx</a>"
         return (
             "<li><a href='/runs/{id}'>{id}</a> — tools: {tools}; reports: {rc}; manifest: {mp}{md}</li>"
         ).format(
@@ -1508,6 +1528,7 @@ def _artifact_runs_payload(
                 "default_report_path": reports[0] if reports else "",
                 "report_paths": reports,
                 "markdown_report_path": _markdown_report(run_root),
+                "xlsx_report_path": _xlsx_report(run_root),
             }
         )
     # Newest run first: run ids embed a YYYYMMDD-HHMMSS stamp, so a reverse
@@ -1802,6 +1823,26 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         return PlainTextResponse(
             target.read_text(encoding="utf-8", errors="replace"),
             media_type="text/markdown; charset=utf-8",
+        )
+
+    @app.get("/api/runs/{run_id}/report.xlsx")
+    def run_report_xlsx(run_id: str):
+        """The run's Excel workbook, as a download with a meaningful filename.
+
+        Reachable through the generic files/ endpoint too, but that hands the
+        browser the on-disk name; here the run id ends up in the saved file so
+        several downloads don't collide in ~/Downloads.
+        """
+        run_root = _resolve_run_dir(root, run_id)
+        if run_root is None:
+            raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+        rel = _xlsx_report(run_root)
+        if not rel:
+            raise HTTPException(status_code=404, detail="run has no xlsx report")
+        return FileResponse(
+            run_root / rel,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=f"{run_id}.xlsx",
         )
 
     @app.get("/api/runs/{run_id}/files/{path:path}")

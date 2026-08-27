@@ -49,3 +49,16 @@ if ! python /workspace/scripts/report_html.py \
   --target "$SCAN_TARGET_DISPLAY"; then
   echo "[collect_reports] WARN: HTML report generation failed" >&2
 fi
+
+# Excel workbook for triage (sort/filter by severity, cut a slice for the
+# customer).  Non-fatal like the HTML step: the Markdown report is the
+# contractual artefact, the spreadsheet is a convenience.
+XLSX_REPORT_OUTPUT="${XLSX_REPORT_OUTPUT:-artifacts/reports/final/sca_report.xlsx}"
+if ! python -m resilient_updates.cli report-xlsx \
+  --reports-dir "$REPORTS_DIR" \
+  --output "$XLSX_REPORT_OUTPUT" \
+  --target "$SCAN_TARGET" \
+  --display-target "$SCAN_TARGET_DISPLAY" \
+  --case-id "$CASE_ID"; then
+  echo "[collect_reports] WARN: XLSX report generation failed" >&2
+fi

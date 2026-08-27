@@ -340,6 +340,7 @@ done
 DATE="$(date +%Y-%m-%d)"
 REPORT_MD="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.md"
 REPORT_HTML="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.html"
+REPORT_XLSX="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.xlsx"
 ARTIFACTS_DIR="$(pwd)/artifacts"
 
 # Mirror all pipeline output to a log file so a non-interactive caller can
@@ -665,6 +666,14 @@ echo "[stage] report-html (host $PYTHON_BIN)"
   --target        "$SCAN_TARGET_DISPLAY" \
   --output        "$REPORT_HTML" || echo "[warn] HTML report generation failed -- skipping"
 
+echo "[stage] report-xlsx (host $PYTHON_BIN)"
+"$PYTHON_BIN" -m resilient_updates.cli report-xlsx \
+  --reports-dir    "$ARTIFACTS_DIR" \
+  --target         "$SCAN_TARGET_HOST" \
+  --display-target "$SCAN_TARGET_DISPLAY" \
+  --case-id        "$CASE_ID" \
+  --output         "$REPORT_XLSX" || echo "[warn] XLSX report generation failed -- skipping"
+
 # ── Archive run history ───────────────────────────────────────────────────────
 # Snapshot per-run evidence into a project-timestamp directory.  By default the
 # helper places it under _SCA_reports/ on the scanner host.  Best-effort: never
@@ -696,5 +705,6 @@ printf '\e[32m━━━━━━━━━━━━━━━━━━━━━━
 printf '\e[32m Reports ready:\e[0m\n'
 printf '   MD  : %s\n' "$REPORT_MD"
 printf '   HTML: %s\n' "$REPORT_HTML"
+printf '   XLSX: %s\n' "$REPORT_XLSX"
 printf '\e[32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n'
 echo ""

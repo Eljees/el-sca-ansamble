@@ -572,6 +572,12 @@ def main() -> int:
     collect_report.add_argument("--target", default="")
     collect_report.add_argument("--display-target", default="")
     collect_report.add_argument("--case-id", default="CYBERSEC-UNKNOWN")
+    report_xlsx = subparsers.add_parser("report-xlsx")
+    report_xlsx.add_argument("--reports-dir", default="artifacts")
+    report_xlsx.add_argument("--output", default="artifacts/reports/final/sca_report.xlsx")
+    report_xlsx.add_argument("--target", default="")
+    report_xlsx.add_argument("--display-target", default="")
+    report_xlsx.add_argument("--case-id", default="CYBERSEC-UNKNOWN")
     extract = subparsers.add_parser("extract")
     extract.add_argument("--input", required=True)
     extract.add_argument("--output", required=True)
@@ -889,6 +895,18 @@ def main() -> int:
         target = args.target or None
         output = build_report(
             args.reports_dir, args.output, target, args.display_target or None, args.case_id
+        )
+        print(json.dumps({"status": "ok", "report": str(output)}, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS
+    if args.command == "report-xlsx":
+        from .report_xlsx import build_xlsx_report
+
+        output = build_xlsx_report(
+            args.reports_dir,
+            args.output,
+            args.target or None,
+            args.display_target or None,
+            args.case_id,
         )
         print(json.dumps({"status": "ok", "report": str(output)}, indent=2, ensure_ascii=False))
         return EXIT_SUCCESS
