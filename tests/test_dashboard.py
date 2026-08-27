@@ -631,6 +631,41 @@ def test_api_artifact_patch_and_scan(tmp_path: Path, monkeypatch):
     assert case_id == "CYBERSEC-77777"
 
 
+def test_report_basename_carries_case_and_package(tmp_path: Path):
+    """Download names must identify the case and the package: a pile of
+    <run-id>.xlsx files in ~/Downloads is indistinguishable."""
+    import json
+
+    from resilient_updates.dashboard import _report_basename
+
+    run = tmp_path / "CYBERSEC-13860-20260827-115929"
+    run.mkdir()
+    (run / "MANIFEST.json").write_text(
+        json.dumps(
+            {
+                "case_id": "CYBERSEC-13860",
+                "target": {"host": "/srv/uploads/x/Reliz-RTK_DAS_1.10.31.0-KHED.zip"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert _report_basename(run, run.name) == "CYBERSEC-13860_Reliz-RTK_DAS_1.10.31.0-KHED_report"
+
+    # Cyrillic package names transliterate (same rule as stored filenames).
+    cyr = tmp_path / "cyr-run"
+    cyr.mkdir()
+    (cyr / "MANIFEST.json").write_text(
+        json.dumps({"case_id": "CYBERSEC-1", "target": {"host": "/x/Сборки на проверку ИБ.zip"}}),
+        encoding="utf-8",
+    )
+    assert _report_basename(cyr, "cyr-run") == "CYBERSEC-1_Sborki-na-proverku-IB_report"
+
+    # Runs from before MANIFEST.json fall back to the run id.
+    bare = tmp_path / "bare-run"
+    bare.mkdir()
+    assert _report_basename(bare, "bare-run") == "bare-run"
+
+
 def test_api_artifact_scan_maps_busy_error_to_409(tmp_path: Path, monkeypatch):
     """Regression for CYBERSEC-13942: the dashboard endpoint must turn a
     ScanBusyError (another scan/update already running) into a clear HTTP 409

@@ -172,6 +172,7 @@ def run_detail(artifacts_dir: Path, run_id: str) -> dict[str, Any] | None:
         "reports": _reports(root),
         "markdown_report_path": _markdown_report(root),
         "xlsx_report_path": _xlsx_report(root),
+        "report_basename": _report_basename(root, run_id),
     }
 
 
@@ -220,6 +221,47 @@ def _xlsx_report(run_dir: Path) -> str:
         if path.is_file():
             return str(path.relative_to(run_dir)).replace("\\", "/")
     return ""
+
+
+# Archive suffixes to strip when deriving the package stem for filenames.
+_ARCHIVE_SUFFIXES = (
+    ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tar",
+    ".zip", ".gz", ".bz2", ".xz", ".zst", ".jar", ".war", ".ear",
+    ".apk", ".ipa", ".rpm", ".deb", ".exe", ".msi",
+)
+
+
+def _report_basename(run_dir: Path, run_id: str) -> str:
+    """Download filename stem: ``<CYBERSEC-id>_<package>_report``.
+
+    Operators hand these files over into tickets; a pile of ``<run-id>.xlsx``
+    downloads is indistinguishable in ~/Downloads, so the case id and the
+    package name go into the name.  Falls back to the run id when the run
+    predates MANIFEST.json or carries no target.
+    """
+    case_id = ""
+    package = ""
+    manifest = _safe_read_json(run_dir / "MANIFEST.json")
+    if isinstance(manifest, dict):
+        case_id = str(manifest.get("case_id") or "").strip()
+        target = manifest.get("target")
+        if isinstance(target, dict):
+            host = str(target.get("host") or "").strip()
+            if host:
+                package = Path(host.replace("\\", "/")).name
+    if package:
+        lowered = package.lower()
+        for suffix in _ARCHIVE_SUFFIXES:
+            if lowered.endswith(suffix):
+                package = package[: -len(suffix)]
+                break
+        from .artifact_catalog import _safe_filename
+
+        package = _safe_filename(package)
+    parts = [p for p in (case_id if case_id != "CYBERSEC-UNKNOWN" else "", package) if p]
+    if not parts:
+        return run_id
+    return "_".join([*parts, "report"])
 
 
 def _provenance_status(payload: Any) -> str:
@@ -973,7 +1015,7 @@ function setReportLinks(runId, htmlUrl){
   box.innerHTML =
     `<button type="button" id="btn-copy-md">📋 Скопировать Markdown</button>` +
     `<a href="${md}" target="_blank" rel="noopener">📄 Открыть .md</a>` +
-    `<a href="${md}" download="${esc(runId)}.md">⬇ Скачать .md</a>` +
+    `<a href="${md}" id="lnk-md-dl" download="${esc(runId)}.md">⬇ Скачать .md</a>` +
     (htmlUrl ? `<a href="${htmlUrl}" target="_blank" rel="noopener">🌐 HTML в новой вкладке</a>` : "") +
     `<a href="${xlsx}" id="lnk-xlsx" style="display:none">📊 Скачать .xlsx</a>` +
     `<span class="muted" id="md-status"></span>`;
@@ -981,8 +1023,12 @@ function setReportLinks(runId, htmlUrl){
   // Runs from before the xlsx feature have no workbook — probe the run
   // payload instead of rendering a link that 404s in the operator's face.
   // (A HEAD probe would be natural, but this FastAPI answers 405 to HEAD.)
+  // The same payload carries report_basename (<CYBERSEC>_<package>_report),
+  // so downloads land in ~/Downloads under a name a human can tell apart.
   fetch(`/api/runs/${encodeURIComponent(runId)}`).then(r => r.ok ? r.json() : null).then(j => {
-    if(j && j.xlsx_report_path) $("#lnk-xlsx").style.display = "";
+    if(!j) return;
+    if(j.xlsx_report_path) $("#lnk-xlsx").style.display = "";
+    if(j.report_basename) $("#lnk-md-dl").download = j.report_basename + ".md";
   }).catch(() => {});
 }
 function showReport(url, runId){
@@ -1850,7 +1896,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         return FileResponse(
             run_root / rel,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            filename=f"{run_id}.xlsx",
+            filename=f"{_report_basename(run_root, run_id)}.xlsx",
         )
 
     @app.get("/api/runs/{run_id}/files/{path:path}")
