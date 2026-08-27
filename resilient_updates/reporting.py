@@ -28,6 +28,7 @@ _ARCHIVE_SUFFIXES = (
     ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tar",
     ".zip", ".gz", ".bz2", ".xz", ".zst", ".jar", ".war", ".ear",
     ".apk", ".ipa", ".rpm", ".deb", ".exe", ".msi",
+    ".tar.7z", ".7z", ".rar",
 )
 
 
