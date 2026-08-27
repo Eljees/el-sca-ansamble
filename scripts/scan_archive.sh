@@ -115,4 +115,4 @@ REPORT_OUTPUT="$REPORT_OUTPUT" \
   docker compose --profile report run --rm report-collector
 
 echo "[scan_archive] Готово."
-echo "[scan_archive] Отчёт: artifacts/reports/final/cve_analysis_report_generated_ru.md"
+echo "[scan_archive] Отчёты: artifacts/reports/final/ (<CYBERSEC>_<пакет>_report.md / .xlsx, index.html)"

@@ -338,9 +338,14 @@ for ext in .tar.gz .tar.bz2 .tar.xz .tar.zst .tar .tgz .zip .gz .bz2 .xz .zst .j
 done
 
 DATE="$(date +%Y-%m-%d)"
-REPORT_MD="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.md"
-REPORT_HTML="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.html"
-REPORT_XLSX="${TARGET_DIR}/${BASE_NAME}_report_${DATE}.xlsx"
+# Deliverable names carry the case id when it is known: reports are handed
+# over into tickets, and a bare "<package>_report_<date>.md" still forces the
+# operator to say WHICH ticket it belongs to.
+REPORT_PREFIX="${BASE_NAME}"
+[[ -n "$CASE_ID" && "$CASE_ID" != "CYBERSEC-UNKNOWN" ]] && REPORT_PREFIX="${CASE_ID}_${BASE_NAME}"
+REPORT_MD="${TARGET_DIR}/${REPORT_PREFIX}_report_${DATE}.md"
+REPORT_HTML="${TARGET_DIR}/${REPORT_PREFIX}_report_${DATE}.html"
+REPORT_XLSX="${TARGET_DIR}/${REPORT_PREFIX}_report_${DATE}.xlsx"
 ARTIFACTS_DIR="$(pwd)/artifacts"
 
 # Mirror all pipeline output to a log file so a non-interactive caller can

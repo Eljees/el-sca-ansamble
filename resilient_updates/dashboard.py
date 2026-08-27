@@ -223,14 +223,6 @@ def _xlsx_report(run_dir: Path) -> str:
     return ""
 
 
-# Archive suffixes to strip when deriving the package stem for filenames.
-_ARCHIVE_SUFFIXES = (
-    ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tar",
-    ".zip", ".gz", ".bz2", ".xz", ".zst", ".jar", ".war", ".ear",
-    ".apk", ".ipa", ".rpm", ".deb", ".exe", ".msi",
-)
-
-
 def _report_basename(run_dir: Path, run_id: str) -> str:
     """Download filename stem: ``<CYBERSEC-id>_<package>_report``.
 
@@ -239,6 +231,8 @@ def _report_basename(run_dir: Path, run_id: str) -> str:
     package name go into the name.  Falls back to the run id when the run
     predates MANIFEST.json or carries no target.
     """
+    from .reporting import report_stem
+
     case_id = ""
     package = ""
     manifest = _safe_read_json(run_dir / "MANIFEST.json")
@@ -246,22 +240,8 @@ def _report_basename(run_dir: Path, run_id: str) -> str:
         case_id = str(manifest.get("case_id") or "").strip()
         target = manifest.get("target")
         if isinstance(target, dict):
-            host = str(target.get("host") or "").strip()
-            if host:
-                package = Path(host.replace("\\", "/")).name
-    if package:
-        lowered = package.lower()
-        for suffix in _ARCHIVE_SUFFIXES:
-            if lowered.endswith(suffix):
-                package = package[: -len(suffix)]
-                break
-        from .artifact_catalog import _safe_filename
-
-        package = _safe_filename(package)
-    parts = [p for p in (case_id if case_id != "CYBERSEC-UNKNOWN" else "", package) if p]
-    if not parts:
-        return run_id
-    return "_".join([*parts, "report"])
+            package = str(target.get("host") or "").strip()
+    return report_stem(case_id, package) or run_id
 
 
 def _provenance_status(payload: Any) -> str:

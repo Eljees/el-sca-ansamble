@@ -36,6 +36,28 @@ python -m resilient_updates.cli --config "${CONFIG_PATH:-configs/feed_sources.ya
   write-run-summary --reports-dir "$REPORTS_DIR" \
   || echo "[collect_reports] WARN: write-run-summary failed, header may show UNKNOWN fields" >&2
 
+# Deliverable names carry the case and the package: <CYBERSEC>_<pkg>_report.*
+# instead of the historical generic cve_analysis_report_generated_ru.md /
+# sca_report.xlsx that operators had to rename by hand for every ticket.
+# Only applied when the caller kept the generic defaults — an explicit
+# REPORT_OUTPUT/XLSX_REPORT_OUTPUT override wins.  Best-effort: with no
+# case/package known the generic names stay.
+REPORT_STEM="$(python -m resilient_updates.cli report-name \
+  --case-id "$CASE_ID" --target "$SCAN_TARGET_DISPLAY" 2>/dev/null || true)"
+if [ -n "$REPORT_STEM" ]; then
+  FINAL_DIR="$REPORTS_DIR/reports/final"
+  # Names vary per scan now, so the previous scan's deliverables must not
+  # linger next to this one's (scans are serialised by ScanBusyError).
+  rm -f "$FINAL_DIR"/*_report.md "$FINAL_DIR"/*_report.xlsx \
+        "$FINAL_DIR/cve_analysis_report_generated_ru.md" "$FINAL_DIR/sca_report.xlsx" 2>/dev/null || true
+  case "$REPORT_OUTPUT" in
+    */cve_analysis_report_generated_ru.md) REPORT_OUTPUT="$FINAL_DIR/${REPORT_STEM}.md" ;;
+  esac
+  case "${XLSX_REPORT_OUTPUT:-}" in
+    ""|*/sca_report.xlsx) XLSX_REPORT_OUTPUT="$FINAL_DIR/${REPORT_STEM}.xlsx" ;;
+  esac
+fi
+
 python -m resilient_updates.cli collect-report \
   --reports-dir "$REPORTS_DIR" \
   --output "$REPORT_OUTPUT" \

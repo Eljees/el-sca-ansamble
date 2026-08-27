@@ -451,6 +451,30 @@ def test_collect_paths_excludes_other_cases_and_stale_leftovers(tmp_path):
         assert leaked not in collected, f"{leaked} must not be listed as this run's evidence"
 
 
+def test_report_stem_combines_case_and_package():
+    from resilient_updates.reporting import report_stem
+
+    assert (
+        report_stem("CYBERSEC-13860", "/srv/x/Reliz-RTK_DAS_1.10.31.0-KHED.zip")
+        == "CYBERSEC-13860_Reliz-RTK_DAS_1.10.31.0-KHED_report"
+    )
+    # Either part alone still yields a usable name.
+    assert report_stem("CYBERSEC-1", "") == "CYBERSEC-1_report"
+    assert report_stem("", "agent-3.29.3.tar.gz") == "agent-3.29.3_report"
+    # The UNKNOWN placeholder is not a case id.
+    assert report_stem("CYBERSEC-UNKNOWN", "") == ""
+    assert report_stem(None, None) == ""
+
+
+def test_package_stem_strips_archives_and_transliterates():
+    from resilient_updates.reporting import package_stem
+
+    assert package_stem("agent-3.29.3.tar.gz") == "agent-3.29.3"
+    assert package_stem("/deep/path/app.apk") == "app"
+    assert package_stem("Сборки на проверку ИБ.zip") == "Sborki-na-proverku-IB"
+    assert package_stem("") == ""
+
+
 def test_collect_paths_keeps_fresh_analyzer_report(tmp_path):
     """The apk/win analyzer report IS evidence when it belongs to this run."""
     import time

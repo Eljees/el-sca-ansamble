@@ -23,6 +23,49 @@ SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
 # call sites unchanged.  See docs/audit/20-architecture.md section 1.
 
 
+# Archive suffixes to strip when deriving the package stem for report names.
+_ARCHIVE_SUFFIXES = (
+    ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tar",
+    ".zip", ".gz", ".bz2", ".xz", ".zst", ".jar", ".war", ".ear",
+    ".apk", ".ipa", ".rpm", ".deb", ".exe", ".msi",
+)
+
+
+def package_stem(name: str) -> str:
+    """Package part of a report name: basename, archive suffix stripped,
+    transliterated/sanitised with the same rule as stored upload filenames."""
+    stem = Path(str(name).replace("\\", "/")).name.strip()
+    lowered = stem.lower()
+    for suffix in _ARCHIVE_SUFFIXES:
+        if lowered.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    if not stem:
+        return ""
+    from .artifact_catalog import _safe_filename
+
+    return _safe_filename(stem)
+
+
+def report_stem(case_id: str | None, package_name: str | None) -> str:
+    """Deliverable-report filename stem: ``<CYBERSEC-id>_<package>_report``.
+
+    Reports are handed over into tickets; generic names
+    (``cve_analysis_report_generated_ru.md``, ``sca_report.xlsx``) forced
+    operators to rename every file by hand.  Either part may be missing —
+    whatever is known goes into the name; with neither, returns "" so callers
+    keep their legacy default.
+    """
+    case = str(case_id or "").strip()
+    if case.upper() == "CYBERSEC-UNKNOWN":
+        case = ""
+    package = package_stem(package_name or "")
+    parts = [p for p in (case, package) if p]
+    if not parts:
+        return ""
+    return "_".join([*parts, "report"])
+
+
 def target_digest(path: str | Path) -> str | None:
     resolved = Path(path)
     if not resolved.exists():

@@ -578,6 +578,9 @@ def main() -> int:
     report_xlsx.add_argument("--target", default="")
     report_xlsx.add_argument("--display-target", default="")
     report_xlsx.add_argument("--case-id", default="CYBERSEC-UNKNOWN")
+    report_name = subparsers.add_parser("report-name")
+    report_name.add_argument("--case-id", default="")
+    report_name.add_argument("--target", default="")
     extract = subparsers.add_parser("extract")
     extract.add_argument("--input", required=True)
     extract.add_argument("--output", required=True)
@@ -897,6 +900,11 @@ def main() -> int:
             args.reports_dir, args.output, target, args.display_target or None, args.case_id
         )
         print(json.dumps({"status": "ok", "report": str(output)}, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS
+    if args.command == "report-name":
+        from .reporting import report_stem
+
+        print(report_stem(args.case_id, args.target))
         return EXIT_SUCCESS
     if args.command == "report-xlsx":
         from .report_xlsx import build_xlsx_report
