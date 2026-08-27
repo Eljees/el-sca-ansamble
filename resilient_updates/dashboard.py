@@ -978,10 +978,11 @@ function setReportLinks(runId, htmlUrl){
     `<a href="${xlsx}" id="lnk-xlsx" style="display:none">📊 Скачать .xlsx</a>` +
     `<span class="muted" id="md-status"></span>`;
   $("#btn-copy-md").addEventListener("click", () => copyReportMarkdown(md));
-  // Runs from before the xlsx feature have no workbook — probe instead of
-  // rendering a link that 404s in the operator's face.
-  fetch(xlsx, {method: "HEAD"}).then(r => {
-    if(r.ok) $("#lnk-xlsx").style.display = "";
+  // Runs from before the xlsx feature have no workbook — probe the run
+  // payload instead of rendering a link that 404s in the operator's face.
+  // (A HEAD probe would be natural, but this FastAPI answers 405 to HEAD.)
+  fetch(`/api/runs/${encodeURIComponent(runId)}`).then(r => r.ok ? r.json() : null).then(j => {
+    if(j && j.xlsx_report_path) $("#lnk-xlsx").style.display = "";
   }).catch(() => {});
 }
 function showReport(url, runId){
