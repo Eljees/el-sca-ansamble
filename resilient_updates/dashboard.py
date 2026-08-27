@@ -969,13 +969,20 @@ function setReportLinks(runId, htmlUrl){
   const box = $("#report-links");
   if(!runId){ box.innerHTML = ""; return; }
   const md = `/api/runs/${encodeURIComponent(runId)}/report.md`;
+  const xlsx = `/api/runs/${encodeURIComponent(runId)}/report.xlsx`;
   box.innerHTML =
     `<button type="button" id="btn-copy-md">📋 Скопировать Markdown</button>` +
     `<a href="${md}" target="_blank" rel="noopener">📄 Открыть .md</a>` +
     `<a href="${md}" download="${esc(runId)}.md">⬇ Скачать .md</a>` +
     (htmlUrl ? `<a href="${htmlUrl}" target="_blank" rel="noopener">🌐 HTML в новой вкладке</a>` : "") +
+    `<a href="${xlsx}" id="lnk-xlsx" style="display:none">📊 Скачать .xlsx</a>` +
     `<span class="muted" id="md-status"></span>`;
   $("#btn-copy-md").addEventListener("click", () => copyReportMarkdown(md));
+  // Runs from before the xlsx feature have no workbook — probe instead of
+  // rendering a link that 404s in the operator's face.
+  fetch(xlsx, {method: "HEAD"}).then(r => {
+    if(r.ok) $("#lnk-xlsx").style.display = "";
+  }).catch(() => {});
 }
 function showReport(url, runId){
   const f = $("#report-frame");
