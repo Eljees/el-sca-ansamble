@@ -165,16 +165,73 @@ def _get_nested(data: Any, keys: list[str], default: Any = None) -> Any:
     return current
 
 
+# Directories under artifacts/ that are NOT evidence for the current run.
+# artifacts/ is shared across every scan the server has ever done, so a naive
+# walk put OTHER CASES' data into a customer-facing report: archived runs of
+# other tickets (artifacts/runs/CYBERSEC-11531-*/), every artifact ever
+# uploaded with its original filename (artifacts/uploads/), the full DB-update
+# history and the dashboard's own logs.  Observed on CYBERSEC-14277
+# (2026-08-27): the Evidence section of a report about agent-3.29.3.tar.gz
+# listed prometheus, PIX_Process_Studio, avandoc, ssdu and a dozen other
+# deliveries.  The findings were correct — only this listing was wrong.
+_NON_RUN_DIRS = frozenset(
+    {
+        "runs",  # archived previous runs (other cases)
+        "uploads",  # artifact catalog: other cases' delivery filenames
+        "logs",  # dashboard logs, not run evidence
+        "_sbom_probe",  # scratch from earlier SBOM-ingest probes
+        "mirror",  # internal mirror workspace
+    }
+)
+# One scan never spans this long (longest observed: ~16 min on 10 GB), so
+# anything older than the run's own output by this much is a leftover from an
+# earlier run — e.g. reports/apk/apk_analysis.txt still sitting there from a
+# previous APK scan while this run was a plain tarball.
+_RUN_WINDOW_SECONDS = 24 * 60 * 60
+
+
 def _collect_paths(root: Path) -> list[str]:
+    """Files produced by *this* run, for the report's Evidence section.
+
+    ``root`` (artifacts/) is shared state reused by every scan, so membership
+    is decided two ways: structurally (skip directories that belong to other
+    runs/cases outright) and temporally (skip files older than this run).
+    """
     if not root.exists():
         return []
+
+    # Anchor "now" on the run's own scanner output rather than wall-clock time:
+    # the report may be generated well after the scan on a resumed pipeline.
+    anchor = 0.0
+    for candidate in _required_report_paths(root).values():
+        try:
+            anchor = max(anchor, candidate.stat().st_mtime)
+        except OSError:
+            continue
+    cutoff = anchor - _RUN_WINDOW_SECONDS if anchor else 0.0
+
     paths = []
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
         relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in _NON_RUN_DIRS:
+            continue
         if "extracted" in relative.parts and path.name != "extraction_manifest.json":
             continue
+        # Rotated logs (run-scan.log.1 …) are previous runs by definition.
+        if path.suffix[1:].isdigit() and ".log." in path.name:
+            continue
+        # db_status/updates/ is the full update history; the current per-tool
+        # db_status/<tool>.json right above it IS this run's evidence.
+        if relative.parts[:2] == ("db_status", "updates"):
+            continue
+        if cutoff:
+            try:
+                if path.stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                pass
         paths.append(str(path))
     return paths
 
@@ -348,7 +405,18 @@ def build_report(
                 db_snapshot = _auto["db_snapshot"]
         except Exception:
             pass
-    provenance = sorted({*(root / "provenance").glob("*.json"), *root.rglob("provenance/*.json")})
+    # Same shared-artifacts trap as _collect_paths: a bare rglob dragged
+    # artifacts/runs/<other-case>/provenance/*.json into this report.
+    provenance = sorted(
+        {
+            *(root / "provenance").glob("*.json"),
+            *(
+                p
+                for p in root.rglob("provenance/*.json")
+                if p.relative_to(root).parts[0] not in _NON_RUN_DIRS
+            ),
+        }
+    )
 
     # Detect whether cve-bin-tool scan was cut short by the timeout wrapper.
     # When it times out, update_cve_bin_tool.sh writes timeout.flag alongside report.json.

@@ -10,6 +10,9 @@ See docs/audit/130-fixups-2026-06-01c.md §2.2 for context.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from resilient_updates.reporting import (
@@ -370,3 +373,94 @@ def test_markdown_table_with_enrichment_adds_epss_kev_columns():
     assert "KEV" in result
     assert "0.951" in result
     assert "yes" in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _collect_paths — the report's Evidence section
+#
+# Regression for CYBERSEC-14277 (2026-08-27): artifacts/ is shared state reused
+# by every scan the server ever ran, and _collect_paths walked all of it. A
+# report about agent-3.29.3.tar.gz listed prometheus, PIX_Process_Studio,
+# avandoc, ssdu and other customers' delivery filenames plus archived runs of
+# unrelated tickets. The findings themselves were correct — only this listing
+# leaked. Evidence must be limited to the current run's own output.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _touch(path, *, mtime=None):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}", encoding="utf-8")
+    if mtime is not None:
+        os.utime(path, (mtime, mtime))
+
+
+def test_collect_paths_excludes_other_cases_and_stale_leftovers(tmp_path):
+    import time
+
+    from resilient_updates.reporting import _collect_paths
+
+    root = tmp_path / "artifacts"
+    now = time.time()
+
+    # This run's own output.
+    for rel in (
+        "sbom/syft.json",
+        "reports/grype/report.json",
+        "reports/trivy/report.json",
+        "reports/cve-bin-tool/report.json",
+        "reports/final/index.html",
+        "summary.json",
+        "provenance/grype.json",
+        "db_status/grype.json",
+        "extracted/current/extraction_manifest.json",
+    ):
+        _touch(root / rel, mtime=now)
+
+    # Other cases / not this run — must never appear.
+    _touch(root / "runs/CYBERSEC-11531-20260707-132613/summary.json", mtime=now)
+    _touch(root / "runs/CYBERSEC-11531-20260707-132613/provenance/grype.json", mtime=now)
+    _touch(root / "uploads/artifact-20260709-143029-f6e9a5/PIX_Process_Studio_2-2.zip", mtime=now)
+    _touch(root / "logs/dashboard.log", mtime=now)
+    _touch(root / "_sbom_probe/CycloneDX-SBOM-RTK-DAS.json", mtime=now)
+    _touch(root / "db_status/updates/20260827-114432_all.log", mtime=now)
+    _touch(root / "run-scan.log.3", mtime=now)
+    # Extracted payload itself is not evidence (only its manifest is).
+    _touch(root / "extracted/current/depth0/some-file.json", mtime=now)
+    # Stale analyzer report from an earlier APK run, this run was a tarball.
+    _touch(root / "reports/apk/apk_analysis.txt", mtime=now - 9 * 24 * 3600)
+
+    collected = {str(Path(p).relative_to(root)).replace("\\", "/") for p in _collect_paths(root)}
+
+    assert "sbom/syft.json" in collected
+    assert "reports/final/index.html" in collected
+    assert "provenance/grype.json" in collected
+    assert "db_status/grype.json" in collected
+    assert "extracted/current/extraction_manifest.json" in collected
+
+    for leaked in (
+        "runs/CYBERSEC-11531-20260707-132613/summary.json",
+        "runs/CYBERSEC-11531-20260707-132613/provenance/grype.json",
+        "uploads/artifact-20260709-143029-f6e9a5/PIX_Process_Studio_2-2.zip",
+        "logs/dashboard.log",
+        "_sbom_probe/CycloneDX-SBOM-RTK-DAS.json",
+        "db_status/updates/20260827-114432_all.log",
+        "run-scan.log.3",
+        "extracted/current/depth0/some-file.json",
+        "reports/apk/apk_analysis.txt",
+    ):
+        assert leaked not in collected, f"{leaked} must not be listed as this run's evidence"
+
+
+def test_collect_paths_keeps_fresh_analyzer_report(tmp_path):
+    """The apk/win analyzer report IS evidence when it belongs to this run."""
+    import time
+
+    from resilient_updates.reporting import _collect_paths
+
+    root = tmp_path / "artifacts"
+    now = time.time()
+    _touch(root / "reports/grype/report.json", mtime=now)
+    _touch(root / "reports/apk/apk_analysis.txt", mtime=now)
+
+    collected = {str(Path(p).relative_to(root)).replace("\\", "/") for p in _collect_paths(root)}
+    assert "reports/apk/apk_analysis.txt" in collected
