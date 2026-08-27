@@ -653,14 +653,67 @@ try:
             })
             added += 1
 
+    # ── Distro-rename aliases ────────────────────────────────────────────
+    # Distros repackage upstream projects under their own names, and neither
+    # matcher recovers from that: cve-bin-tool's SBOM lookup matches the
+    # literal product name, and its openssl BINARY checker needs a multi-line
+    # string context this build doesn't carry (RHEL compat-openssl10, fips) —
+    # so an EOL OpenSSL 1.0.2o scanned as 0 findings (CYBERSEC-14171,
+    # 2026-08-27; DB verified fine: 39 CVEs for openssl 1.0.2o once asked
+    # with the right name).  For known renames, ADD a component under the
+    # upstream name — never replace, so the original stays in the SBOM/report.
+    # RPM versions are cleaned to the upstream version: "1:1.0.2o-4.el7" ->
+    # "1.0.2o" (strip epoch and distro release).
+    import re
+
+    _ALIASES = {
+        # distro package name (regex) -> upstream (vendor-ish) product name
+        r'^compat-openssl\d*$': 'openssl',
+        r'^openssl\d+$': 'openssl',       # openssl11, openssl3 (EL naming)
+        r'^compat-zlib$': 'zlib',
+        r'^openssl-libs$': 'openssl',
+    }
+
+    def _upstream_version(raw):
+        v = str(raw or '').strip()
+        v = re.sub(r'^\d+:', '', v)          # rpm epoch "1:"
+        v = re.sub(r'-[0-9][\w.]*$', '', v)  # distro release "-4.el7"
+        return v
+
+    aliased = 0
+    for comp in list(comps_filtered):
+        if not isinstance(comp, dict):
+            continue
+        name = str(comp.get('name') or '')
+        for pattern, upstream in _ALIASES.items():
+            if not re.match(pattern, name):
+                continue
+            uver = _upstream_version(comp.get('version'))
+            if not uver or _is_bad_version(uver):
+                continue
+            if any(
+                isinstance(c, dict) and c.get('name') == upstream and c.get('version') == uver
+                for c in comps_filtered
+            ):
+                continue
+            comps_filtered.append({
+                'type': 'library',
+                'name': upstream,
+                'version': uver,
+                'purl': 'pkg:generic/{}@{}'.format(upstream, uver),
+                'description': 'upstream alias of distro package {} (injected)'.format(name),
+            })
+            aliased += 1
+
     sbom['components'] = comps_filtered
     with open(patched, 'w') as fh:
         json.dump(sbom, fh)
 
     print(
         '[cve-bin-tool] SBOM patched: dropped {} unknown-version components, '
-        'added {} golang:go entries ({} unique Go versions, {} components total)'.format(
-            dropped, added, len(versions), len(comps_filtered)
+        'added {} golang:go entries ({} unique Go versions), '
+        '{} upstream aliases, {} components total'.format(
+            dropped, added, len(versions), aliased, len(comps_filtered)
         )
     )
 except Exception as exc:  # noqa: BLE001

@@ -363,6 +363,7 @@ def main() -> int:
 
     entries: list = []
     failures: list[str] = []
+    truncated: list[str] = []
     t0 = time.time()
     n_feeds = len(names)
     tmpd = tempfile.mkdtemp(prefix="nvdfeed-")
@@ -400,6 +401,22 @@ def main() -> int:
                     os.remove(dest)
             vulns = data.get("vulnerabilities") or []
             entries.extend(vulns)
+            # Truncation guard.  NVD's own per-year feed generator has been
+            # observed serving a VALID gzip whose JSON declares the real
+            # totalResults but contains only a handful of entries (2026-08-27:
+            # nvdcve-2.0-2019 declared 17623, held 2).  Every check downstream
+            # passed — gzip integrity, JSON parse, min-cves floor, the DB audit
+            # (min_entries=1) — and six years of the DB went quietly missing,
+            # which surfaced as "0 findings" on an OpenSSL 1.0.2o delivery.
+            # A feed that ships less than 90% of what it declares is broken.
+            declared = data.get("totalResults")
+            if isinstance(declared, int) and declared > 0 and len(vulns) < declared * 0.9:
+                log(
+                    f"[feed] WARN {name}: TRUNCATED — declares {declared} CVEs, "
+                    f"contains {len(vulns)} (NVD feed generator bug?); "
+                    f"use a mirror for this year (see docs) — feed counted as FAILED"
+                )
+                truncated.append(name)
             log(f"[feed]   {name}: {len(vulns):>6} CVEs  (total {len(entries)})")
             emit_progress(idx + 1)  # step at the end of each feed
     finally:
@@ -409,6 +426,15 @@ def main() -> int:
         log(
             f"[feed] ERROR: only {len(entries)} CVEs downloaded "
             f"(< --min-cves {args.min_cves}); aborting — likely proxy/network."
+        )
+        return 2
+    if truncated:
+        log(
+            f"[feed] ERROR: {len(truncated)} truncated feed(s): {', '.join(truncated)} — "
+            "the import would silently lose those years; aborting. "
+            "Deliver full feeds via --feed-base file:///workspace/artifacts/nvd-feeds "
+            "(fetch on a workstation: scripts/fetch_nvd_feeds.ps1; broken years are "
+            "available from the fkie-cad/nvd-json-data-feeds mirror)."
         )
         return 2
 

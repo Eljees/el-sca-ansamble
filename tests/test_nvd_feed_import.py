@@ -829,3 +829,104 @@ def test_feed_no_fallback_without_egress(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "no egress to fall back to" in out
     assert "falling back to network" not in out
+
+
+def test_main_aborts_on_truncated_feed(tmp_path, monkeypatch, capsys):
+    """A feed that declares far more CVEs than it contains must FAIL the import.
+
+    Regression for 2026-08-27: NVD's own per-year 2.0 feeds were served as
+    VALID gzips whose JSON declared the true totalResults (e.g. 17623 for
+    2019) but contained a handful of entries.  Every existing check passed —
+    gzip integrity, JSON parse, the global --min-cves floor (other years
+    supplied enough volume), the post-import DB audit (min_entries=1) — and
+    six years of the CVE DB went quietly missing.  The symptom was "0
+    findings" on an OpenSSL 1.0.2o delivery (CYBERSEC-14171).
+    """
+    feed_dir = tmp_path / "feeds"
+    feed_dir.mkdir()
+
+    entries = [
+        {
+            "cve": {
+                "id": f"CVE-2024-{i:04d}",
+                "descriptions": [{"value": f"Test vuln {i}"}],
+                "published": "2024-01-01T00:00:00.000",
+            }
+        }
+        for i in range(3)
+    ]
+    feed_data = {"totalResults": 17623, "vulnerabilities": entries}  # declares ≫ contains
+    with gzip.open(str(feed_dir / "nvdcve-2.0-2024.json.gz"), "wb") as f:
+        f.write(json.dumps(feed_data).encode())
+
+    db_root = tmp_path / "dbcache"
+    db_root.mkdir()
+    _patch_cve_bin_tool(monkeypatch, db_root)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "nvd_feed_import",
+            "--db-root",
+            str(db_root),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
+            "--no-modified",
+            "--feed-base",
+            str(feed_dir).replace("\\", "/"),
+            "--min-cves",
+            "1",
+        ],
+    )
+    from resilient_updates.nvd_feed_import import main
+
+    assert main() == 2
+    out = capsys.readouterr().out
+    assert "TRUNCATED" in out
+    assert "17623" in out
+
+
+def test_main_accepts_feed_matching_declared_total(tmp_path, monkeypatch):
+    """totalResults ≈ actual entries must keep working (upstream normal case)."""
+    feed_dir = tmp_path / "feeds"
+    feed_dir.mkdir()
+    entries = [
+        {
+            "cve": {
+                "id": f"CVE-2024-{i:04d}",
+                "descriptions": [{"value": f"Test vuln {i}"}],
+                "published": "2024-01-01T00:00:00.000",
+            }
+        }
+        for i in range(5)
+    ]
+    feed_data = {"totalResults": 5, "vulnerabilities": entries}
+    with gzip.open(str(feed_dir / "nvdcve-2.0-2024.json.gz"), "wb") as f:
+        f.write(json.dumps(feed_data).encode())
+
+    db_root = tmp_path / "dbcache"
+    db_root.mkdir()
+    _patch_cve_bin_tool(monkeypatch, db_root)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "nvd_feed_import",
+            "--db-root",
+            str(db_root),
+            "--start-year",
+            "2024",
+            "--end-year",
+            "2024",
+            "--no-modified",
+            "--feed-base",
+            str(feed_dir).replace("\\", "/"),
+            "--min-cves",
+            "1",
+        ],
+    )
+    from resilient_updates.nvd_feed_import import main
+
+    assert main() == 0
