@@ -86,7 +86,11 @@ def test_extract_artifacts_blocks_zip_slip_paths(tmp_path: Path):
     assert not (tmp_path / "evil.txt").exists()
 
 
-def test_extract_artifacts_marks_empty_file_input_as_failure(tmp_path: Path):
+def test_extract_artifacts_marks_non_archive_file_as_passthrough(tmp_path: Path):
+    # 2026-07-17: a lone non-archive input (e.g. a Windows .exe installer, a
+    # bare binary, a plain file) is a benign passthrough, not a failure. The
+    # downstream scanners read the raw /scan-target directly; this stage has
+    # nothing to unpack and must NOT turn the Extract stage red (CYBERSEC-13388).
     plain_file = tmp_path / "plain.txt"
     plain_file.write_text("not an archive", encoding="utf-8")
 
@@ -94,9 +98,10 @@ def test_extract_artifacts_marks_empty_file_input_as_failure(tmp_path: Path):
     manifest = extract_artifacts(plain_file, output)
 
     assert manifest["extracted_count"] == 0
-    assert manifest["status"] == "warn"
-    assert manifest["failures"]
-    assert "no supported archive entries" in manifest["failures"][0]["error"]
+    assert manifest["status"] == "pass"
+    assert not manifest["failures"]
+    assert manifest["input_was_archive"] is False
+    assert manifest["passthrough_count"] == 1
 
 
 def test_extract_tar_allows_root_dot_directory_entry(tmp_path: Path):

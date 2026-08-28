@@ -79,6 +79,63 @@ SCAN_STAGES: list[tuple[str, str, list[str]]] = [
     ("report", "Report", ["report-collector"]),
 ]
 
+# Windows-installer pipeline (2026-07-17). A lone .exe/.msi cannot be unpacked
+# by the generic archive extractor (NSIS/Inno/MSI are not tar/zip), so syft over
+# the raw file yields 0 components. Mirror the CLI run-scan.sh "win" branch: run
+# win-analyzer (7z/innoextract/msiextract + pefile) to build a PE SBOM, then feed
+# grype from that SBOM and point cve-bin-tool at the extracted installer tree.
+# The generic "sbom · Syft" stage is replaced by "Win-analyzer".
+SCAN_STAGES_WIN: list[tuple[str, str, list[str]]] = [
+    ("extract", "Extract", ["artifact-extractor"]),
+    ("win-analyzer", "Win-analyzer · SBOM", ["win-analyzer"]),
+    ("grype", "Grype", ["grype-static", "grype-db-importer", "grype-scanner"]),
+    ("trivy", "Trivy", ["trivy-scanner"]),
+    ("cve-bin-tool", "cve-bin-tool", ["cve-bin-tool-scanner"]),
+    ("report", "Report", ["report-collector"]),
+]
+
+_WIN_INSTALLER_SUFFIXES = (".exe", ".msi")
+
+
+def is_windows_installer_target(target_host: str) -> bool:
+    """True when the scan target is a Windows installer (.exe/.msi).
+
+    GUI uploads bind a single chosen file, so the ``is_file()`` branch is the
+    common path. A directory counts as a win target when it holds at least one
+    installer and no generic archive the normal extractor would handle instead.
+    """
+    try:
+        path = Path(target_host)
+    except TypeError:
+        return False
+    if path.is_file():
+        return path.suffix.lower() in _WIN_INSTALLER_SUFFIXES
+    if path.is_dir():
+        has_installer = False
+        for child in path.rglob("*"):
+            if not child.is_file():
+                continue
+            suffix = child.suffix.lower()
+            if suffix in _WIN_INSTALLER_SUFFIXES:
+                has_installer = True
+            elif suffix in {
+                ".zip",
+                ".gz",
+                ".tgz",
+                ".tar",
+                ".bz2",
+                ".xz",
+                ".zst",
+                ".rpm",
+                ".deb",
+                ".7z",
+                ".rar",
+            }:
+                return False  # a real archive is present — let the generic path handle it
+        return has_installer
+    return False
+
+
 UPDATE_STAGES: list[tuple[str, str, list[str]]] = [
     ("trivy", "Trivy DB", ["trivy-updater"]),
     ("grype", "Grype DB", ["grype-updater", "grype-db-importer"]),
@@ -529,9 +586,14 @@ class JobRegistry:
             mode=mode,
             timestamp=time.time(),
         )
+        # A Windows installer needs the win-analyzer pipeline (see run-scan.sh):
+        # the GUI showed 0 syft components for a lone .exe because the generic
+        # stages never unpacked it. Pick the stage list up-front so the GUI
+        # renders "Win-analyzer" instead of "SBOM · Syft".
+        scan_stages = SCAN_STAGES_WIN if is_windows_installer_target(target_host) else SCAN_STAGES
         job = Job(
             "scan",
-            SCAN_STAGES,
+            scan_stages,
             target=target_host,
             artifacts_dir=self.artifacts_dir,
             run_dir=run_dir,
@@ -905,6 +967,23 @@ class JobRegistry:
         """
         compose = self.compose
         extracted_host = str((self.repo_root / "artifacts" / "extracted" / "current").resolve())
+        # Windows installers (.exe/.msi) run the win-analyzer branch: the generic
+        # extractor cannot unpack NSIS/Inno/MSI, so syft over the raw file finds
+        # nothing. Mirrors the run-scan.sh "win" branch.
+        win_mode = is_windows_installer_target(target_host)
+        # Android packages run the apk-analyzer branch (mirrors run-scan.sh
+        # FORMAT==apk): a standalone .apk is analysed directly (the analyzer
+        # unpacks it itself), a .zip that CONTAINS .apk files is extracted
+        # generically first and the analyzer then walks the extracted tree.
+        _t_lower = str(target_host).lower()
+        apk_standalone = _t_lower.endswith(".apk")
+        # A wrapper archive (zip-in-zip-in-apk and deeper: real deliveries nest,
+        # e.g. CYBERSEC-13942 was zip → zip → .apk) is recognised AFTER generic
+        # extraction by the presence of *.apk anywhere in the extracted tree —
+        # peeking into archive listings misses anything below the first level.
+        apk_mode = apk_standalone
+        if apk_standalone:
+            job.feed_line("# APK-режим: standalone .apk — анализатор распакует сам")
         self._copy_input_to_run(job, target_host)
         self._checkpoint(job, "start", "running")
 
@@ -928,6 +1007,23 @@ class JobRegistry:
         # itself, and a host-owned dir there makes it exit non-zero.
         for _sub in ("reports/grype", "reports/trivy", "reports/cve-bin-tool", "reports/final", "sbom"):
             (self.repo_root / "artifacts" / _sub).mkdir(parents=True, exist_ok=True)
+        # Purge per-run outputs from the PREVIOUS run (fresh runs only).  The
+        # specialized branches (win/apk) skip Syft and some scanners, so a stale
+        # cyclonedx.json would silently become the scan-input base and a stale
+        # trivy report would either surface as a false "stale report" failure or
+        # — worse — as the previous artifact's findings.
+        if not skip_done:
+            for _rel in (
+                "sbom/syft.json",
+                "sbom/cyclonedx.json",
+                "sbom/spdx.json",
+                "sbom/scan-input.cdx.json",
+                "reports/grype/report.json",
+                "reports/trivy/report.json",
+                "reports/cve-bin-tool/report.json",
+            ):
+                with contextlib.suppress(OSError):
+                    (self.repo_root / "artifacts" / _rel).unlink()
         # Clear stale extraction output before each run.  A leftover
         # extracted/current (e.g. created by an earlier host process, or owned by
         # a different container uid) makes the in-container extractor fail with
@@ -946,6 +1042,12 @@ class JobRegistry:
         job.begin_stage("extract")
         if resume_extract:
             job.feed_line("extract: пропущен — распакованное дерево уже на месте (чекпоинт)")
+            pipeline_state.stage_skip(self.artifacts_dir, "extract")
+            job.end_stage("extract", True)
+        elif apk_standalone:
+            # The apk-analyzer unpacks the .apk itself (mirrors run-scan.sh:
+            # "Extract disabled for standalone APK").
+            job.feed_line("extract: пропущен — standalone APK, распаковка внутри apk-analyzer")
             pipeline_state.stage_skip(self.artifacts_dir, "extract")
             job.end_stage("extract", True)
         else:
@@ -971,6 +1073,85 @@ class JobRegistry:
             pipeline_state.stage_end(self.artifacts_dir, "extract", ok=extract_ok, rc=rc)
             self._checkpoint(job, "extract", "done" if extract_ok else "error")
 
+        # Stage 1.5 — win-analyzer (Windows installers only). Runs the
+        # win-analyzer container against the RAW installer (/scan-target) to
+        # unpack NSIS/Inno/MSI, write a PE-derived SBOM to artifacts/sbom/syft.json
+        # and the extracted tree to artifacts/extracted/win-installer/. Replaces
+        # the generic "sbom · Syft" stage. Mirrors run-scan.sh FORMAT==win.
+        if win_mode:
+            job.begin_stage("win-analyzer")
+            if "win-analyzer" in skip_done:
+                job.feed_line("win-analyzer: пропущен — уже выполнен (чекпоинт, resume)")
+                pipeline_state.stage_skip(self.artifacts_dir, "win-analyzer")
+                job.end_stage("win-analyzer", True)
+            else:
+                pipeline_state.stage_start(self.artifacts_dir, "win-analyzer")
+                wa_env = dict(os.environ)
+                wa_env["SCAN_TARGET_HOST"] = target_host  # the raw installer on /scan-target
+                rc = self._run_stream(
+                    job,
+                    [*compose, "--profile", "win", "run", "--rm", "-u", "0", "win-analyzer"],
+                    wa_env,
+                )
+                # win-analyzer writes the SBOM even when it finds 0 PE binaries
+                # (a minimal SBOM); treat a present syft.json as success so a
+                # zero-component installer does not fail the whole scan.
+                sbom_written = (self.repo_root / "artifacts" / "sbom" / "syft.json").exists()
+                wa_ok = rc == 0 or sbom_written
+                if wa_ok and rc != 0:
+                    job.feed_line("win-analyzer: предупреждения, но SBOM собран — продолжаем")
+                job.end_stage("win-analyzer", wa_ok)
+                pipeline_state.stage_end(self.artifacts_dir, "win-analyzer", ok=wa_ok, rc=rc)
+                self._checkpoint(job, "win-analyzer", "done" if wa_ok else "error")
+
+        # Post-extract APK detection: any *.apk in the unpacked tree switches
+        # the run into APK mode regardless of how deeply it was nested.
+        if not apk_mode and not win_mode:
+            try:
+                apk_hits = [p for p in _cur.rglob("*.apk") if p.is_file()][:5]
+            except OSError:
+                apk_hits = []
+            if apk_hits:
+                apk_mode = True
+                job.feed_line(
+                    f"# APK-режим: в распакованном дереве найдено .apk ({len(apk_hits)}+) — "
+                    "подключаю apk-analyzer"
+                )
+                for p in apk_hits[:3]:
+                    with contextlib.suppress(ValueError):
+                        job.feed_line(f"  · {p.relative_to(_cur)}")
+
+        # Stage 1.6 — apk-analyzer (Android packages only). Parses the manifest
+        # and DEX via androguard, extracts native .so libs to
+        # artifacts/extracted/apk-native/ and writes a synthetic Syft SBOM to
+        # artifacts/sbom/syft.json. Replaces the generic "sbom · Syft" stage.
+        # Mirrors run-scan.sh FORMAT==apk.
+        if apk_mode:
+            job.begin_stage("apk-analyzer")
+            if "apk-analyzer" in skip_done:
+                job.feed_line("apk-analyzer: пропущен — уже выполнен (чекпоинт, resume)")
+                pipeline_state.stage_skip(self.artifacts_dir, "apk-analyzer")
+                job.end_stage("apk-analyzer", True)
+            else:
+                pipeline_state.stage_start(self.artifacts_dir, "apk-analyzer")
+                aa_env = dict(os.environ)
+                # standalone: the raw .apk on /scan-target; wrapper: the tree
+                # the generic extractor just unpacked (analyzer rglobs *.apk).
+                aa_env["SCAN_TARGET_HOST"] = target_host if apk_standalone else extracted_host
+                aa_env["EXTRACT_INPUT_HOST"] = aa_env["SCAN_TARGET_HOST"]
+                rc = self._run_stream(
+                    job,
+                    [*compose, "--profile", "apk", "run", "--rm", "-u", "0", "apk-analyzer"],
+                    aa_env,
+                )
+                _sbom_written = (self.repo_root / "artifacts" / "sbom" / "syft.json").exists()
+                aa_ok = rc == 0 or _sbom_written
+                if aa_ok and rc != 0:
+                    job.feed_line("apk-analyzer: предупреждения, но SBOM собран — продолжаем")
+                job.end_stage("apk-analyzer", aa_ok)
+                pipeline_state.stage_end(self.artifacts_dir, "apk-analyzer", ok=aa_ok, rc=rc)
+                self._checkpoint(job, "apk-analyzer", "done" if aa_ok else "error")
+
         # Re-point every scanner at the extracted directory.
         sc_env = dict(os.environ)
         _load_dotenv(sc_env, self.repo_root / ".env")
@@ -981,6 +1162,46 @@ class JobRegistry:
         sc_env["CVE_BIN_TOOL_TARGET"] = "/scan-target"
         # Trivy defaults to scanning "alpine:latest"; point it at the artifact.
         sc_env["TRIVY_TARGET"] = "/scan-target"
+        if win_mode:
+            # win-analyzer already produced the SBOM; grype consumes it instead
+            # of re-cataloguing the raw installer (which yields 0 components).
+            # cve-bin-tool scans the extracted installer tree win-analyzer wrote.
+            sc_env["SYFT_FROM"] = "sbom"
+            sc_env["SYFT_TARGET"] = "/workspace/artifacts/sbom/syft.json"
+            sc_env["CVE_BIN_TOOL_TARGET"] = "/workspace/artifacts/extracted/win-installer"
+        if apk_mode:
+            # apk-analyzer wrote the synthetic SBOM (manifest + DEX components);
+            # grype matches it via scan-input.cdx.json (syft.json fallback base).
+            # cve-bin-tool BINARY-scans the native .so libs the analyzer pulled
+            # out — auto-SBOM is disabled for it here on purpose: the SBOM leg
+            # is grype's job, the .so leg would be silently skipped otherwise.
+            sc_env["SYFT_FROM"] = "sbom"
+            sc_env["SYFT_TARGET"] = "/workspace/artifacts/sbom/syft.json"
+            sc_env["CVE_BIN_TOOL_TARGET"] = "/workspace/artifacts/extracted/apk-native"
+            sc_env["CVE_BIN_TOOL_AUTO_SBOM"] = "0"
+            if apk_standalone:
+                # extracted/current was never created; keep the bind guard on a
+                # path that exists (the .apk itself — unused by these scanners).
+                sc_env["SCAN_TARGET_HOST"] = str(target_host)
+                sc_env["EXTRACT_INPUT_HOST"] = str(target_host)
+        # Report identity.  The report generators render SCAN_TARGET_DISPLAY as
+        # the object "Target" / header and CASE_ID as the report heading.  The
+        # dotenv load above may have injected the .env placeholder
+        # (/absolute/path/to/artifact-or-directory); override it with the
+        # uploaded artifact's own filename so every report says which object it
+        # is for.  CASE_ID likewise carries the CYBERSEC-id instead of the
+        # CYBERSEC-UNKNOWN default.
+        _display_name = os.path.basename(str(target_host)) or "UNKNOWN"
+        sc_env["SCAN_TARGET_DISPLAY"] = _display_name
+        if job.case_id:
+            sc_env["CASE_ID"] = job.case_id
+
+        # Volumes must be uid-1001 for the appuser scanner (cve-bin-tool) just
+        # like for the updaters: a root-run DB activation leaves cve.db
+        # root-owned and the scanner dies on open.  Updates already normalise;
+        # scans got the same guard after exactly that failure mode shipped a
+        # `[]` report while the stage errored (2026-07-26).  Best-effort.
+        self._normalise_volumes(job, sc_env)
 
         # Which analysers to run.  Default = all; EL_SCA_SKIP_CVEBT drops
         # cve-bin-tool.  Grype consumes the Syft SBOM, so syft is forced on with it.
@@ -989,17 +1210,36 @@ class JobRegistry:
             enabled.discard("cve-bin-tool")
         if "grype" in enabled:
             enabled.add("syft")
+        if apk_mode:
+            # Mirrors run-scan.sh FORMAT==apk: trivy has no APK story, and
+            # cve-bin-tool only earns its keep when native libs were extracted.
+            enabled.discard("trivy")
+            _native = self.repo_root / "artifacts" / "extracted" / "apk-native"
+            try:
+                _has_so = any(_native.rglob("*.so"))
+            except OSError:
+                _has_so = False
+            if not _has_so:
+                enabled.discard("cve-bin-tool")
+                job.feed_line("# apk: нативных .so не найдено — cve-bin-tool пропускается")
         stage_tool = {"sbom": "syft", "grype": "grype", "trivy": "trivy", "cve-bin-tool": "cve-bin-tool"}
 
-        # (stage key, compose service, exit codes treated as success)
+        # (stage key, compose service, exit codes treated as success).
+        # In win_mode the "sbom" stage is omitted — win-analyzer (stage 1.5)
+        # already produced artifacts/sbom/syft.json, and re-running syft over the
+        # extracted tree would overwrite that richer PE SBOM.
         stages = [
-            ("sbom", "syft-sbom", {0}),
             ("grype", "grype-scanner", {0}),
             ("trivy", "trivy-scanner", {0}),
             # cve-bin-tool exits 1 when it FINDS CVEs — success, not failure.
             ("cve-bin-tool", "cve-bin-tool-scanner", {0, 1}),
             ("report", "report-collector", {0}),
         ]
+        if not win_mode and not apk_mode:
+            # In apk_mode the "sbom" stage is likewise omitted: apk-analyzer
+            # (stage 1.6) already wrote the synthetic SBOM, and running Syft
+            # would overwrite it with a poorer catalogue of the same tree.
+            stages.insert(0, ("sbom", "syft-sbom", {0}))
         for key, service, ok_codes in stages:
             job.begin_stage(key)
             tool = stage_tool.get(key)
@@ -1027,6 +1267,10 @@ class JobRegistry:
             job.end_stage(key, rc in ok_codes)
             pipeline_state.stage_end(self.artifacts_dir, key, ok=rc in ok_codes, rc=rc)
             self._checkpoint(job, key, "done" if rc in ok_codes else "error")
+            # Between SBOM generation and matching: fold any SBOM that arrived
+            # *inside* the delivery into the document the matchers consume.
+            if key == "sbom":
+                self._ingest_provided_sboms(job)
 
         self._checkpoint(job, "final", "done")
         self._publish_results_if_enabled(job)
@@ -1034,6 +1278,53 @@ class JobRegistry:
         self._run_stream(job, [*compose, "--profile", "scan", "down", "--remove-orphans"], sc_env)
         job.finalize()
         pipeline_state.finish_run(self.artifacts_dir, status=job.status)
+
+    # Inputs at or above this size are hardlinked into the run dir instead of
+    # copied: a 3.5 GB upload must not double its disk cost on every run.
+    _INPUT_LINK_THRESHOLD = 512 * 1024 * 1024  # 512 MiB
+
+    def _ingest_provided_sboms(self, job: Job) -> None:
+        """Merge SBOMs shipped inside the delivery into the scan input.
+
+        A delivery is sometimes the SBOM itself rather than the software
+        (CYBERSEC-13860: two CycloneDX files, 713 Maven components, 231 known
+        CVEs).  Syft can only catalogue the *file* holding such a document, so
+        without this step the matchers see an empty component list and the
+        report truthfully says "nothing found" about the wrong thing.
+
+        Always writes ``artifacts/sbom/scan-input.cdx.json`` so the scanner
+        services can point at one stable path; when no SBOM was delivered the
+        file is simply Syft's own output.  Best-effort: a failure here leaves
+        the normal Syft SBOM in place and is reported, never fatal.
+        """
+        from .sbom_ingest import build_scan_input
+
+        try:
+            result = build_scan_input(
+                self.repo_root / "artifacts" / "extracted" / "current",
+                base_cyclonedx=self.repo_root / "artifacts" / "sbom" / "cyclonedx.json",
+                output=self.repo_root / "artifacts" / "sbom" / "scan-input.cdx.json",
+                repo_root=self.repo_root,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            job.feed_line(f"WARN: sbom-ingest failed: {exc!r} — используется только SBOM от Syft")
+            return
+
+        provided = result.get("provided_sboms") or []
+        if provided:
+            job.feed_line(
+                f"sbom-ingest: найдено готовых SBOM в поставке — {len(provided)}; "
+                f"+{result['components_from_provided']} компонентов "
+                f"(итого {result['components_total']})"
+            )
+            for item in provided[:10]:
+                rel = str(item["path"]).replace(str(self.repo_root), "").lstrip("/\\")
+                job.feed_line(f"  · {item['format']}: {rel} ({item['components']} компонентов)")
+        else:
+            job.feed_line(
+                f"sbom-ingest: готовых SBOM в поставке нет — "
+                f"матчинг по SBOM от Syft ({result['components_total']} компонентов)"
+            )
 
     def _copy_input_to_run(self, job: Job, target_host: str) -> None:
         if not job.run_dir:
@@ -1044,6 +1335,17 @@ class JobRegistry:
         try:
             dest = job.run_dir / "input" / target.name
             dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                return  # resume: snapshot already in place
+            size = target.stat().st_size
+            if size >= self._INPUT_LINK_THRESHOLD:
+                try:
+                    os.link(target, dest)  # same-fs hardlink: zero extra bytes
+                    job.feed_line(f"input snapshot: hardlink ({size >> 20} MiB) — большой файл не дублируем")
+                    return
+                except OSError:
+                    # cross-device link / fs without hardlinks — fall back to copy
+                    job.feed_line("input snapshot: hardlink недоступен, копирую")
             shutil.copy2(target, dest)
         except Exception as exc:  # pragma: no cover - defensive
             job.feed_line(f"WARN: input snapshot failed: {exc!r}")

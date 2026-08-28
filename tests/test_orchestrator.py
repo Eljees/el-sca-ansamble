@@ -148,6 +148,10 @@ def test_run_scan_extracts_then_scans_extracted_dir(tmp_path):
 
     assert [c[0] for c in calls] == [
         "artifact-extractor",
+        # volume-init runs before the scanners: a root-owned cve.db (left by a
+        # root-run DB activation) must be re-chowned to 1001 or the appuser
+        # cve-bin-tool-scanner dies on open (2026-07-26 incident).
+        "volume-init",
         "syft-sbom",
         "grype-scanner",
         "trivy-scanner",
@@ -156,8 +160,8 @@ def test_run_scan_extracts_then_scans_extracted_dir(tmp_path):
         "down",
     ]
     assert calls[0][1].endswith("app.tar.gz")  # extract: raw upload
-    assert calls[1][1].endswith(os.path.join("artifacts", "extracted", "current"))  # scanners: extracted dir
-    assert calls[1][2] == "dir"
+    assert calls[2][1].endswith(os.path.join("artifacts", "extracted", "current"))  # scanners: extracted dir
+    assert calls[2][2] == "dir"
     snap = job.snapshot()
     assert snap["status"] == "done"  # rc=1 from cve-bin-tool is OK
     assert all(s["status"] == "done" for s in snap["stages"])
@@ -869,3 +873,32 @@ def test_prune_update_logs_keeps_newest(tmp_path, monkeypatch):
 
     assert not old.exists()
     assert new.exists()
+
+
+def test_copy_input_hardlinks_big_files(tmp_path):
+    """Inputs >= _INPUT_LINK_THRESHOLD are hardlinked into the run dir (same
+    inode, zero extra bytes) instead of copied — a 3.5 GB artifact must not
+    double its disk cost on every run."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"x" * 4096)
+    job = Job("scan", SCAN_STAGES, target=str(big))
+    job.run_dir = tmp_path / "run-big"
+    with patch.object(JobRegistry, "_INPUT_LINK_THRESHOLD", 1024):
+        reg._copy_input_to_run(job, str(big))
+    dest = job.run_dir / "input" / "big.bin"
+    assert dest.is_file()
+    assert os.stat(dest).st_ino == os.stat(big).st_ino  # hardlink, not a copy
+
+
+def test_copy_input_still_copies_small_files(tmp_path):
+    """Small inputs keep the plain-copy behaviour (independent inode)."""
+    reg = JobRegistry(tmp_path, compose=["docker", "compose"])
+    small = tmp_path / "small.bin"
+    small.write_bytes(b"y" * 16)
+    job = Job("scan", SCAN_STAGES, target=str(small))
+    job.run_dir = tmp_path / "run-small"
+    reg._copy_input_to_run(job, str(small))
+    dest = job.run_dir / "input" / "small.bin"
+    assert dest.is_file()
+    assert os.stat(dest).st_ino != os.stat(small).st_ino  # real copy

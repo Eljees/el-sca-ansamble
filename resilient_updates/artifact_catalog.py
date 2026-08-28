@@ -46,10 +46,50 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True), encoding="utf-8")
 
 
+# Cyrillic -> Latin so a real-world delivery keeps a readable stored name.
+# Without this "Сборки на проверку ИБ.zip" collapsed to the single word "zip":
+# every non-ASCII character became "-", and .strip(".-") then ate the dashes
+# together with the dot, taking the extension with them.  The artifact card,
+# the run directory and the report's "Target" all inherited that "zip".
+# fmt: off
+# A lookup table reads as a table; one pair per line would be 33 lines of noise.
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+# fmt: on
+
+
+def _transliterate(text: str) -> str:
+    out: list[str] = []
+    for ch in text:
+        low = ch.lower()
+        if low in _TRANSLIT:
+            rep = _TRANSLIT[low]
+            out.append(rep.upper() if ch.isupper() and rep else rep)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _safe_filename(name: str) -> str:
+    """ASCII-safe on-disk name that still resembles what the customer sent.
+
+    The extension is preserved separately: it drives archive-type detection
+    and, when the stem is entirely non-ASCII, it used to be the only thing
+    left standing — which is how a 1.3 GB delivery ended up stored as "zip".
+    """
     base = Path(name or "artifact.bin").name
-    cleaned = _SAFE_NAME_RE.sub("-", base).strip(".-")
-    return cleaned or "artifact.bin"
+    suffix = Path(base).suffix
+    stem = base[: -len(suffix)] if suffix else base
+    stem = _SAFE_NAME_RE.sub("-", _transliterate(stem)).strip(".-")
+    suffix = _SAFE_NAME_RE.sub("", _transliterate(suffix))
+    if not stem:
+        stem = "artifact"
+    return f"{stem}{suffix}" if suffix else stem
 
 
 def normalize_case_id(value: str | None) -> str:
@@ -290,7 +330,13 @@ class ArtifactCatalog:
         *,
         include_deleted: bool,
     ) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
+        # 2026-07-17: dedup runs of the SAME artifact into ONE card. Previously
+        # every _SCA_reports/<target>-<ts>/ became its own "legacy-<run_id>"
+        # card, so re-scanning one .exe N times cloned N identical entries in the
+        # GUI. Group by the input's sha256 (falls back to the filename), collect
+        # all runs under a single stable artifact id, and let list_artifacts()
+        # compute run_count / latest_run_id from the grouped runs.
+        groups: dict[str, dict[str, Any]] = {}
         for run in legacy_runs:
             if run.get("id") == "current":
                 continue
@@ -298,7 +344,6 @@ class ArtifactCatalog:
             run_path = Path(str(run.get("path") or ""))
             if not run_id or not run_path.is_dir():
                 continue
-            artifact_id = f"legacy-{run_id}"
             manifest = _read_json(run_path / "MANIFEST.json") or {}
             summary = _read_json(run_path / "summary.json") or {}
             checkpoint = _read_json(run_path / "checkpoint.json") or {}
@@ -311,6 +356,11 @@ class ArtifactCatalog:
             stored_path = (
                 str(input_file.resolve()) if input_file else (target_host or str(run_path.resolve()))
             )
+            sha256 = str(
+                (target.get("sha256") if isinstance(target, dict) else "")
+                or summary.get("input_sha256")
+                or ""
+            )
             default_case_id = normalize_case_id(
                 str(manifest.get("case_id") or detect_case_id(filename, target_host, run_id))
             )
@@ -319,26 +369,47 @@ class ArtifactCatalog:
                 or str(manifest.get("finished_at") or "")
                 or str(manifest.get("started_at") or "")
             )
-            override = self._legacy_override(artifact_id) or {}
-            item = {
-                "id": artifact_id,
-                "kind": "legacy-run",
-                "original_filename": filename,
-                "stored_filename": filename,
-                "stored_path": stored_path,
-                "display_name": (str(override.get("display_name") or Path(filename).stem or run_id)).strip(),
-                "case_id": normalize_case_id(str(override.get("case_id") or default_case_id)),
-                "sha1": "",
-                "sha256": str(
-                    (target.get("sha256") if isinstance(target, dict) else "")
-                    or summary.get("input_sha256")
-                    or ""
-                ),
-                "size": input_file.stat().st_size if input_file and input_file.exists() else 0,
-                "uploaded_at_utc": uploaded_at,
-                "deleted_at": str(override.get("deleted_at") or ""),
-                "runs": [{"id": run_id, "path": str(run_path.resolve()), "added_at_utc": uploaded_at}],
-            }
+            # Stable dedup key: identical file (sha256) => one card. Without a
+            # hash, group by filename so repeated scans of the same drop still
+            # collapse. Include case_id so genuinely different cases stay apart.
+            dedup_seed = (sha256 or filename.lower()) + "|" + (default_case_id or "")
+            artifact_id = "legacy-" + (_SAFE_NAME_RE.sub("-", dedup_seed).strip(".-") or run_id)
+            run_entry = {"id": run_id, "path": str(run_path.resolve()), "added_at_utc": uploaded_at}
+            existing = groups.get(artifact_id)
+            if existing is None:
+                override = self._legacy_override(artifact_id) or {}
+                groups[artifact_id] = {
+                    "id": artifact_id,
+                    "kind": "legacy-run",
+                    "original_filename": filename,
+                    "stored_filename": filename,
+                    "stored_path": stored_path,
+                    "display_name": (
+                        str(override.get("display_name") or Path(filename).stem or run_id)
+                    ).strip(),
+                    "case_id": normalize_case_id(str(override.get("case_id") or default_case_id)),
+                    "sha1": "",
+                    "sha256": sha256,
+                    "size": input_file.stat().st_size if input_file and input_file.exists() else 0,
+                    "uploaded_at_utc": uploaded_at,
+                    "deleted_at": str(override.get("deleted_at") or ""),
+                    "runs": [run_entry],
+                }
+            else:
+                existing["runs"].append(run_entry)
+                # Keep the newest upload timestamp as the artifact's own.
+                if uploaded_at > str(existing.get("uploaded_at_utc") or ""):
+                    existing["uploaded_at_utc"] = uploaded_at
+
+        out: list[dict[str, Any]] = []
+        for item in groups.values():
+            # Newest run first. Sort by timestamp; the run_id (…-YYYYMMDD-HHMMSS)
+            # is the tiebreaker so runs still order correctly when a manifest
+            # carries no timestamp.
+            item["runs"].sort(
+                key=lambda r: (str(r.get("added_at_utc") or ""), str(r.get("id") or "")),
+                reverse=True,
+            )
             if item["deleted_at"] and not include_deleted:
                 continue
             out.append(item)

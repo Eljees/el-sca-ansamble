@@ -10,6 +10,13 @@
 # Always commit both files together.  Dockerfiles install from
 # `requirements.txt` so they stay reproducible.
 #
+# `requirements-py310.txt` is a SECOND lockfile, compiled under Python 3.10
+# (`make lock-py310`), used only by the oldest-interpreter leg of the CI test
+# matrix.  It exists because the 3.12 lock has no 3.10-only backports
+# (exceptiongroup, tomli) and `--require-hashes` will not resolve them on the
+# fly.  Nothing ships from it — images and 3.12 keep using requirements.txt.
+# Regenerate it whenever you regenerate requirements.txt.
+#
 # Loose constraints below are the minimum versions we support; the lockfile
 # nails the exact build.
 PyYAML>=6.0

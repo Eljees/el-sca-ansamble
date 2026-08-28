@@ -584,8 +584,8 @@ docker save \
   your-org/el-sca-cve-bin-tool:1.0.0 \
   your-org/el-sca-extractor:1.0.0 \
   aquasec/trivy:0.64.1 \
-  ghcr.io/anchore/grype:v0.112.0 \
-  ghcr.io/anchore/syft:v1.20.0 \
+  anchore/grype:v0.116.1 \
+  anchore/syft:v1.50.0 \
   | gzip > el-sca-images-1.0.0.tar.gz
 
 # передать файл (USB / защищённый канал)

@@ -39,7 +39,7 @@ services:
     networks: [scanner-net]
 
   trivy-updater:
-    image: aquasec/trivy:${TRIVY_VERSION:-0.64.1}
+    image: aquasec/trivy:${TRIVY_VERSION:-0.73.0}
     # Updater services are opt-in only.  `update` is the explicit refresh
     # profile.  They are deliberately NOT in `default` (so `docker compose
     # up` without any profile never reaches out to upstream DB sources) and
@@ -61,7 +61,7 @@ services:
     networks: [scanner-net]
 
   trivy-scanner:
-    image: aquasec/trivy:${TRIVY_VERSION:-0.64.1}
+    image: aquasec/trivy:${TRIVY_VERSION:-0.73.0}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     entrypoint: ["/bin/sh", "/workspace/scripts/update_trivy.sh"]
@@ -103,8 +103,31 @@ services:
       - internal-mirror-data:/workspace/artifacts/mirror
     networks: [scanner-net]
 
+  # Folds SBOMs that arrived INSIDE the delivery into the document the
+  # matchers read.  Runs between syft-sbom and grype-scanner; always writes
+  # artifacts/sbom/scan-input.cdx.json so the scanners have one stable path.
+  sbom-ingest:
+    image: elariaphd/el-sca-resilient-updater:${EL_SCA_VERSION:-0.1.5}
+    profiles: ["default", "scan", "offline", "airgap"]
+    working_dir: /workspace
+    # Root, same as report-collector: the dashboard's host-side ingest (root)
+    # writes scan-input.cdx.json first, and an appuser container cannot
+    # overwrite that 0644 file — the very first generic-path run after the
+    # depends_on wiring died exactly there (exit 1 → grype never started).
+    user: "0"
+    entrypoint: ["python", "-m", "resilient_updates.cli"]
+    command: ["ingest-sboms",
+              "--extracted-dir", "/workspace/artifacts/extracted/current",
+              "--base-cyclonedx", "/workspace/artifacts/sbom/cyclonedx.json",
+              "--output", "/workspace/artifacts/sbom/scan-input.cdx.json",
+              "--repo-root", "/workspace"]
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+    networks: [scanner-net]
+
   grype-db-importer:
-    image: ghcr.io/anchore/grype:${GRYPE_VERSION:-v0.112.0}
+    image: anchore/grype:${GRYPE_VERSION:-v0.116.1}
     profiles: ["default", "update", "offline", "airgap"]
     environment:
       GRYPE_DB_CACHE_DIR: /grype-db-cache
@@ -138,11 +161,18 @@ services:
       start_period: 10s
 
   grype-scanner:
-    image: ghcr.io/anchore/grype:${GRYPE_VERSION:-v0.112.0}
+    image: anchore/grype:${GRYPE_VERSION:-v0.116.1}
     profiles: ["default", "scan", "offline", "airgap"]
     depends_on:
       grype-static:
         condition: service_healthy
+      # Guarantees scan-input.cdx.json exists before matching, in EVERY entry
+      # point — run-scan.sh, scan_archive.sh, the dashboard and the hand-typed
+      # `docker compose run --rm grype-scanner` in the README alike.  Wiring it
+      # per-call-site would mean patching six recipes and silently breaking any
+      # we missed, so the dependency lives with the consumer instead.
+      sbom-ingest:
+        condition: service_completed_successfully
     environment:
       GRYPE_DB_UPDATE_URL: http://grype-static:8080
       GRYPE_DB_VALIDATE_BY_HASH_ON_START: "true"
@@ -151,7 +181,11 @@ services:
       GRYPE_DB_CACHE_DIR: /grype-db-cache
       GRYPE_DB_AUTO_UPDATE: "false"
       GRYPE_CHECK_FOR_APP_UPDATE: "false"
-    command: ["sbom:/workspace/artifacts/sbom/syft.json", "-o", "json", "--file", "/workspace/artifacts/reports/grype/report.json"]
+    # Matches against the merged scan input, not Syft's raw output: when the
+    # delivery *is* an SBOM (vendor ships CycloneDX instead of the binaries),
+    # sbom-ingest folds those components in — otherwise the file is simply
+    # Syft's own SBOM converted to CycloneDX.  See resilient_updates/sbom_ingest.py.
+    command: ["sbom:/workspace/artifacts/sbom/scan-input.cdx.json", "-o", "json", "--file", "/workspace/artifacts/reports/grype/report.json"]
     volumes:
       - ./:/workspace
       - grype-cache:/grype-db-cache
@@ -159,7 +193,7 @@ services:
     networks: [scanner-net]
 
   syft-sbom:
-    image: ghcr.io/anchore/syft:${SYFT_VERSION:-v1.20.0}
+    image: anchore/syft:${SYFT_VERSION:-v1.50.0}
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
     environment:
@@ -203,8 +237,14 @@ services:
         "/input",
         "--output",
         "${EXTRACT_OUTPUT:-/workspace/artifacts/extracted/current}",
+        # Nested archives MUST be unpacked: a delivery zip usually contains
+        # tar.gz / .deb / .rpm payloads, and the scanners can only see real
+        # files.  With depth 0 (the old default) such an artifact produced a
+        # silent all-zero report — extraction "passed", Syft catalogued 0
+        # components, every scanner found nothing.  4 matches the CLI and
+        # ExtractLimits defaults; runaway growth is bounded by --max-bytes.
         "--max-depth",
-        "${EXTRACT_MAX_DEPTH:-0}",
+        "${EXTRACT_MAX_DEPTH:-4}",
         "--max-files",
         "${EXTRACT_MAX_FILES:-20000}",
         "--max-bytes",
@@ -235,6 +275,12 @@ services:
     # trigger this explicitly.
     profiles: ["update"]
     working_dir: /workspace
+    # Run the wrapper from the ALWAYS-mounted workspace, not the copy baked
+    # into the image: the 0.1.1 rebuild (2026-08-01) shipped without
+    # /opt/app/scripts entirely, so the baked ENTRYPOINT died instantly with
+    # "cannot open /opt/app/scripts/update_cve_bin_tool.sh". Same treatment
+    # as cve-bin-tool-scanner: wrapper fixes deploy by git pull, no rebuild.
+    entrypoint: ["/bin/sh", "/workspace/scripts/update_cve_bin_tool.sh"]
     command: ["update", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
       <<: *proxy-env
@@ -279,6 +325,10 @@ services:
       dockerfile: Dockerfile.cve-bin-tool
     profiles: ["default", "scan", "offline", "airgap"]
     working_dir: /workspace
+    # Run the wrapper from the ALWAYS-mounted workspace, not the copy baked
+    # into the image at build time: wrapper fixes then deploy via git pull
+    # alone (the image bakes /opt/app/scripts as a fallback for bare runs).
+    entrypoint: ["/bin/sh", "/workspace/scripts/update_cve_bin_tool.sh"]
     command: ["scan", "${CVE_BIN_TOOL_TARGET:-/scan-target}"]
     environment:
       # cve-bin-tool resolves its DB at $HOME/.cache/cve-bin-tool/cve.db. The
@@ -287,7 +337,21 @@ services:
       # with "Database does not exist" (exit 40) despite a populated cve.db.
       HOME: /home/appuser
       XDG_CACHE_HOME: /home/appuser/.cache
-      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}
+      # Sized for the SBOM fast-path, not for byte-wise binary scanning: since
+      # nested archives are extracted properly, a single delivery can yield a
+      # 25k-component CycloneDX (makarov-i-886188.gz -> 14 GB tree, 25 637
+      # components) and the per-component DB lookup blew straight through the
+      # old 600s/1800s budgets.  A timeout here is not fatal — an empty report
+      # is written and the pipeline continues — which is exactly why it must be
+      # generous: a too-small value silently costs you every cve-bin-tool CVE.
+      CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS: ${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-3600}
+      # Pre-scan DB audit toggle (1=verify, 0=skip).  Must be whitelisted here
+      # or a host-side export never reaches the container.
+      CVE_BIN_TOOL_VERIFY_DB: ${CVE_BIN_TOOL_VERIFY_DB:-1}
+      # 0 = skip the SBOM fast-path and binary-scan the target dir.  The APK
+      # branch sets this: grype owns the SBOM leg there, cve-bin-tool's value
+      # is the native .so scan, which auto-SBOM would otherwise bypass.
+      CVE_BIN_TOOL_AUTO_SBOM: ${CVE_BIN_TOOL_AUTO_SBOM:-1}
       # SBOM fast-path: set to a CycloneDX/SPDX path to skip binary scanning.
       CVE_BIN_TOOL_SBOM_PATH: ${CVE_BIN_TOOL_SBOM_PATH:-}
       CVE_BIN_TOOL_SBOM_FORMAT: ${CVE_BIN_TOOL_SBOM_FORMAT:-cyclonedx}
@@ -343,9 +407,15 @@ services:
         # (internal-mirror-data/{tmp,candidates,previous}) stay root-owned, and
         # then cve-bin-tool activation fails with EACCES on makedirs of
         # tmp/run-<ts> (shutil.copytree in activate_best_cve_bin_tool_db).
+        # NB: busybox find has no GNU "-uid" (it errors "unrecognized: -uid");
+        # with stderr swallowed that made this check silently pass forever and
+        # root-owned DB files (e.g. cve.db after a root-run activation) were
+        # never fixed -> cve-bin-tool-scanner (uid 1001) died instantly on a
+        # database it could not open.  "! -user 1001" is busybox-compatible
+        # (numeric uid accepted) and errors are no longer discarded.
         for d in /vol/grype-db /vol/grype-cache /vol/trivy-cache \
                  /vol/cve-bin-tool-cache /vol/internal-mirror-data; do
-          strays=$$(find "$$d" ! -uid 1001 -print -quit 2>/dev/null)
+          strays=$$(find "$$d" ! -user 1001 -print -quit)
           if [ -n "$$strays" ]; then
             echo "[volume-init] chown 1001:1001 -R $$d (found non-1001 entries)"
             chown -R 1001:1001 "$$d"
@@ -501,7 +571,7 @@ services:
     working_dir: /workspace
     command:
       [
-        "--input",  "/scan-target",
+        "--input", "/scan-target",
         "--output", "/workspace/artifacts",
       ]
     volumes:
@@ -522,7 +592,7 @@ services:
     working_dir: /workspace
     command:
       [
-        "--input",  "/scan-target",
+        "--input", "/scan-target",
         "--output", "/workspace/artifacts",
       ]
     volumes:
@@ -698,7 +768,7 @@ services:
     environment:
       PUID: ${LOCAL_UID:-1000}
       PGID: ${LOCAL_GID:-1000}
-      TZ:   ${TZ:-Etc/UTC}
+      TZ: ${TZ:-Etc/UTC}
     networks: [scanner-net]
 
   # ───────────────────────────────────────────────────────────────────────

@@ -16,21 +16,21 @@
 # you ask for it explicitly (`docker compose build`), it just never happens
 # implicitly on `up`.
 services:
-  trivy-updater:        { pull_policy: never }
-  trivy-scanner:        { pull_policy: never }
-  grype-updater:        { pull_policy: never }
-  grype-db-importer:    { pull_policy: never }
-  grype-static:         { pull_policy: never }
-  grype-scanner:        { pull_policy: never }
-  syft-sbom:            { pull_policy: never }
-  artifact-extractor:   { pull_policy: never }
-  cve-bin-tool-updater: { pull_policy: never }
-  cve-bin-tool-scanner: { pull_policy: never }
-  db-admin:             { pull_policy: never }
-  route-doctor:         { pull_policy: never }
-  volume-init:          { pull_policy: never }
-  report-collector:     { pull_policy: never }
-  stack-info:           { pull_policy: never }
-  dashboard:            { pull_policy: never }
-  db-exporter:          { pull_policy: never }
-  db-importer:          { pull_policy: never }
+  trivy-updater: {pull_policy: never}
+  trivy-scanner: {pull_policy: never}
+  grype-updater: {pull_policy: never}
+  grype-db-importer: {pull_policy: never}
+  grype-static: {pull_policy: never}
+  grype-scanner: {pull_policy: never}
+  syft-sbom: {pull_policy: never}
+  artifact-extractor: {pull_policy: never}
+  cve-bin-tool-updater: {pull_policy: never}
+  cve-bin-tool-scanner: {pull_policy: never}
+  db-admin: {pull_policy: never}
+  route-doctor: {pull_policy: never}
+  volume-init: {pull_policy: never}
+  report-collector: {pull_policy: never}
+  stack-info: {pull_policy: never}
+  dashboard: {pull_policy: never}
+  db-exporter: {pull_policy: never}
+  db-importer: {pull_policy: never}

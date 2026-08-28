@@ -117,7 +117,16 @@ def _source_count(
     if source_upper == "EPSS":
         return int(dir_infos["epss"]["file_count"]), "epss directory"
     if source_upper == "PURL2CPE":
-        return purl2cpe_total, "purl2cpe table"
+        if purl2cpe_total > 0:
+            return purl2cpe_total, "purl2cpe table"
+        # cve-bin-tool consumes the standalone purl2cpe/purl2cpe.db file next
+        # to cve.db; the embedded `purl2cpe` table only exists in json-mirror
+        # pre-built DBs.  Count the directory so a file-shipped PURL2CPE
+        # (sneakernet) audits as present.
+        p2c_files = int(dir_infos["purl2cpe"]["file_count"])
+        if p2c_files > 0:
+            return p2c_files, "purl2cpe directory"
+        return 0, "purl2cpe table"
     if source_upper == "RSD":
         return int(dir_infos["rsd"]["file_count"]), "rsd directory"
     return None, "not directly observable"
@@ -463,13 +472,31 @@ def seed_cve_bin_tool_aux_sources(
     if seed_epss:
         epss_dir = ensure_directory(root / "epss")
         epss_target = epss_dir / "epss_scores-current.csv"
-        try:
-            response = requests.get("https://epss.cyentia.com/epss_scores-current.csv.gz", timeout=timeout)
-            response.raise_for_status()
-            epss_target.write_bytes(gzip.decompress(response.content))
-            result["seeded"]["EPSS"] = {"path": str(epss_target), "size": epss_target.stat().st_size}
-        except Exception as exc:
-            result["failures"].append(f"EPSS seed failed: {exc}")
+        # Cyentia rebranded to Empirical Security in 2025 and the old
+        # epss.cyentia.com host now times out; the CSV moved to
+        # epss.empiricalsecurity.com.  Try the live host first, keep the
+        # legacy one as a fallback in case the redirect ever comes back.
+        epss_urls = (
+            "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+            "https://epss.cyentia.com/epss_scores-current.csv.gz",
+        )
+        epss_exc: Exception | None = None
+        for epss_url in epss_urls:
+            try:
+                response = requests.get(epss_url, timeout=timeout)
+                response.raise_for_status()
+                epss_target.write_bytes(gzip.decompress(response.content))
+                result["seeded"]["EPSS"] = {
+                    "path": str(epss_target),
+                    "size": epss_target.stat().st_size,
+                    "url": epss_url,
+                }
+                epss_exc = None
+                break
+            except Exception as exc:
+                epss_exc = exc
+        if epss_exc is not None:
+            result["failures"].append(f"EPSS seed failed: {epss_exc}")
 
     if seed_rsd:
         rsd_dir = ensure_directory(root / "rsd")

@@ -456,7 +456,23 @@ PY
     ;;
   scan)
     if [ "${CVE_BIN_TOOL_VERIFY_DB:-1}" = "1" ]; then
-      python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null
+      # NB: never die silently here.  This audit used to run with stdout
+      # discarded and `set -e` aborting the whole scan on any non-zero rc —
+      # a stale DB (rc=4, EXIT_STALE_REJECTED) killed the stage with zero
+      # output and the report then showed "0 findings" off a stale [].
+      # set -e-safe rc capture (NB: `$?` right after `if ! cmd` is already
+      # inverted by the `!`, which once produced a "failed rc=0" absurdity).
+      _audit_rc=0
+      python -m resilient_updates.cli --config "$CONFIG_PATH" audit cve-bin-tool-db --db-root "$DB_ROOT" >/dev/null || _audit_rc=$?
+      if [ "$_audit_rc" -ne 0 ]; then
+        if [ "$DB_POLICY" = "degraded-ok" ] && [ "$_audit_rc" -eq 4 ]; then
+          echo "[cve-bin-tool] WARN: DB is stale (audit rc=4) — scanning anyway (policy=degraded-ok); update the DB soon" >&2
+        else
+          echo "[cve-bin-tool] FATAL: pre-scan DB audit failed rc=$_audit_rc (db-root=$DB_ROOT, policy=$DB_POLICY)" >&2
+          echo "[cve-bin-tool] hint: refresh the DB, or set CVE_BIN_TOOL_DB_POLICY=degraded-ok to scan on a stale-but-valid DB" >&2
+          exit "$_audit_rc"
+        fi
+      fi
     fi
     SCAN_TIMEOUT="${CVE_BIN_TOOL_SCAN_TIMEOUT_SECONDS:-1800}"
     SBOM_PATH="${CVE_BIN_TOOL_SBOM_PATH:-}"
@@ -484,6 +500,7 @@ PY
       # syft.json (native Syft format) is NOT accepted by cve-bin-tool's --sbom flag.
       # Only cyclonedx and spdx are valid; try cyclonedx first (richer component data).
       for candidate in \
+        /workspace/artifacts/sbom/scan-input.cdx.json \
         /workspace/artifacts/sbom/cyclonedx.json \
         /workspace/artifacts/sbom/spdx.json; do
         if [ -s "$candidate" ]; then
@@ -665,7 +682,9 @@ PYEOF
       set +e
       # --sbom-file = path to the SBOM (NOT the positional [directory] argument)
       # --sbom      = format: cyclonedx | spdx | swid
-      timeout "$SCAN_TIMEOUT" cve-bin-tool --offline \
+      # --metrics: enrich findings with EPSS probability/percentile from the
+      # local DB (populated offline; see docs/big-artifacts.md EPSS section).
+      timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --metrics \
         --sbom "$SBOM_FORMAT" --sbom-file "$SBOM_PATH" \
         --format json --output-file "$REPORT_DIR/report.json"
       scan_rc=$?
@@ -817,7 +836,7 @@ PYEOF
     echo "[cve-bin-tool] scan timeout=${SCAN_TIMEOUT}s target=$EFFECTIVE_TARGET"
     set +e
     # shellcheck disable=SC2086
-    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline $PARALLEL_FLAGS $CHECKER_FLAGS $EXCLUDE_FLAGS --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
+    timeout "$SCAN_TIMEOUT" cve-bin-tool --offline --metrics $PARALLEL_FLAGS $CHECKER_FLAGS $EXCLUDE_FLAGS --format json --output-file "$REPORT_DIR/report.json" "$EFFECTIVE_TARGET"
     scan_rc=$?
     set -e
     if [ "$scan_rc" -eq 124 ]; then

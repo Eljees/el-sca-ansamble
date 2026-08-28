@@ -304,10 +304,14 @@ def render_run(artifacts_dir: Path, run_id: str) -> str | None:
 # ── Tool DB status (last update + versions) ─────────────────────────────────
 
 # Compose image-tag defaults (mirror docker-compose.yml ${VAR:-default}).
+# LAST-RESORT fallback only: versions.env is the source of truth and is read
+# first (see _read_env_versions).  These constants once went stale for a whole
+# engine upgrade — the barrels kept showing v0.112.0/0.64.1 while 0.73.0 was
+# actually scanning — because nothing forced them to move with versions.env.
 COMPOSE_VERSION_DEFAULTS = {
-    "TRIVY_VERSION": "0.64.1",
-    "GRYPE_VERSION": "v0.112.0",
-    "SYFT_VERSION": "v1.20.0",
+    "TRIVY_VERSION": "0.73.0",
+    "GRYPE_VERSION": "v0.116.1",
+    "SYFT_VERSION": "v1.50.0",
 }
 
 
@@ -329,31 +333,35 @@ def _deep_find(obj: Any, key: str) -> Any | None:
 
 
 def _read_env_versions(repo_root: Path) -> dict[str, str]:
-    """Read ``*_VERSION`` keys from .env (falling back to .env.example, then
-    the compose defaults) so tool cards show the version that will actually run.
-    """
-    versions = dict(COMPOSE_VERSION_DEFAULTS)
-    env_path = repo_root / ".env"
-    if env_path.is_file():
-        for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = raw.strip()
-            if line.startswith("#") or "=" not in line:
-                continue
-            k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip()
-            if k.endswith("_VERSION") and v:
-                versions[k] = v
+    """``*_VERSION`` for the tool cards, in compose-interpolation order.
 
-    example_path = repo_root / ".env.example"
-    if example_path.is_file():
-        for raw in example_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    Precedence mirrors what actually runs: the deploy ``.env`` overrides
+    everything (compose reads it), then ``versions.env`` — the repo's single
+    source of truth that CI keeps consistent with docker-compose.yml — then
+    ``.env.example``, then the hardcoded last resort.  versions.env used to be
+    missing from this chain, which is exactly how the cards kept advertising
+    engines two upgrades old.
+    """
+
+    def _harvest(path: Path, into: dict[str, str], *, override: bool) -> None:
+        if not path.is_file():
+            return
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
             line = raw.strip()
             if line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
             k, v = k.strip(), v.strip()
             if k.endswith("_VERSION") and v:
-                versions.setdefault(k, v)
+                if override:
+                    into[k] = v
+                else:
+                    into.setdefault(k, v)
+
+    versions = dict(COMPOSE_VERSION_DEFAULTS)
+    _harvest(repo_root / "versions.env", versions, override=True)
+    _harvest(repo_root / ".env", versions, override=True)  # deploy override wins
+    _harvest(repo_root / ".env.example", versions, override=False)
     return versions
 
 
@@ -423,15 +431,27 @@ def tool_status(artifacts_dir: Path | str, repo_root: Path | str | None = None) 
         for s in (os.environ.get("CVE_BIN_TOOL_ENRICH_DISABLE") or "").replace(",", " ").split()
         if s.strip()
     }
+    # File-based sources (OSV/EPSS/PURL2CPE/RSD) never write cve_range rows -
+    # their presence lives in the audit's source_status (counted by files in
+    # db_root). Prefer that; fall back to the row counts for NVD/GAD/etc.
+    cbt_source_status = _deep_find(cbt_db, "source_status")
+    if not isinstance(cbt_source_status, dict):
+        cbt_source_status = {}
+    cbt_source_status = {str(k).upper(): v for k, v in cbt_source_status.items()}
     cbt_sources = []
     for s in cbt_source_names:
         cnt = cbt_by_source.get(s)
-        has = isinstance(cnt, (int, float)) and cnt > 0
+        rows_present = isinstance(cnt, (int, float)) and cnt > 0
+        audit_entry = cbt_source_status.get(s)
+        audit_ok = isinstance(audit_entry, dict) and audit_entry.get("status") == "ok"
+        audit_count = audit_entry.get("count") if isinstance(audit_entry, dict) else None
+        has = rows_present or audit_ok
+        shown = cnt if rows_present else audit_count
         cbt_sources.append(
             {
                 "name": s,
                 "fill": 100 if has else 0,
-                "count": int(cnt) if has else 0,
+                "count": int(shown) if has and isinstance(shown, (int, float)) else 0,
                 "unavailable": (s in cbt_unavailable) and not has,
                 "update_target": f"cve-bin-tool:{s}",
             }
@@ -875,13 +895,19 @@ function mapNode(key, label){
   return `<div class="map-node ${st}"><div>${label}</div><div class="ms">${st}</div></div>`;
 }
 function renderMap(){
-  // Артефакт → Extract → веер инструментов → Отчёт
+  // Артефакт → Extract → веер инструментов → Отчёт.
+  // Для Windows-инсталляторов SBOM собирает win-analyzer (стадия "win-analyzer"),
+  // а не syft — показываем соответствующий узел, иначе "Syft" висел бы серым
+  // pending, хотя SBOM реально построен (CYBERSEC-13388).
+  const sbomNode = ("win-analyzer" in stagesByKey)
+    ? mapNode("win-analyzer","Win-analyzer")
+    : mapNode("sbom","Syft");
   mapEl.innerHTML =
     `<div class="map-col"><div class="map-node">Артефакт</div></div>` +
     `<div class="map-arrow">→</div>` +
     `<div class="map-col">${mapNode("extract","Extract")}</div>` +
     `<div class="map-arrow">→</div>` +
-    `<div class="map-col">${mapNode("sbom","Syft")}${mapNode("grype","Grype")}${mapNode("trivy","Trivy")}${mapNode("cve-bin-tool","cve-bin-tool")}</div>` +
+    `<div class="map-col">${sbomNode}${mapNode("grype","Grype")}${mapNode("trivy","Trivy")}${mapNode("cve-bin-tool","cve-bin-tool")}</div>` +
     `<div class="map-arrow">→</div>` +
     `<div class="map-col">${mapNode("report","Отчёт")}</div>`;
 }
@@ -1484,6 +1510,12 @@ def _artifact_runs_payload(
                 "markdown_report_path": _markdown_report(run_root),
             }
         )
+    # Newest run first: run ids embed a YYYYMMDD-HHMMSS stamp, so a reverse
+    # lexical sort is chronological.  This makes "open the artifact's report"
+    # (openArtifactReports picks the first run with a report) resolve to the
+    # LATEST scan of THIS artifact instead of an arbitrary/oldest one — the
+    # fix for a stale or wrong-looking report opening from the card.
+    out.sort(key=lambda r: str(r.get("id") or ""), reverse=True)
     return out
 
 

@@ -625,14 +625,154 @@ s3://el-sca/scans/previous/
 
 ## Deployment: 10.2.108.47
 
-The working deployment (SOC contour). Verified 2026-07-09.
+The working deployment (SOC contour). Verified 2026-07-31.
 
 ```text
 host      p7701v17redos11.soc.rt.ru (RED OS 8.0.2)
 ssh       yuriy.tumanov@10.2.108.47   (key ~/.ssh/rostel-openkey)
+account   uid 1016, groups: yuriy.tumanov + wheel; sudo NOPASSWD: ALL
+          NOT in the docker group -> every docker call needs `sudo -n`
 repo      /home/SCA/el-sca-ansamble
-web UI    http://10.2.108.47:8088/
+big input /home/SCA/_incoming/<CYBERSEC-XXXXX>/   (same fs as artifacts -> hardlinkable)
+web UI    http://10.2.108.47:8088/                (root process, no auth)
 git       single remote `origin` -> GitLab (there is NO GitHub remote there)
+compose   COMPOSE_PROJECT_NAME=el-sca-ansamble -> volumes are `el-sca-ansamble_*`
+image tag .env EL_SCA_VERSION=0.1.1  (versions.env says 0.1.5 — compose uses .env: 0.1.1)
+hardware  sda 150G -> sda3 148G LVM -> vg_system (VFree 0), root ext4 130G on
+          /dev/mapper/vg_system-root; swap 7.8G, /tmp 3.9G, /var/log 3.9G
+```
+
+### Reaching the host (2026-07-31)
+
+Two routes, both used in practice:
+
+- **direct** — works while the operator's FortiClient VPN (`vpn.soc.rt.ru`) is up;
+- **jump** — `ssh -J toshiba ...` as fallback when the direct route is down.
+
+Use SSH connection multiplexing for long sessions, it saves both time and the
+next point:
+
+```sh
+ssh -o ControlMaster=auto -o ControlPath=/tmp/ssh-elsca -o ControlPersist=1800 \
+    -i ~/.ssh/rostel-openkey -o IdentitiesOnly=yes yuriy.tumanov@10.2.108.47
+```
+
+⚠️ **sshd rate-limits repeated connects.** A polling loop that reconnects every
+30-60 s gets the source IP temporarily refused (`Connection closed by ... port 22`)
+for ~20+ minutes, and the jump route usually dies at the same time. Reconnecting
+the VPN (new source IP) clears it instantly. Poll through **one** multiplexed
+session; never spawn a reconnect-per-poll daemon.
+
+### Long-running work on the host
+
+`nohup ... &` over SSH dies with the session and `/tmp` scripts may be refused
+(`Permission denied` / noexec). Proven pattern — copy the script into
+`/usr/local/bin` and run it as a transient systemd unit:
+
+```sh
+scp job.sh yuriy.tumanov@10.2.108.47:/tmp/job.sh
+sudo -n cp /tmp/job.sh /usr/local/bin/job.sh && sudo -n chmod 755 /usr/local/bin/job.sh
+sudo -n systemd-run --unit=myjob /bin/bash -c '/usr/local/bin/job.sh > /tmp/job.log 2>&1'
+sudo -n systemctl is-active myjob.service   # then poll /tmp/job.log
+```
+
+Do **not** pass `--collect` if you want to read the unit's status afterwards.
+
+### ⚠️ Docker pruning is FORBIDDEN on this host
+
+Every scanner runs as a one-shot `compose run --rm`, so at rest **nothing is
+"in use"** from Docker's point of view:
+
+- `docker image prune -a` **deletes every scanner image** (this actually happened
+  2026-07-31: all `elariaphd/*`, `alpine:3.20`, `aquasec/trivy`, `ghcr.io/anchore/*`
+  went away, updates then failed with `No such image`). Recovery: `docker pull`
+  (Docker Hub is reachable) or `bundle/el-sca-images-light.tar.part*` →
+  `cat parts > images.tar && docker load -i images.tar`.
+- `docker volume prune` would **delete the vulnerability databases** (~23 GB;
+  `cve-bin-tool-cache`, `internal-mirror-data`, `trivy-cache` show 0 containers).
+
+If space is needed, delete *content* (see Safe Cleanup), never images or volumes.
+
+### Rebuilding the cve-bin-tool image is NOT possible on the host
+
+`docker build -f Dockerfile.cve-bin-tool` fails: `deb.debian.org` is unreachable
+through the proxy → `Unable to locate package binutils/file/curl/zstd` (exit 100).
+Two working alternatives:
+
+1. **Preferred** — the scanner entrypoint now runs the wrapper from the mounted
+   workspace (`/workspace/scripts/update_cve_bin_tool.sh`), so wrapper fixes ship
+   by `git pull` alone, no image involved.
+2. For changes *inside* the installed package — patch a container and commit it:
+
+```sh
+sudo -n docker run --name patch -u 0 --entrypoint /bin/sh \
+  -v $PWD/scripts/patches:/patches:ro elariaphd/el-sca-cve-bin-tool:0.1.1 \
+  -c 'python /patches/cve_bin_tool_3.4_fixups.py'
+sudo -n docker commit --change 'USER 1001' \
+  --change 'ENTRYPOINT ["/bin/sh", "/opt/app/scripts/update_cve_bin_tool.sh"]' \
+  patch elariaphd/el-sca-cve-bin-tool:0.1.1
+sudo -n docker rm patch
+```
+
+`USER 1001` **numerically** — there is no `appuser` line in the image's
+`/etc/passwd`, so `--change 'USER appuser'` makes every later run fail with
+`unable to find user appuser`.
+
+### The host carries a local, uncommitted docker-compose.yml delta
+
+`git status` on the host always shows ` M docker-compose.yml` — a local mount
+workaround for the dashboard. Preserve it around every update:
+
+```sh
+git stash push -q -m auto docker-compose.yml
+git fetch https://github.com/Eljees/el-sca-ansamble.git master
+git merge --ff-only FETCH_HEAD
+git push origin master        # origin here = GitLab
+git stash pop -q
+```
+
+Plain `git merge` without the stash aborts with *"Your local changes would be
+overwritten"*.
+
+### Restarting the dashboard (it runs as root)
+
+`pkill` as `yuriy.tumanov` silently fails ("no proc" while the process is alive) —
+the dashboard belongs to **root**. Always via sudo, and fully detached:
+
+```sh
+sudo -n pkill -f "[r]esilient_updates.cli dashboard"
+sleep 3
+sudo -n bash -c 'cd /home/SCA/el-sca-ansamble && setsid nohup python3 -m \
+  resilient_updates.cli dashboard --repo-root /home/SCA/el-sca-ansamble \
+  --host 0.0.0.0 --port 8088 >> artifacts/logs/dashboard.log 2>&1 < /dev/null &'
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8088/
+```
+
+Verify with `ps -o etimes=` — a small value proves the process is actually new.
+
+### State as of 2026-07-31
+
+```text
+DBs      cve-bin-tool 2026-07-31 08:45 (NVD+GAD+RedHat+Curl, strict audit rc=0)
+         Grype        2026-07-31 07:09
+         Trivy        2026-07-31 07:47
+content  cve_severity 434 980 CVEs; EPSS scores 354 176 rows
+disk     130G root, 65G used, 66G free (50%)  — after reclaiming ~41 GB
+backup   cve-bin-tool-cache:/cve-bin-tool/cve.db.bak-pre-epss (0.6 GB, rollback)
+tools    rsync installed 2026-07-31 (`sudo dnf install rsync`, internal mirror)
+```
+
+**+50 GB were promised but are NOT presented to the VM.** After an SCSI rescan
+`sda` is still 150 GB, the partition table has no free space and `vg_system` has
+`VFree 0`. Nothing can be grown until the hypervisor enlarges the virtual disk
+(vSphere → Edit Settings → Hard disk 1; snapshots block resizing) or adds a second
+disk. Once it appears, the whole job is:
+
+```sh
+sudo growpart /dev/sda 3
+sudo pvresize /dev/sda3
+sudo lvextend -l +100%FREE /dev/vg_system/root
+sudo resize2fs /dev/mapper/vg_system-root     # online, ext4, no downtime
 ```
 
 Important and easy to trip over:

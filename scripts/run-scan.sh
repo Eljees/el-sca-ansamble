@@ -495,7 +495,8 @@ if [[ $EXTRACT -eq 1 ]]; then
   else
     run_stage extract 0 docker compose --profile extract run --rm artifact-extractor
   fi
-  export SCAN_TARGET_HOST="$(realpath "$EXTRACT_HOST")"
+  SCAN_TARGET_HOST="$(realpath "$EXTRACT_HOST")"
+  export SCAN_TARGET_HOST
   export SCAN_TARGET_DISPLAY="$TARGET_RESOLVED -> $SCAN_TARGET_HOST"
   export SYFT_TARGET="/scan-target"
   export SYFT_FROM="dir"
@@ -503,6 +504,14 @@ fi
 
 # ── Specialized format pipelines ─────────────────────────────────────────────
 if [[ "$FORMAT" == "apk" ]]; then
+  # Purge outputs of the PREVIOUS run: this branch skips Syft, so a stale
+  # cyclonedx.json would become the scan-input base and a stale trivy report
+  # would resurface as the previous artifact's findings.
+  rm -f "$ARTIFACTS_DIR"/sbom/syft.json "$ARTIFACTS_DIR"/sbom/cyclonedx.json \
+        "$ARTIFACTS_DIR"/sbom/spdx.json "$ARTIFACTS_DIR"/sbom/scan-input.cdx.json 2>/dev/null || true
+  rm -f "$ARTIFACTS_DIR"/reports/grype/report.json "$ARTIFACTS_DIR"/reports/trivy/report.json \
+        "$ARTIFACTS_DIR"/reports/cve-bin-tool/report.json 2>/dev/null || true
+
   echo "[apk] Running APK analyzer..."
   run_stage apk-analyzer 0 docker compose --profile apk run --rm apk-analyzer
 
@@ -520,7 +529,12 @@ if [[ "$FORMAT" == "apk" ]]; then
   if [[ -d "$NATIVE_DIR" ]] && [[ -n "$(find "$NATIVE_DIR" -name '*.so' 2>/dev/null)" ]]; then
     echo "[apk] Running cve-bin-tool on native .so files..."
     export CVE_BIN_TOOL_TARGET="/workspace/artifacts/extracted/apk-native"
-    export SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
+    # Binary-scan the .so libs; without this the auto-SBOM fast-path would grab
+    # scan-input.cdx.json and silently skip the native leg (grype already owns
+    # the SBOM leg).
+    export CVE_BIN_TOOL_AUTO_SBOM=0
+    SCAN_TARGET_HOST="$(realpath "$NATIVE_DIR")"
+    export SCAN_TARGET_HOST
     db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
     run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
   fi
@@ -602,7 +616,8 @@ else
       run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
       ;;
     syft)
-      run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom ;;
+      run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom
+      ;;
     grype)
       if [[ $UPDATE_DB -eq 1 ]]; then
         run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
@@ -663,7 +678,7 @@ echo "[stage] report-html (host $PYTHON_BIN)"
     --case-id "$CASE_ID"
     --mode "$ARTIFACT_MODE"
     --stage final
-    --status done
+    --status "done"
   )
   if [[ "${EL_SCA_ARCHIVE_EXTRACTED_TREE:-0}" =~ ^(1|true|yes|on)$ ]]; then
     archive_args+=(--include-extracted-tree)

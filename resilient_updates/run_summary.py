@@ -41,7 +41,8 @@ from pathlib import Path
 from typing import Any
 
 from ._io import (
-    hash_pair as _hash_path,
+    hash_triple as _hash_path,
+    hash_triple_dir as _hash_triple_dir,
     read_json as _read_json,
     short_hash as _short_hash,
 )
@@ -125,16 +126,43 @@ def _input_hashes(extraction_manifest: Any) -> dict[str, str]:
     items = _top_level_input_items(extraction_manifest)
     if len(items) != 1 or not isinstance(items[0], dict):
         return {}
-    archive = str(items[0].get("archive") or "").strip()
-    if not archive:
-        return {}
-    path = Path(archive)
-    if not path.exists() or not path.is_file():
-        return {}
+    item = items[0]
+    recorded = {key: str(item.get(key)) for key in ("md5", "sha1", "sha256") if item.get(key)}
+    # A "rich" record from the current extractor already carries sha1/md5 —
+    # trust it and skip re-hashing (the recorded ``archive`` is a container
+    # path that would not resolve on the host anyway).
+    if recorded.get("sha1") or recorded.get("md5"):
+        return recorded
+    # Older / sha256-only manifests: re-hash the actual file when reachable to
+    # recover the full md5+sha1+sha256 triple.
+    archive = str(item.get("archive") or "").strip()
+    if archive:
+        path = Path(archive)
+        if path.exists() and path.is_file():
+            try:
+                return _hash_path(path)
+            except OSError:
+                pass
+    # Last resort: whatever was recorded (possibly just sha256, possibly {}).
+    return recorded
+
+
+def _target_hashes(base: Path, extraction_manifest: Any) -> dict[str, str]:
+    """md5/sha1/sha256 of what the scanners actually ran on.
+
+    The pipeline re-points every scanner at ``extracted/current`` (the
+    unpacked tree), so that directory *is* the final target — hash its content
+    once (stable across platforms).  If nothing was extracted (the archive was
+    scanned directly), fall back to the input archive's digests so the field is
+    never a bare UNKNOWN.
+    """
+    extracted = base / "extracted" / "current"
     try:
-        return _hash_path(path)
+        if extracted.is_dir() and any(p.is_file() for p in extracted.rglob("*")):
+            return _hash_triple_dir(extracted)
     except OSError:
-        return {}
+        pass
+    return _input_hashes(extraction_manifest)
 
 
 def _grype_provenance_state(prov_grype: Any) -> dict[str, str]:
@@ -294,13 +322,88 @@ def _tool_failures(root: Path, grype: Any, trivy: Any, cve: Any) -> list[str]:
     Findings are not execution errors. A scanner that ran successfully and
     found zero vulnerabilities must not be marked as failed.
 
-    The only hard failure signal we currently persist explicitly is the
-    cve-bin-tool timeout flag written by the wrapper. Missing-report cases are
-    handled upstream by report collection placeholders and warnings.
+    Hard failure signals, in order of directness:
+
+    1. the cve-bin-tool timeout flag written by the wrapper;
+    2. a scanner stage recorded as ``error`` in ``pipeline_state.json``;
+    3. a per-tool report file *older than this run's extraction manifest* —
+       i.e. a stale leftover from a previous run.  Exactly this combination
+       (stage errored + old ``[]`` placeholder survived) once rendered as
+       "0 findings, tool failures: none", masking a dead cve-bin-tool stage.
     """
     failed: list[str] = []
     if (root / "reports" / "cve-bin-tool" / "timeout.flag").exists():
         failed.append("cve-bin-tool")
+
+    stage_tool = {
+        "sbom": "syft",
+        "grype": "grype",
+        "trivy": "trivy",
+        "cve-bin-tool": "cve-bin-tool",
+    }
+    state = _read_json(root / "pipeline_state.json")
+    stages = state.get("stages") if isinstance(state, dict) else None
+    if isinstance(stages, dict):
+        for key, tool in stage_tool.items():
+            info = stages.get(key)
+            if isinstance(info, dict) and info.get("status") == "error":
+                failed.append(f"{tool}: stage error (rc={info.get('rc', '?')})")
+
+    manifest = root / "extracted" / "current" / "extraction_manifest.json"
+    if manifest.exists():
+        try:
+            anchor = manifest.stat().st_mtime
+            for tool, rel in (
+                ("syft", "sbom/syft.json"),
+                ("grype", "reports/grype/report.json"),
+                ("trivy", "reports/trivy/report.json"),
+                ("cve-bin-tool", "reports/cve-bin-tool/report.json"),
+            ):
+                report = root / rel
+                # 60s slack: extract finishes before scanners start, so a
+                # report legitimately written this run is always newer.
+                if report.exists() and report.stat().st_mtime < anchor - 60:
+                    failed.append(f"{tool}: stale report (predates this run's extraction)")
+        except OSError:
+            pass
+
+    # Un-unpacked payload: the extracted tree still consists of archives, so the
+    # scanners had nothing real to look at and every count is a truthful-looking
+    # zero.  Caused by an extraction depth that is too small for a nested
+    # delivery archive (zip -> tar.gz/.deb -> files).  Surfacing it as a failure
+    # is the difference between "clean artifact" and "we never looked inside".
+    extracted_root = root / "extracted" / "current"
+    if extracted_root.is_dir():
+        try:
+            archive_suffixes = (
+                ".tar.gz",
+                ".tar.xz",
+                ".tar.bz2",
+                ".tar.zst",
+                ".tgz",
+                ".txz",
+                ".tbz2",
+                ".tar",
+                ".zip",
+                ".rar",
+                ".7z",
+                ".rpm",
+                ".deb",
+                ".gz",
+                ".zst",
+            )
+            files = [p for p in extracted_root.rglob("*") if p.is_file()]
+            payload = [p for p in files if p.name != "extraction_manifest.json"]
+            if payload:
+                archives = [p for p in payload if p.name.lower().endswith(archive_suffixes)]
+                if len(archives) == len(payload):
+                    failed.append(
+                        f"extraction: {len(archives)} nested archive(s) left unpacked "
+                        f"(raise EXTRACT_MAX_DEPTH) — scanners saw no real files"
+                    )
+        except OSError:
+            pass
+
     # De-duplicate, preserve order.
     seen: set[str] = set()
     return [item for item in failed if not (item in seen or seen.add(item))]
@@ -355,6 +458,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
     cve_count = _cve_bin_tool_count(cve)
     input_sha = _input_sha256(extraction)
     input_hashes = _input_hashes(extraction)
+    target_hashes = _target_hashes(base, extraction)
     grype_state = _grype_provenance_state(prov_grype)
     cve_state = _cve_provenance_state(prov_cve)
     trivy_state = _trivy_provenance_state(prov_trivy)
@@ -414,6 +518,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "update_cve_db": cve_state["update_cve_db"],
         "input_sha256": input_sha or "",
         "input_hashes": input_hashes,
+        "target_hashes": target_hashes,
         "db_snapshot_id": snapshot_id,
     }
     status = {
@@ -427,6 +532,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
         "timestamp_utc": timestamp,
         "input": {"sha256": input_sha or ""},
         "input_hashes": input_hashes,
+        "target_hashes": target_hashes,
         "db_snapshot_id": snapshot_id,
     }
     db_snapshot = {

@@ -31,6 +31,11 @@ _DEFAULT_COPY_DIRS = (
     "reports/trivy",
     "reports/cve-bin-tool",
     "reports/osv-scanner",
+    # Specialized-analyzer outputs (manifest/DEX/PE summaries).  Without these
+    # the analyzer's human-readable report survived only in live artifacts/ and
+    # vanished from the run's evidence snapshot.
+    "reports/apk",
+    "reports/win",
     "reports/final",
     "provenance",
 )

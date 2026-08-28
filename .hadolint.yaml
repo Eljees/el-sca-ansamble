@@ -20,6 +20,13 @@ ignored:
   # DL3015: --no-install-recommends — we already pass it; hadolint sometimes
   #         flags multi-line RUN structures incorrectly.
   - DL3018
+  # DL3042: pip --no-cache-dir.  Every pip layer here runs under
+  #         `--mount=type=cache,target=.../pip`, so the cache lives in a
+  #         BuildKit cache mount and never lands in the image.  Adding
+  #         --no-cache-dir would disable exactly the mechanism we want.
+  #         hadolint ≥2.13 understands cache mounts; the pinned hadolint in
+  #         hadolint-action@v3.1.0 still flags them.
+  - DL3042
   # SC2086: word splitting inside RUN — intentional for the trivy flags
   #         renderer (TRIVY_RENDERED_FLAGS is space-separated arg list).
   - SC2086
