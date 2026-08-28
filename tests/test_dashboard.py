@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from resilient_updates.dashboard import (
+    COMPOSE_VERSION_DEFAULTS,
     list_runs,
     render_index,
     render_run,
@@ -447,13 +448,38 @@ def test_tool_status_reports_versions_and_freshness(tmp_path: Path):
     by_name = {t["name"]: t for t in data["tools"]}
     assert {"Syft", "Grype", "Trivy", "cve-bin-tool"} <= set(by_name)
     # Engine versions fall back to compose defaults when no .env present.
-    assert by_name["Grype"]["version"].startswith("v0.112")
-    assert by_name["Trivy"]["version"] == "0.64.1"
+    # Assert against the constant rather than a literal: pinning literals here is
+    # exactly what let the cards advertise v0.112.0/0.64.1 for a whole upgrade.
+    assert by_name["Grype"]["version"] == COMPOSE_VERSION_DEFAULTS["GRYPE_VERSION"]
+    assert by_name["Trivy"]["version"] == COMPOSE_VERSION_DEFAULTS["TRIVY_VERSION"]
     # DB freshness picked up from provenance.
     assert by_name["Grype"]["db_status"] == "active"
     assert by_name["Grype"]["db_updated"] == "2026-06-04T07:57:06Z"
     assert by_name["cve-bin-tool"]["db_status"] == "fresh"
     assert by_name["cve-bin-tool"]["db_updated"] == "2026-06-02T23:50:01+00:00"
+
+
+def test_compose_defaults_match_versions_env():
+    """versions.env is the source of truth; the last-resort constants must track it.
+
+    Drift between the two is not cosmetic: it is what made the GUI advertise
+    engines two upgrades behind what was actually scanning.
+    """
+    repo_root = Path(__file__).resolve().parent.parent
+    declared = {}
+    for raw in (repo_root / "versions.env").read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        k, v = k.strip(), v.strip()
+        if k.endswith("_VERSION") and v:
+            declared[k] = v
+    for key, fallback in COMPOSE_VERSION_DEFAULTS.items():
+        assert key in declared, f"{key} missing from versions.env"
+        assert declared[key] == fallback, (
+            f"{key}: versions.env has {declared[key]}, COMPOSE_VERSION_DEFAULTS has {fallback}"
+        )
 
 
 def test_env_version_override(tmp_path: Path):
