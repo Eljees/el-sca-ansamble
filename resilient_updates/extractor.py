@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ._io import sha256_file as _sha256_file
+from ._io import hash_triple as _hash_triple
 
 ARCHIVE_SUFFIXES = (
     ".tar.gz",
@@ -512,17 +512,24 @@ def extract_artifacts(
         )
         # Guard the hash: a vanished/locked file must not abort the whole run
         # (this is computed before the try/except that wraps extraction).
+        # Hash the archive once (md5+sha1+sha256 in a single pass) so the
+        # manifest carries every digest the report UI shows.  Computed here,
+        # in-container, where the archive definitely exists — run_summary then
+        # reads these back instead of re-hashing on the host (the recorded
+        # "archive" path is a container path and would not resolve there).
         try:
-            archive_sha = _sha256_file(archive_path)
+            archive_hashes = _hash_triple(archive_path)
         except OSError as exc:
-            archive_sha = None
-            manifest["failures"].append({"archive": str(archive_path), "error": f"sha256 failed: {exc}"})
+            archive_hashes = {}
+            manifest["failures"].append({"archive": str(archive_path), "error": f"hash failed: {exc}"})
         item: dict[str, Any] = {
             "archive": str(archive_path),
             "relative_path": rel,
             "kind": kind,
             "depth": depth,
-            "sha256": archive_sha,
+            "md5": archive_hashes.get("md5"),
+            "sha1": archive_hashes.get("sha1"),
+            "sha256": archive_hashes.get("sha256"),
             "output_dir": str(target_dir),
             "status": "pending",
         }
@@ -559,13 +566,31 @@ def extract_artifacts(
     extracted_count = sum(1 for item in manifest["items"] if item["status"] == "extracted")
     for unsafe in stats.unsafe_members:
         manifest["failures"].append({"member": unsafe["member"], "error": unsafe["reason"]})
-    if source_root.is_file() and extracted_count == 0 and not manifest["failures"]:
-        manifest["failures"].append(
-            {
-                "archive": str(source_root),
-                "error": "input is a file but no supported archive entries were extracted",
+    # A single non-archive input file (Windows .exe/.msi installer, a bare
+    # binary, a lone config) is NOT an extraction error: the downstream scanners
+    # read the raw /scan-target directly, and this stage simply has nothing to
+    # unpack. Record it as a benign passthrough so the run stays "pass" and the
+    # Extract stage is not flagged red. Only a file that WAS a recognised archive
+    # yet yielded nothing stays a failure. (2026-07-17: a .exe installer turned
+    # Extract red although every scanner + report completed — CYBERSEC-13388.)
+    input_was_archive = bool(source_root.is_file() and _archive_kind(source_root) is not None)
+    manifest["input_was_archive"] = input_was_archive
+    manifest["passthrough_count"] = 0
+    if source_root.is_file() and extracted_count == 0:
+        if input_was_archive:
+            if not manifest["failures"]:
+                manifest["failures"].append(
+                    {
+                        "archive": str(source_root),
+                        "error": "input is a recognised archive but no entries were extracted",
+                    }
+                )
+        else:
+            manifest["passthrough"] = {
+                "path": str(source_root),
+                "reason": "input is not a supported archive; scanned as-is by downstream tools",
             }
-        )
+            manifest["passthrough_count"] = 1
 
     manifest["finished_at_utc"] = _now_iso()
     manifest["status"] = "pass" if not manifest["failures"] else "warn"

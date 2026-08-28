@@ -121,9 +121,9 @@ Before you run:
 
 ### Run in Background
 ```powershell
-$job = Start-Job { 
+$job = Start-Job {
   cd "D:\!ya_drive_sync\YandexDisk\rostel\el-sca-ansamble"
-  .\scripts\windows\run-scan.ps1 -Target "archive.tar.gz" -Clean 
+  .\scripts\windows\run-scan.ps1 -Target "archive.tar.gz" -Clean
 }
 # Check progress
 Get-Job $job | Receive-Job -Keep
@@ -240,6 +240,6 @@ rm -rf artifacts/*
 
 ---
 
-**For detailed guide:** Read `docs/deployment-example.md`  
-**For what changed:** Read `CHANGELOG.md`  
+**For detailed guide:** Read `docs/deployment-example.md`
+**For what changed:** Read `CHANGELOG.md`
 **Status:** ✅ Ready to use | **Version:** 3.0 | **Last Updated:** 2026-05-26

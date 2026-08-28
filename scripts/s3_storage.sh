@@ -21,7 +21,6 @@ export EXTRACT_INPUT_HOST="${EXTRACT_INPUT_HOST:-/tmp/el-sca-s3-noextract}"
 # same SeaweedFS container and the same DB volumes.
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-el-sca-ansamble}"
 
-S3_ALIAS="${EL_SCA_S3_ALIAS:-elsca}"
 S3_BUCKET="${EL_SCA_S3_BUCKET:-el-sca}"
 STAGING_ROOT="artifacts/s3-staging"
 

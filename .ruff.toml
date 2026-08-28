@@ -18,6 +18,11 @@ extend-exclude = [
   "-prompts",
   "--exps",
   "to_analyze",
+  # ruff >=0.16 also formats ```python blocks inside Markdown.  Our docs quote
+  # *fragments* (a keyword argument, half a call), which the formatter happily
+  # rewrites into different code — `backoff_seconds=int(x),` became
+  # `backoff_seconds = (int(x),)`.  Docs are prose; keep ruff out of them.
+  "*.md",
 ]
 
 [lint]
@@ -52,6 +57,9 @@ ignore = [
   "B017",   # broad pytest.raises is fine in tests
   "PT011",
   "UP036",  # version guards may target py3.10 sandbox even though target-version = py312
+]
+"resilient_updates/artifact_catalog.py" = [
+  "RUF001", # Cyrillic->Latin transliteration table; the Cyrillic keys ARE the data
 ]
 "resilient_updates/dashboard.py" = [
   "RUF001", # HTML template intentionally uses Cyrillic uppercase (НЕ = NOT in Russian)

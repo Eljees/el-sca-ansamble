@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from hashlib import sha1, sha256, sha512
+from hashlib import md5, sha1, sha256, sha512
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,43 @@ def hash_pair(path: Path) -> dict[str, str]:
     return {"sha1": sha1_digest.hexdigest(), "sha256": sha256_digest.hexdigest()}
 
 
+def md5_file(path: Path) -> str:
+    """Hex-encoded MD5 of ``path``.  Streams in 1 MiB chunks.
+
+    MD5 is a non-security provenance fingerprint (operators routinely
+    cross-check delivered artifacts by MD5); it is never used here as a
+    security primitive — ``usedforsecurity=False`` keeps it FIPS-friendly
+    and silences bandit B324.
+    """
+    digest = md5(usedforsecurity=False)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_CHUNK), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hash_triple(path: Path) -> dict[str, str]:
+    """Return ``{"md5", "sha1", "sha256"}`` of a file in a single pass.
+
+    Streams the bytes once and feeds all three hashers, so it costs the
+    same I/O as a single digest.  md5/sha1 are provenance fingerprints,
+    not security primitives (bandit B324).
+    """
+    md5_digest = md5(usedforsecurity=False)
+    sha1_digest = sha1(usedforsecurity=False)
+    sha256_digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_CHUNK), b""):
+            md5_digest.update(chunk)
+            sha1_digest.update(chunk)
+            sha256_digest.update(chunk)
+    return {
+        "md5": md5_digest.hexdigest(),
+        "sha1": sha1_digest.hexdigest(),
+        "sha256": sha256_digest.hexdigest(),
+    }
+
+
 def sha256_dir(path: Path) -> str:
     """Stable content-hash of a directory tree.
 
@@ -99,6 +136,37 @@ def sha256_dir(path: Path) -> str:
                 digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def hash_triple_dir(path: Path) -> dict[str, str]:
+    """Stable ``{"md5", "sha1", "sha256"}`` content-hash of a directory tree.
+
+    Uses the exact same visiting order and framing as :func:`sha256_dir`
+    (sorted relative paths; ``relpath + NUL + bytes + NUL`` per file), so
+    the ``sha256`` returned here is byte-for-byte identical to
+    ``sha256_dir``.  md5 and sha1 are folded in the same single walk.
+    """
+    md5_digest = md5(usedforsecurity=False)
+    sha1_digest = sha1(usedforsecurity=False)
+    sha256_digest = sha256()
+    digests = (md5_digest, sha1_digest, sha256_digest)
+    for item in sorted(p for p in path.rglob("*") if p.is_file()):
+        frame = str(item.relative_to(path)).replace("\\", "/").encode("utf-8")
+        for d in digests:
+            d.update(frame)
+            d.update(b"\0")
+        with item.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(_CHUNK), b""):
+                md5_digest.update(chunk)
+                sha1_digest.update(chunk)
+                sha256_digest.update(chunk)
+        for d in digests:
+            d.update(b"\0")
+    return {
+        "md5": md5_digest.hexdigest(),
+        "sha1": sha1_digest.hexdigest(),
+        "sha256": sha256_digest.hexdigest(),
+    }
 
 
 def short_hash(*parts: str, length: int = 12) -> str:

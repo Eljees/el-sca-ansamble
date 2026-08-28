@@ -74,9 +74,23 @@ _latest_report_for() {
   base="$(basename -- "$tgt")"
   base="${base%.*}"          # strip last extension
   base="${base%.tar}"        # strip .tar from .tar.gz
-  ls -1t -- "${dir}"/${base}_report_*.md 2>/dev/null \
-    | grep -v '_high_critical_' \
-    | head -n1
+  # Newest by mtime, skipping the digests this script itself writes.  A glob +
+  # `-nt` comparison instead of `ls | grep` so filenames with spaces or dashes
+  # survive intact (shellcheck SC2010).
+  local newest="" candidate
+  for candidate in "${dir}"/${base}_report_*.md; do
+    [[ -f "$candidate" ]] || continue
+    [[ "$candidate" == *_high_critical_* ]] && continue
+    if [[ -z "$newest" || "$candidate" -nt "$newest" ]]; then
+      newest="$candidate"
+    fi
+  done
+  if [[ -n "$newest" ]]; then
+    printf '%s\n' "$newest"
+  fi
+  # "nothing found" is a normal outcome the caller checks for; never fail the
+  # enclosing `set -e` shell over it.
+  return 0
 }
 
 _report_date() {

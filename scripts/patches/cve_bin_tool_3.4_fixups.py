@@ -82,9 +82,7 @@ def _replace_once(path: Path, old: str, new: str, *, marker: str) -> str:
             f"--- expected ---\n{old}"
         )
     if text.count(old) != 1:
-        raise SystemExit(
-            f"PATCH FAILED: {path.name}: expected exactly 1 match, found {text.count(old)}"
-        )
+        raise SystemExit(f"PATCH FAILED: {path.name}: expected exactly 1 match, found {text.count(old)}")
     path.write_text(text.replace(old, new), encoding="utf-8")
     return "patched"
 
@@ -125,9 +123,7 @@ def fix_cvedb_metric_constants() -> str:
         '            (CVSS_3_METRIC_ID, "CVSS-3"),\n'
         "        ]\n"
     )
-    part2 = _replace_once(
-        path, old_data, new_data, marker='(EPSS_METRIC_ID, "EPSS"),'
-    )
+    part2 = _replace_once(path, old_data, new_data, marker='(EPSS_METRIC_ID, "EPSS"),')
 
     if part1 == part2 == "already-patched":
         return "already-patched"
@@ -148,9 +144,7 @@ def fix_epss_source() -> str:
         "        # PATCH(el-sca): epss_metric_id attribute removed -- rows are tagged\n"
         "        # with cvedb.EPSS_METRIC_ID (upstream main backport).\n"
     )
-    a = _replace_once(
-        path, old_init, new_init, marker="PATCH(el-sca): epss_metric_id attribute removed"
-    )
+    a = _replace_once(path, old_init, new_init, marker="PATCH(el-sca): epss_metric_id attribute removed")
 
     # (b) update_epss: drop the cursor parameter -- the 3.4 call site invokes
     # update_epss() with no arguments, so every EPSS update died with a
@@ -160,9 +154,7 @@ def fix_epss_source() -> str:
         "    # PATCH(el-sca): cursor parameter removed (upstream main backport).\n"
         "    async def update_epss(self):\n"
     )
-    b = _replace_once(
-        path, old_sig, new_sig, marker="PATCH(el-sca): cursor parameter removed"
-    )
+    b = _replace_once(path, old_sig, new_sig, marker="PATCH(el-sca): cursor parameter removed")
 
     # (c) no DB lookup during the fetch phase.
     old_fetch = (
@@ -178,29 +170,22 @@ def fix_epss_source() -> str:
         "        # phase must not touch the database (upstream main backport).\n"
         "        await self.download_epss_data()\n"
     )
-    c = _replace_once(
-        path, old_fetch, new_fetch, marker="PATCH(el-sca): EPSS_id_finder(cursor) call removed"
-    )
+    c = _replace_once(path, old_fetch, new_fetch, marker="PATCH(el-sca): EPSS_id_finder(cursor) call removed")
 
     # (d) delete the EPSS_id_finder method entirely.
     old_finder = (
         "    def EPSS_id_finder(self, cursor):\n"
         '        """Search for metric id in EPSS table"""\n'
-        "        query = \"\"\"\n"
+        '        query = """\n'
         "        SELECT metrics_id FROM metrics\n"
         '        WHERE metrics_name = "EPSS"\n'
-        "        \"\"\"\n"
+        '        """\n'
         "        cursor.execute(query)\n"
         "        self.epss_metric_id = cursor.fetchall()[0][0]\n"
         "\n"
     )
-    new_finder = (
-        "    # PATCH(el-sca): EPSS_id_finder() deleted (upstream main backport).\n"
-        "\n"
-    )
-    d = _replace_once(
-        path, old_finder, new_finder, marker="PATCH(el-sca): EPSS_id_finder() deleted"
-    )
+    new_finder = "    # PATCH(el-sca): EPSS_id_finder() deleted (upstream main backport).\n\n"
+    d = _replace_once(path, old_finder, new_finder, marker="PATCH(el-sca): EPSS_id_finder() deleted")
 
     # (e) parse_epss_data(): tag rows with the constant, not a DB-resolved id.
     old_parse = (
@@ -235,9 +220,7 @@ def main() -> int:
         "epss_source": fix_epss_source(),
     }
     print("[cve-bin-tool 3.4 fixups]", results)
-    if all(v == "already-patched" for v in results.values()) and os.environ.get(
-        "CVEBT_PATCH_STRICT"
-    ):
+    if all(v == "already-patched" for v in results.values()) and os.environ.get("CVEBT_PATCH_STRICT"):
         print(
             "WARNING: every fix already applied -- unexpected on a clean install",
             file=sys.stderr,

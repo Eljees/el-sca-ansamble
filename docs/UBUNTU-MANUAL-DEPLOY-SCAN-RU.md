@@ -225,7 +225,7 @@ NO_PROXY=localhost,127.0.0.1
 Перезапустите дашборд после изменения `.env`. Теперь «☢ Обновить ВСЁ» использует
 прокси.
 
-> **Важно — SOCKS5 и HTTPS_PROXY не совмещать:**  
+> **Важно — SOCKS5 и HTTPS_PROXY не совмещать:**
 > Если прокси — SOCKS5, указывайте только `ALL_PROXY`, не `HTTPS_PROXY`.
 > Go-бинарники (Grype, Trivy) отдают приоритет `HTTPS_PROXY` перед `ALL_PROXY`,
 > и попытка HTTP CONNECT на SOCKS5-порт приведёт к ошибке.

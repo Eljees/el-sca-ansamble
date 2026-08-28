@@ -8,6 +8,244 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **APK-поставки работают через морду** (`abe9a8a`, CYBERSEC-13942): дропзона
+  давно обещала `.apk`, но маршрута в оркестраторе не было — загрузка уходила
+  в généric-путь без манифеста, DEX и нативных либ. Теперь зеркало ветки
+  `run-scan.sh FORMAT==apk` в форме stage 1.6 (как win-analyzer): standalone
+  `.apk` минует генерик-распаковку (анализатор вскрывает сам), а вложенные
+  поставки распознаются **после** распаковки по `*.apk` в дереве на любой
+  глубине — первый же боевой случай был zip→zip→apk, и подглядывание в
+  листинг архива видит только один уровень. Trivy в APK-режиме отключается
+  (нечего сказать), cve-bin-tool **бинарно** сканирует извлечённые `.so` с
+  `CVE_BIN_TOOL_AUTO_SBOM=0` (новый whitelist в compose) — иначе SBOM
+  fast-path молча пропустил бы нативную ногу, которую Grype не покрывает.
+  Попутно закрыта однодневная регрессия: перевод сканеров на
+  `scan-input.cdx.json` сломал пути без Syft (APK/win) — пустая база слияния;
+  `build_scan_input` теперь падает назад на синтетический `syft.json`. Оба
+  входа чистят SBOM'ы и пер-инструментные отчёты прошлого прогона (кроме
+  resume): специализированные ветки пропускают стадии, и протухший
+  cyclonedx/trivy-отчёт всплыл бы находками чужого артефакта.
+  Верификация на iDocs (Qt, 95 `.so`, zip→zip→apk через GUI): SBOM 135
+  компонентов (манифест+DEX+либы), cve-bin-tool **22 находки** (11 HIGH) в
+  статически влинкованных библиотеках Qt — то, что генерик-путь не видел
+  вовсе; отчёт называет объект `android-build-iDocs-…-release-signed.apk`.
+  Известная мелочь: summary в run-снапшот может сняться раньше финальных
+  отчётов (гонка на быстрых прогонах) — лечится перегенерацией
+  report-collector'ом; в очереди на фикс.
+
+- **SBOM-поставки анализируются по содержимому** (`736939a`, CYBERSEC-13860):
+  заказчик прислал два CycloneDX-документа вместо самих приложений. Syft мог
+  сделать только то, что умеет, — каталогизировать zip с двумя `.json`, —
+  Grype сматчил этот SBOM, и отчёт честно сообщил «ничего не найдено».
+  В документах было 713 Maven-компонентов и 231 известная уязвимость,
+  9 из них Critical (`tomcat-embed-core 9.0.83`, netty, spring-webflux, camel).
+  Новый `resilient_updates/sbom_ingest.py` определяет CycloneDX / SPDX /
+  Syft-документы **по содержимому** (по имени их не поймать), нормализует к
+  CycloneDX и сливает с SBOM от Syft в `artifacts/sbom/scan-input.cdx.json`.
+  Слияние, а не замена: поставка может содержать и SBOM, и бинарники. Дедуп
+  по `purl`, иначе по `name@version`, поэтому повторный прогон стабилен и наш
+  же вывод обратно не подмешивается. Сервис `sbom-ingest` объявлен
+  `depends_on: service_completed_successfully` у `grype-scanner` — файл
+  гарантированно существует при **любом** способе запуска, без правки шести
+  рецептов; `cve-bin-tool` предпочитает его в auto-SBOM. Когда SBOM в
+  поставке нет, файл равен обычному выводу Syft и поведение не меняется.
+  Проверено через GUI: 2 SBOM → 701 компонент → 231 находка.
+
+### Changed
+
+- **Движки обновлены** (2026-08-10): Syft `v1.20.0`→`v1.50.0`, Grype
+  `v0.112.0`→`v0.116.1`, Trivy `0.64.1`→`0.73.0`. Grype и Syft переехали с
+  `ghcr.io` на Docker Hub: блобы ghcr редиректят на
+  `pkg-containers.githubusercontent.com`, который корп-прокси пересобирает
+  своим CA → `docker pull` падает с x509. Проверено на деплое: оба ghcr-тега
+  **не тянутся**, идентичные образы с Docker Hub — тянутся. Пины по digest
+  зафиксированы в коммите. ⚠️ Экосистему Trivy дважды компрометировали в
+  марте 2026 (CVE-2026-33634): вредоносные `v0.69.4`, DockerHub-образы
+  `v0.69.5`/`v0.69.6`, 76 из 77 тегов `trivy-action` и все теги `setup-trivy`.
+  Наш прежний пин `0.64.1` старше инцидента — деплой не был затронут; `0.73.0`
+  заведомо после ремедиации. Никогда не резолвить Trivy через
+  `trivy-action`/`setup-trivy` и не переводить эти пины на `latest`. (`d438f7c`)
+
+### Fixed
+
+- **Апдейтер cve-bin-tool был мёртв с 1 августа, и это никто не видел.**
+  Пересобранный `0.1.1` образ приехал без каталога `/opt/app/scripts`, а
+  запечённый ENTRYPOINT на него ссылался → `cannot open
+  /opt/app/scripts/update_cve_bin_tool.sh`, стадия падала за ~4 с с rc=2,
+  а бочка продолжала показывать дату последнего удачного импорта. Апдейтер
+  переведён на обёртку из примонтированного `/workspace` (сканер уже был
+  так переведён) — фиксы обёртки теперь едут `git pull`, без пересборки.
+  (`3222e59`)
+- **Trivy 0.73.0 жёстко падал на Maven Central.** Без `--offline-scan` он
+  резолвит родительские POM с `repo.maven.apache.org`; егресс проксирован,
+  прокси отвечает `429`, Trivy эскалирует это в FATAL — стадия умирает,
+  отчёт остаётся пустым. Флаг стоял только в режиме `offline`, а пайплайн
+  ходит через `scan`. Поймано контрольным сканом сразу после апгрейда:
+  находки по тому же артефакту ушли с 6 в **0**. (`d0f9ed1`)
+- **Таймаут cve-bin-tool был рассчитан на другую эпоху.** 600 с в деплойном
+  `.env` (и 1800 с дефолт) закладывались под побайтовое сканирование крупных
+  Go-бинарей. С тех пор как вложенные архивы распаковываются полностью, одна
+  поставка даёт SBOM на 25 637 компонентов (14 ГБ дерево, 27 МБ CycloneDX), и
+  полукап по каждому компоненту вылетал за бюджет: стадия писала `timeout.flag`
+  и **0** находок там, где раньше «находилось» 48. Дефолт поднят до 3600 с,
+  документация, обещавшая 600 с, поправлена. (`cf62dbd`)
+- **Провал стадии больше нельзя замаскировать нулём.**
+  `run_summary._tool_failures` теперь ловит две новые ситуации: стадия с
+  `status=error` в `pipeline_state.json` и отчёт инструмента **старше**
+  extraction-манифеста прогона (протухший остаток). Именно эта комбинация
+  (стадия упала + уцелел старый `[]`) месяц рисовала «0 находок, ошибок нет».
+  (`df03ad1`)
+- **volume-init никогда не работал.** Проверка «есть ли чужие владельцы»
+  использовала GNU-синтаксис `find ! -uid 1001`, которого нет в busybox, а
+  ошибка глушилась `2>/dev/null` — страж вечно рапортовал «ok», и root-овый
+  `cve.db` после активации под root убивал appuser-сканер на открытии.
+  Заменено на busybox-совместимое `! -user 1001`, stderr больше не глушится,
+  и volinit гоняется не только перед обновлениями, но и перед сканами.
+  (`df03ad1`)
+
+  **Итог верификации** (CYBERSEC-13529, makarov-i-886188.gz, 3.4 ГБ →
+  14 ГБ после распаковки): `status=done`, `tool_failures: none`, 27 мин.
+  Syft **13 812** компонентов, Grype **1038**, Trivy **146**, cve-bin-tool
+  **796** — итого **1980** находок (133 CRITICAL / 767 HIGH), политика честно
+  говорит `fail: CRITICAL=133>0`. Для сравнения: прогон 26.07 по тому же
+  файлу давал 76 / 7 / 6 / 48 — то есть до фикса вложенных архивов и до
+  починки двух движков объект недосканировался на два порядка.
+
+### Added
+
+- **EPSS наконец работает** (2026-07-31): офлайн-доставка вместо дохлого CDN.
+  Через корп-прокси epss.cyentia.com отдаёт ~450 Б/с (скачивание невозможно);
+  с рабочей станции тот же CSV скачивается за 14 с. Схема: локально скачать
+  `epss_scores-current.csv.gz` → доставить на сервер → положить распакованным
+  в `cve-bin-tool-cache:/cve-bin-tool/epss/epss_scores-current.csv` **и** в
+  `internal-mirror-data:/candidates/*/.cache/cve-bin-tool/epss/` (preseed-
+  активация копирует каталог целиком и иначе стирает файл) → прогон
+  `cve-bin-tool -u latest --disable-data-source "CURL,GAD,NVD,OSV,PURL2CPE,REDHAT,RSD"`.
+  Свежий файл (<24 ч) парсится локально, сеть не нужна. Итог: **354 176
+  EPSS-скоров в cve.db** (строка-в-строку с CSV от 30.07). Попутно два фикса:
+  (1) `cve_bin_tool_3.4_fixups.py` — недоставало `_conn.commit()` после
+  `update_epss()`: вставки уходили в rollback при `close()`, счётчик оставался
+  0 (`822be59`); (2) `update_cve_bin_tool.sh` — сканы теперь с `--metrics`,
+  иначе EPSS из базы не попадает в report.json (`d239319`). Проверено сканом:
+  15/15 находок с `epss_probability`/`epss_percentile`. OSV/PURL2CPE/RSD
+  остаются отключёнными (апстрим-баги 3.4 / sneakernet-источник).
+
+- `scripts/register_local_artifact.sh` (new) + `docs/big-artifacts.md` (new):
+  штатный маршрут для гигабайтных артефактов — доставка на сервер (rsync с
+  `--partial --append-verify` / WinSCP / scp), регистрация в каталоге без
+  HTTP-загрузки (hardlink в `artifacts/uploads/`, метаданные 1-в-1 как у
+  `create_upload` → полноценная карточка), опциональный автозапуск скана
+  (`-s`). Гайд включает настройку WinSCP (приватный ключ → `.ppk`, туннель
+  только для запасного маршрута) и ручной fallback без скрипта. Проверено на
+  3.4 ГБ (CYBERSEC-13529): доставка 5:27 @ ~10 МБ/с, скан ~4 мин, sha256
+  сошлись на всех трёх точках (источник → сервер → отчёт).
+
+### Fixed
+
+- **Не-ASCII имена файлов больше не стираются целиком** (`61d5a35`,
+  CYBERSEC-12318): `_safe_filename` заменял каждый не-ASCII символ на `-`, а
+  затем `.strip(".-")` уносил эти дефисы **вместе с точкой** — от кириллического
+  имени оставалось одно расширение. Поставка на 1.3 ГБ «Сборки на проверку
+  ИБ.zip» сохранилась как файл `zip`, run-директория стала
+  `zip-20260810-124849`, и в отчёте объект назывался `zip`. Распаковка при
+  этом работала (тип определяется по содержимому), поэтому баг был тихий: он
+  стоил не находок, а идентификации — ровно того, ради чего отчёт и нужен.
+  Теперь кириллица транслитерируется (`Sborki-na-proverku-IB.zip`),
+  расширение санитизируется отдельно и всегда выживает, path traversal
+  по-прежнему режется. Оригинальное имя в метаданных карточки сохраняется как
+  есть.
+
+- **Сага «cve-bin-tool: 0 находок» (2026-07-26, четыре бага одним копом):**
+  стадия cve-bin-tool молча падала с ~20.07, а отчёт показывал «0 findings,
+  tool failures: none» с протухшего `[]`-плейсхолдера. Цепочка: (1) активация
+  БД под root оставила `cve.db` root-овым — appuser-сканер умирал на открытии;
+  (2) страж volume-init не лечил это, т.к. busybox-find не знает GNU `-uid`,
+  а ошибка глоталась `2>/dev/null` → чекер вечно рапортовал «ok» — теперь
+  `! -user 1001` и stderr не глушится (`df03ad1`); (3) volinit гонялся только
+  перед обновлениями — теперь и перед сканами (самолечение, `df03ad1`);
+  (4) pre-scan аудит БД убивал скан безмолвно (`set -e` + stdout в /dev/null):
+  stale-вердикт (rc=4) при `CVE_BIN_TOOL_DB_POLICY=degraded-ok` теперь
+  громкий WARN + скан продолжается, прочие коды — внятный FATAL; попутно
+  исправлен POSIX-захват rc (`$?` после `if !` инвертирован) и
+  `CVE_BIN_TOOL_VERIFY_DB` добавлен в whitelist compose (`07c4039`,
+  `2ed5e8d`). Entrypoint сканера переведён на обёртку из **workspace** —
+  фиксы едут git pull'ом без ребилда образа. `run_summary._tool_failures`
+  теперь ловит стадию-error из `pipeline_state.json` и отчёты старше
+  extraction-манифеста — маскировка «нулём» невозможна (`df03ad1`).
+  Верификация: CYBERSEC-13529 (3.4 ГБ) → **cve-bin-tool: 48 находок**
+  (ansible 2.10.4 и др.), итог 61 finding, policy fail CRITICAL=1.
+
+- Экстрактор: одиночный не-архивный вход (Windows `.exe`/`.msi` инсталлятор,
+  бинарь, обычный файл) больше не помечает стадию Extract как `error`. Раньше
+  `_archive_kind()` возвращал None → 0 извлечённых → `cli extract` отдавал
+  `EXIT_VALIDATION_FAILED (3)` → оркестратор красил стадию красным, хотя все
+  сканеры и отчёт завершались (CYBERSEC-13388: avandoc `.exe`). Теперь такой
+  вход — благонадёжный passthrough: `manifest.status="pass"`,
+  `input_was_archive=False`, `passthrough_count=1`, exit 0. Распознанный, но
+  битый/пустой архив по-прежнему остаётся failure. Тесты:
+  `test_extract_artifacts_marks_non_archive_file_as_passthrough`,
+  `test_extract_cli_passes_when_file_input_is_non_archive`.
+- GUI-оркестратор: сканирование Windows-инсталлятора (`.exe`/`.msi`) больше не
+  даёт 0 компонентов. Раньше дашборд гонял общий пайплайн (extract → syft по
+  сырому файлу), а NSIS/Inno/MSI generic-экстрактор не вскрывает → syft
+  каталогизировал 0 компонентов (CYBERSEC-13388: avandoc `.exe`). Теперь
+  `orchestrator.py` повторяет ветку `run-scan.sh FORMAT==win`: детектит
+  инсталлятор (`is_windows_installer_target`), выбирает `SCAN_STAGES_WIN`
+  (стадия **Win-analyzer · SBOM** вместо **SBOM · Syft**), запускает
+  `win-analyzer` (7z/innoextract/msiextract + pefile) → PE-SBOM в
+  `artifacts/sbom/syft.json`; grype читает этот SBOM, cve-bin-tool сканит
+  `extracted/win-installer`. Тесты: `tests/test_win_installer_pipeline.py`.
+- Каталог артефактов: повторные сканы одного файла больше не плодят карточки-клоны
+  в GUI. `ArtifactCatalog._legacy_artifacts` группирует прогоны `_SCA_reports/`
+  по артефакту (ключ = sha256 входа, fallback — имя+case_id): один артефакт →
+  одна карточка с историей прогонов (`runs[]`, новейший = `latest_run_id`).
+  Раньше каждый `_SCA_reports/<target>-<ts>/` становился отдельной
+  `legacy-<run_id>` записью → N сканов avandoc.exe = N дублей. Тест:
+  `test_catalog_dedups_repeated_scans_of_same_artifact`.
+- GUI «Карта анализа»: для Windows-инсталлятора узел SBOM показывает
+  **Win-analyzer** вместо серого «Syft». `renderMap()` жёстко рисовал
+  `mapNode("sbom","Syft")`, а в win-режиме стадия называется `win-analyzer` →
+  ключа `sbom` нет → узел висел серым pending, хотя SBOM реально построен
+  (3 компонента). Теперь узел выбирается по наличию стадии `win-analyzer`.
+- Активация БД на ноде упиралась в `No space left on device`: `activate_best_cve_bin_tool_db`
+  делает `shutil.copytree(candidate → tmp)` и затем публикует в active — файловые
+  источники OSV/RSD (~760k мелких JSON) существуют в ТРЁХ копиях на пике, что
+  переполняет 62 ГБ корень. Обход применён вручную (убрать OSV/RSD из кандидата →
+  активировать компактную базу NVD+GAD+REDHAT+EPSS+PURL2CPE = 5/8). TODO в коде:
+  заменить copytree файловых источников на `os.replace`/hardlink, чтобы снять
+  тройное дублирование (тогда OSV/RSD активируются даже на тесном диске).
+- Дашборд-контейнер (`el-sca-resilient-updater` образ) крутит код ИЗ ОБРАЗА, поэтому
+  фикс мини-бочек (`source_status`) не подхватывался. Временный обход на ноде:
+  bind-mount `./resilient_updates:/opt/app/resilient_updates:ro` + rw-подкаталог
+  `./artifacts/logs` (иначе падал `Read-only file system: dashboard.log`) в
+  `dashboard`-сервисе. Правильное решение — пересобрать образ; отражено в
+  `docs/db-update-manual-ru.md`. Внешний доступ 8088→контейнер:8080 держится
+  через `socat` (на ноде порт-маппинг только `127.0.0.1:8080`).
+- `scripts/sneakernet_build.sh`: CURL возвращён в сборку (best-effort, не фатально
+  при rc=33) — он крошечный (~200 строк про curl) и на проксируемом egress ноды
+  работает. Точечно доадить CURL к готовой базе нельзя: `cve-bin-tool --update`
+  не аддитивен (пересоздаёт БД, одиночный CURL → `CVEDataMissing` → откат).
+- GUI мини-бочки cve-bin-tool: OSV/EPSS/PURL2CPE/RSD красились по строкам
+  `cve_range_by_source`, но это файловые источники (строк в cve.db не пишут) →
+  вечно 0%/красные даже при наличии данных. Теперь `tool_status` берёт их
+  заполненность из `source_status` аудита (файлы в db_root), fallback на строки
+  для NVD/GAD/REDHAT/CURL. Аудит PURL2CPE считает и standalone-файл
+  `purl2cpe/purl2cpe.db`, а не только встроенную таблицу. Тесты:
+  `tests/test_dashboard_source_barrels.py`.
+- EPSS-сид: хост `epss.cyentia.com` мёртв (Cyentia → Empirical Security),
+  сидер качает с `epss.empiricalsecurity.com`, cyentia остался фоллбеком
+  (`cve_db_audit.seed_cve_bin_tool_aux_sources`). (`d3d7829`)
+- Sneakernet-обновление баз cve-bin-tool через Windows-хост: нода 10.2.108.47
+  не достаёт OSV/EPSS/PURL2CPE/RSD (egress-контур режет googleapis, first.org
+  и github.com — проверено пробами). Новые `scripts/sneakernet_build.sh`
+  (посточниковая сборка в изолированных HOME + sqlite-мерж — обход зависания
+  мультиисточникового `--update now` cve-bin-tool 3.4 на быстрой сети),
+  `scripts/sneakernet_export.ps1` (scp + импорт), `scripts/sneakernet_node_import.sh`
+  (распаковка в candidate root + штатные audit/activate). Runbook уровня
+  «промпт для ассистента»: `docs/db-sneakernet-ru.md`.
+
+### Added
+
 - `scripts/patches/verify_cve_bin_tool_epss_fix.py`: офлайн self-check
   пропатченного EPSS-пайплайна на этапе сборки образа cve-bin-tool (fetch без
   БД → init → populate → store) — сборка падает при регрессе патча.
@@ -63,8 +301,33 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `docs/architecture.md`, `docs/operations.md`: актуализированы текущие
   указатели, test-count и описания snapshot/monitor/CI overlay behaviour.
 
+### Changed (perf)
+
+- `orchestrator.py` (`_copy_input_to_run`): входной артефакт ≥ 512 МиБ больше
+  не копируется в `_SCA_reports/<run>/input/`, а **хардлинкуется** (та же ФС →
+  0 лишних байт; inode переживает purge каталожной копии, evidence целы).
+  Мелкие файлы — копия как раньше; cross-device — автоматический фолбэк на
+  копию; resume не перекопирует уже лежащий снапшот. Мотивация: артефакты по
+  3.5 ГБ удваивали место на каждый прогон. (`ccc9a87`)
+
 ### Fixed
 
+- `orchestrator.py` / `extractor.py` / `run_summary.py` / `reporting.py` /
+  `_io.py` / `scripts/report_html.py` / `dashboard.py`: итоговый отчёт (веб-обзор
+  и `.md`) теперь называет **сканируемый объект** и все его хэши. Раньше шапка
+  показывала заглушку `Target: /absolute/path/to/artifact-or-directory` и
+  `UNKNOWN` в хэшах — dashboard-скан не выставлял `SCAN_TARGET_DISPLAY` (оставался
+  дефолт из `.env`), а хэш финальной цели считался от несуществующего пути;
+  `Input SHA-1` терялся, т.к. `run_summary` перехэшировал контейнерный путь,
+  которого нет на хосте. Теперь: orchestrator проставляет `SCAN_TARGET_DISPLAY`
+  = имя загруженного архива и `CASE_ID` = CYBERSEC-id (перекрывая плейсхолдер);
+  extractor пишет `md5+sha1+sha256` архива в манифест одним проходом;
+  `run_summary.derive` добавляет `target_hashes` (хэш дерева `extracted/current`)
+  в `summary.json` / `run_manifest.json`; HTML и Markdown рендерят **MD5 + SHA-1
+  + SHA-256** и для входного архива, и для финальной цели; кнопка Reports
+  открывает **самый свежий** ран артефакта. Проверено живым сканом на
+  развёртке (`SCAgent_Linux_12_5_1.zip` → имя + 6 хэшей, без `UNKNOWN`).
+  (`c2a92c6`)
 - `scripts/patches/cve_bin_tool_3.4_fixups.py` (new) + `Dockerfile.cve-bin-tool`:
   патч **двух** апстрим-багов EPSS в cve-bin-tool 3.4 (3.4 — последняя версия на
   PyPI, бампнуть не на что). (1) `Epss_Source.get_cve_data()` звал

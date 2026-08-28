@@ -48,8 +48,11 @@ def _relative_workspace_path(path: Path, repo_root: Path) -> str:
 
 def _compose_env() -> dict[str, str]:
     env = dict(os.environ)
-    env.setdefault("SCAN_TARGET_HOST", "/tmp/el-sca-s3-noscan")
-    env.setdefault("EXTRACT_INPUT_HOST", "/tmp/el-sca-s3-noextract")
+    # Placeholder bind-mount sources for the scan/extract services, which this
+    # code path never starts: docker compose still refuses to interpolate the
+    # file without them.  Nothing is created, read or written at these paths.
+    env.setdefault("SCAN_TARGET_HOST", "/tmp/el-sca-s3-noscan")  # nosec B108
+    env.setdefault("EXTRACT_INPUT_HOST", "/tmp/el-sca-s3-noextract")  # nosec B108
     env.setdefault("COMPOSE_PROJECT_NAME", "el-sca-ansamble")
     return env
 

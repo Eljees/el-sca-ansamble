@@ -157,8 +157,12 @@ def test_write_run_summary_no_overwrite_keeps_existing(tmp_path: Path, monkeypat
     assert (tmp_path / "db_snapshot.json").exists()
 
 
-def test_extract_cli_fails_when_file_input_has_no_extractable_archives(tmp_path, monkeypatch):
-    from resilient_updates.cli import main
+def test_extract_cli_passes_when_file_input_is_non_archive(tmp_path, monkeypatch):
+    # 2026-07-17: a lone non-archive input (installer/binary/config) is a
+    # benign passthrough — the scanners read the raw target directly, so the
+    # extract stage must exit 0 (not EXIT_VALIDATION_FAILED) and not turn the
+    # Extract stage red. Only a recognised-but-empty archive still fails.
+    from resilient_updates.cli import EXIT_SUCCESS, main
 
     plain_file = tmp_path / "plain.txt"
     plain_file.write_text("not an archive", encoding="utf-8")
@@ -177,7 +181,7 @@ def test_extract_cli_fails_when_file_input_has_no_extractable_archives(tmp_path,
         ],
     )
 
-    assert main() == EXIT_VALIDATION_FAILED
+    assert main() == EXIT_SUCCESS
 
 
 # ---------------------------------------------------------------------------

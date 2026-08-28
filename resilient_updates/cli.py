@@ -681,6 +681,27 @@ def main() -> int:
         action="store_true",
         help="Leave existing sidecar JSONs untouched (default: regenerate every run)",
     )
+
+    ingest_sboms = subparsers.add_parser(
+        "ingest-sboms",
+        help="Merge SBOMs found in the extracted tree with Syft's own into one scan input",
+    )
+    ingest_sboms.add_argument(
+        "--extracted-dir",
+        default="artifacts/extracted/current",
+        help="Tree to search for delivered SBOM documents",
+    )
+    ingest_sboms.add_argument(
+        "--base-cyclonedx",
+        default="artifacts/sbom/cyclonedx.json",
+        help="SBOM Syft generated for this run (merged in as the base)",
+    )
+    ingest_sboms.add_argument(
+        "--output",
+        default="artifacts/sbom/scan-input.cdx.json",
+        help="Merged CycloneDX the scanners consume",
+    )
+    ingest_sboms.add_argument("--repo-root", default=".")
     update = subparsers.add_parser("update")
     update.add_argument("tool", choices=["trivy", "grype", "cve-bin-tool", "vex"])
     proxy_status = subparsers.add_parser(
@@ -884,7 +905,16 @@ def main() -> int:
         )
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         input_is_file = Path(args.input).resolve().is_file()
-        if input_is_file and int(payload.get("extracted_count", 0)) == 0:
+        # Only fail when a RECOGNISED archive yielded nothing. A single
+        # non-archive file (installer/binary/config) is a valid passthrough,
+        # not an error: the scanners read the raw target directly. Guarding on
+        # input_was_archive stops a lone .exe from turning the stage red.
+        if (
+            input_is_file
+            and int(payload.get("extracted_count", 0)) == 0
+            and payload.get("input_was_archive")
+            and int(payload.get("passthrough_count", 0)) == 0
+        ):
             return EXIT_VALIDATION_FAILED
         return EXIT_SUCCESS if payload["status"] in {"pass", "warn"} else EXIT_VALIDATION_FAILED
     if args.command == "render-flags":
@@ -1028,6 +1058,18 @@ def main() -> int:
         )
         print(json.dumps(payload, indent=2))
         return code
+    if args.command == "ingest-sboms":
+        from .sbom_ingest import build_scan_input
+
+        result = build_scan_input(
+            args.extracted_dir,
+            base_cyclonedx=args.base_cyclonedx,
+            output=args.output,
+            repo_root=args.repo_root,
+        )
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return EXIT_SUCCESS
+
     if args.command == "write-run-summary":
         from .run_summary import write_to_disk
 

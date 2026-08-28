@@ -10,8 +10,8 @@
 > `docs/operations.md` (Linux) and `docs/windows-powershell.md`
 > (Windows).  See `docs/INDEX.md` for the full document map.
 
-**Example baseline:** Version 3.0  
-**Date:** 2026-05-15  
+**Example baseline:** Version 3.0
+**Date:** 2026-05-15
 **Status:** ✅ Production Ready
 
 ---
@@ -460,8 +460,8 @@ Get-Job -Id $job.Id | Receive-Job -Wait -AutoRemoveJob
 docker logs -f el-sca-ansamble-cve-bin-tool-scanner-1
 
 # Or check artifacts in real-time
-Get-ChildItem -Path artifacts/reports -Recurse -File | 
-  Sort-Object LastWriteTime -Descending | 
+Get-ChildItem -Path artifacts/reports -Recurse -File |
+  Sort-Object LastWriteTime -Descending |
   Select-Object -First 5 FullName, Length, LastWriteTime
 ```
 
@@ -515,7 +515,7 @@ cat /opt/sca-work/el-sca-ansamble/artifacts/reports/final/*.md | head -50
 
 ### Issue 2: Container Metadata Errors
 
-**Symptom:** 
+**Symptom:**
 ```
 failed to create /opt/sca-work/containerd/io.containerd.metadata.v1.bolt/db
 ```
@@ -657,5 +657,5 @@ rm -rf artifacts/*
 
 ---
 
-**Last Updated:** 2026-05-15 14:00 UTC+3  
+**Last Updated:** 2026-05-15 14:00 UTC+3
 **Status:** ✅ Production Ready - v3.0

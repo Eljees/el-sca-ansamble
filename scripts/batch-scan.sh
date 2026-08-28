@@ -136,7 +136,7 @@ fi
 # ── Run loop ────────────────────────────────────────────────────────────────
 TODAY="$(date +%Y-%m-%d)"
 FIRST_JOB=1
-declare -a RESULT_STATUS RESULT_CASE RESULT_REPORT RESULT_SYFT RESULT_GRYPE RESULT_CBT RESULT_SEV
+declare -a RESULT_STATUS RESULT_CASE RESULT_SYFT RESULT_GRYPE RESULT_CBT RESULT_SEV
 
 idx=0
 for entry in "${JOBS[@]}"; do
@@ -152,7 +152,6 @@ for entry in "${JOBS[@]}"; do
     echo "   ! цель не найдена: $TARGET" >&2
     RESULT_STATUS[$idx]="missing-target"
     RESULT_CASE[$idx]="$CASE_ID"
-    RESULT_REPORT[$idx]=""
     RESULT_SYFT[$idx]=""; RESULT_GRYPE[$idx]=""; RESULT_CBT[$idx]=""; RESULT_SEV[$idx]=""
     idx=$((idx + 1))
     continue
@@ -178,7 +177,6 @@ for entry in "${JOBS[@]}"; do
     echo "   ! run-scan.sh exit $rc" >&2
     RESULT_STATUS[$idx]="failed"
     RESULT_CASE[$idx]="$CASE_ID"
-    RESULT_REPORT[$idx]=""
     RESULT_SYFT[$idx]=""; RESULT_GRYPE[$idx]=""; RESULT_CBT[$idx]=""; RESULT_SEV[$idx]=""
     idx=$((idx + 1))
     continue
@@ -200,7 +198,6 @@ for entry in "${JOBS[@]}"; do
     echo "   ! сегодняшнего отчёта нет в $TARGET_DIR" >&2
     RESULT_STATUS[$idx]="no-report"
     RESULT_CASE[$idx]="$CASE_ID"
-    RESULT_REPORT[$idx]=""
     RESULT_SYFT[$idx]=""; RESULT_GRYPE[$idx]=""; RESULT_CBT[$idx]=""; RESULT_SEV[$idx]=""
     idx=$((idx + 1))
     continue
@@ -208,7 +205,6 @@ for entry in "${JOBS[@]}"; do
 
   # Rewrite the # CYBERSEC-… header line if explicit case differs.
   if [[ $SKIP_REWRITE -eq 0 && -n "$CASE_ID" ]]; then
-    head_line="$(head -n 1 "$REPORT" || true)"
     if ! grep -qE "^# ${CASE_ID}:" "$REPORT"; then
       python3 -c '
 import re, sys, pathlib
@@ -230,7 +226,6 @@ p.write_text(text, encoding="utf-8")
 
   RESULT_STATUS[$idx]="ok"
   RESULT_CASE[$idx]="$CASE_ID"
-  RESULT_REPORT[$idx]="$REPORT"
   RESULT_SYFT[$idx]="${SYFT:-}"
   RESULT_GRYPE[$idx]="${GRYPE:-}"
   RESULT_CBT[$idx]="${CBT:-}"
