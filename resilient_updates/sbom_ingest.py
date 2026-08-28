@@ -28,6 +28,7 @@ Syft and the vendor is counted once.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
@@ -248,12 +249,10 @@ def build_scan_input(
     out = Path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-    try:
-        # The pipeline mixes uids (host-side root, appuser containers); a 0644
-        # root-owned scan input blocks every later rewrite from uid 1001.
+    # The pipeline mixes uids (host-side root, appuser containers); a 0644
+    # root-owned scan input blocks every later rewrite from uid 1001.
+    with contextlib.suppress(OSError):
         out.chmod(0o666)
-    except OSError:
-        pass
 
     return {
         "output": str(out),
@@ -264,4 +263,4 @@ def build_scan_input(
     }
 
 
-__all__ = ["sniff", "detect_sboms", "components_of", "build_scan_input"]
+__all__ = ["build_scan_input", "components_of", "detect_sboms", "sniff"]

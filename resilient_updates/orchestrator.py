@@ -1022,10 +1022,8 @@ class JobRegistry:
                 "reports/trivy/report.json",
                 "reports/cve-bin-tool/report.json",
             ):
-                try:
+                with contextlib.suppress(OSError):
                     (self.repo_root / "artifacts" / _rel).unlink()
-                except OSError:
-                    pass
         # Clear stale extraction output before each run.  A leftover
         # extracted/current (e.g. created by an earlier host process, or owned by
         # a different container uid) makes the in-container extractor fail with
@@ -1120,10 +1118,8 @@ class JobRegistry:
                     "подключаю apk-analyzer"
                 )
                 for p in apk_hits[:3]:
-                    try:
+                    with contextlib.suppress(ValueError):
                         job.feed_line(f"  · {p.relative_to(_cur)}")
-                    except ValueError:
-                        pass
 
         # Stage 1.6 — apk-analyzer (Android packages only). Parses the manifest
         # and DEX via androguard, extracts native .so libs to

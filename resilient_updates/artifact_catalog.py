@@ -51,6 +51,8 @@ def _write_json(path: Path, payload: Any) -> None:
 # every non-ASCII character became "-", and .strip(".-") then ate the dashes
 # together with the dot, taking the extension with them.  The artifact card,
 # the run directory and the report's "Target" all inherited that "zip".
+# fmt: off
+# A lookup table reads as a table; one pair per line would be 33 lines of noise.
 _TRANSLIT = {
     "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
     "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
@@ -58,6 +60,7 @@ _TRANSLIT = {
     "ф": "f", "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch",
     "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
 }
+# fmt: on
 
 
 def _transliterate(text: str) -> str:
