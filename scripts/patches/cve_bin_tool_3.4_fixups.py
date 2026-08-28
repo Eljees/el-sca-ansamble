@@ -342,15 +342,10 @@ def fix_epss_hardening() -> str:
         "        else:\n"
         "            await self._download_and_save()\n"
     )
-    b = _replace_once(
-        path, old_dl, new_dl, marker="PATCH(el-sca): download deduplicated into helpers"
-    )
+    b = _replace_once(path, old_dl, new_dl, marker="PATCH(el-sca): download deduplicated into helpers")
 
     # (c) tolerate malformed CSV rows instead of crashing on unpack.
-    old_rows = (
-        "        for row in reader:\n"
-        "            cve_id, epss_score, epss_percentile = row[:3]\n"
-    )
+    old_rows = "        for row in reader:\n            cve_id, epss_score, epss_percentile = row[:3]\n"
     new_rows = (
         "        for row in reader:\n"
         "            # PATCH(el-sca): skip malformed rows instead of crashing on unpack.\n"
@@ -359,9 +354,7 @@ def fix_epss_hardening() -> str:
         "                continue\n"
         "            cve_id, epss_score, epss_percentile = row[:3]\n"
     )
-    c = _replace_once(
-        path, old_rows, new_rows, marker="PATCH(el-sca): skip malformed rows"
-    )
+    c = _replace_once(path, old_rows, new_rows, marker="PATCH(el-sca): skip malformed rows")
 
     # (d) make the real failure reason visible -- the 3.4 TypeError went
     # unnoticed precisely because this line hid it.
@@ -370,9 +363,7 @@ def fix_epss_hardening() -> str:
         "            # PATCH(el-sca): log the actual exception, not just the fact.\n"
         '            self.LOGGER.error(f"Unable to fetch EPSS ({e!r}), skipping EPSS.")\n'
     )
-    d = _replace_once(
-        path, old_log, new_log, marker="PATCH(el-sca): log the actual exception"
-    )
+    d = _replace_once(path, old_log, new_log, marker="PATCH(el-sca): log the actual exception")
 
     # (e) cvedb.store_epss_data(): EPSS is auxiliary data -- a failure here
     # must never abort the whole cve.db update.
@@ -397,9 +388,7 @@ def fix_epss_hardening() -> str:
         "        finally:\n"
         "            self.db_close()\n"
     )
-    e = _replace_once(
-        cvedb_path, old_store, new_store, marker="PATCH(el-sca): EPSS is auxiliary data"
-    )
+    e = _replace_once(cvedb_path, old_store, new_store, marker="PATCH(el-sca): EPSS is auxiliary data")
 
     results = (a, b, c, d, e)
     if all(r == "already-patched" for r in results):
