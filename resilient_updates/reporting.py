@@ -631,6 +631,21 @@ def build_report(
     elif isinstance(run_manifest, dict) and isinstance(run_manifest.get("target_hashes"), dict):
         target_hashes = run_manifest["target_hashes"]
 
+    # No extraction manifest means either "nothing was unpacked" or "the only
+    # manifest around belonged to another run and was rejected as stale"
+    # (run_summary._read_stale_checked_extraction).  Either way the delivered
+    # artifact IS the scan target — hash it directly rather than printing
+    # UNKNOWN in the block that tells the customer which file was analysed.
+    if not input_hashes and target_path:
+        candidate = Path(str(target_path))
+        if candidate.is_file():
+            try:
+                from .manifest import hash_input_archive
+
+                input_hashes = hash_input_archive(candidate)
+            except Exception:  # noqa: BLE001 — identity is best-effort, never fatal
+                input_hashes = {}
+
     # Collect per-tool DB metadata from db_snapshot.json for the metadata section.
     db_tools: dict[str, Any] = {}
     if isinstance(db_snapshot, dict):

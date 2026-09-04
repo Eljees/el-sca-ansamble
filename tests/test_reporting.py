@@ -415,3 +415,36 @@ def test_markdown_table_fixed_in_empty_when_no_fix():
     lines = [ln for ln in table.splitlines() if "CVE-2024-8888" in ln]
     assert lines, "finding row not found in table"
     assert lines[0].count("|") >= 8  # enough columns
+
+
+def test_input_hashes_fall_back_to_the_target_file(tmp_path: Path):
+    """With no (usable) extraction manifest the delivered file IS the input.
+
+    Standalone APK/installer runs never extract, and after the stale-manifest
+    guard the header would otherwise print UNKNOWN in the very block that tells
+    a customer which file was analysed (CYBERSEC-13942).
+    """
+    import json
+
+    from resilient_updates.reporting import build_report
+
+    root = tmp_path / "artifacts"
+    (root / "sbom").mkdir(parents=True)
+    for tool in ("grype", "trivy", "cve-bin-tool"):
+        (root / "reports" / tool).mkdir(parents=True)
+    (root / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    (root / "reports" / "grype" / "report.json").write_text(json.dumps({"matches": []}), encoding="utf-8")
+    (root / "reports" / "trivy" / "report.json").write_text(json.dumps({"Results": []}), encoding="utf-8")
+    (root / "reports" / "cve-bin-tool" / "report.json").write_text("[]", encoding="utf-8")
+
+    target = tmp_path / "app.apk"
+    target.write_bytes(b"PK\x03\x04 pretend apk")
+
+    out = build_report(root, tmp_path / "r.md", target, "app.apk", "CYBERSEC-1")
+    text = out.read_text(encoding="utf-8")
+
+    import hashlib
+
+    sha = hashlib.sha256(target.read_bytes()).hexdigest()
+    assert f"Input archive SHA-256: `{sha}`" in text
+    assert "Input archive SHA-256: `UNKNOWN`" not in text
