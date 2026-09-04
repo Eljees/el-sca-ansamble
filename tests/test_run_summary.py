@@ -539,3 +539,72 @@ def test_db_drift_all_refreshed():
     trivy = {"update_trivy_db": "refreshed-this-run"}
     result = _db_drift(Path("."), grype, cve, trivy)
     assert result == "refreshed-this-run"
+
+
+def test_stale_extraction_manifest_is_not_used_for_hashes(tmp_path):
+    """A leftover manifest from another ticket must never supply the hashes.
+
+    Regression for CYBERSEC-13942 (published 2026-08-18): the run was a
+    standalone APK, so no extraction happened and
+    extracted/current/extraction_manifest.json still belonged to
+    CYBERSEC-12319, scanned four hours earlier. Its input digest went into the
+    customer-facing report as "Input archive SHA-256: fcb1821d…" — a hash of a
+    different ticket's artifact. Identity of the analysed object is the one
+    field a vulnerability report must not get wrong.
+    """
+    import json
+    import os
+    import time
+
+    from resilient_updates.run_summary import derive
+
+    root = tmp_path / "artifacts"
+    (root / "sbom").mkdir(parents=True)
+    (root / "extracted" / "current").mkdir(parents=True)
+    for tool in ("grype", "trivy", "cve-bin-tool"):
+        (root / "reports" / tool).mkdir(parents=True)
+
+    now = time.time()
+    (root / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    (root / "reports" / "grype" / "report.json").write_text(json.dumps({"matches": []}), encoding="utf-8")
+    os.utime(root / "sbom" / "syft.json", (now, now))
+    os.utime(root / "reports" / "grype" / "report.json", (now, now))
+
+    stale = root / "extracted" / "current" / "extraction_manifest.json"
+    stale.write_text(
+        json.dumps({"items": [{"depth": 0, "sha256": "fcb1821d" * 8, "md5": "dead", "sha1": "beef"}]}),
+        encoding="utf-8",
+    )
+    old = now - 4 * 24 * 3600
+    os.utime(stale, (old, old))
+
+    out = derive(root)
+    assert out["summary"]["input_hashes"] == {}
+    assert "fcb1821d" not in json.dumps(out["summary"])
+
+
+def test_fresh_extraction_manifest_still_supplies_hashes(tmp_path):
+    """The normal case must keep working: this run's own manifest is used."""
+    import json
+    import os
+    import time
+
+    from resilient_updates.run_summary import derive
+
+    root = tmp_path / "artifacts"
+    (root / "sbom").mkdir(parents=True)
+    (root / "extracted" / "current").mkdir(parents=True)
+    (root / "reports" / "grype").mkdir(parents=True)
+
+    now = time.time()
+    (root / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    manifest = root / "extracted" / "current" / "extraction_manifest.json"
+    manifest.write_text(
+        json.dumps({"items": [{"depth": 0, "sha256": "abc123", "md5": "m", "sha1": "s"}]}),
+        encoding="utf-8",
+    )
+    for p in (root / "sbom" / "syft.json", manifest):
+        os.utime(p, (now, now))
+
+    out = derive(root)
+    assert out["summary"]["input_hashes"]["sha256"] == "abc123"

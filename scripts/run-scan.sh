@@ -651,6 +651,16 @@ else
 fi
 
 # ── Collect reports ─────────────────────────────────────────────────
+# The specialized branches re-point SCAN_TARGET_HOST at an intermediate
+# directory for their last scanner leg (apk-native/, win-installer/).  The
+# report must identify the OBJECT OF ANALYSIS, not that scratch directory:
+# CYBERSEC-13942 went to the customer with "Final target SHA-256" holding the
+# digest of artifacts/extracted/apk-native instead of the APK's own hash, and
+# the vendor could not match the report to anything they had shipped.
+# Restore the delivered artifact before the report stages.
+export SCAN_TARGET_HOST="$TARGET_RESOLVED"
+export SCAN_TARGET_DISPLAY="$TARGET_RESOLVED"
+
 # report-collector runs as root (-u 0) so it can always aggregate into the
 # bind-mounted artifacts/ regardless of which uid the scanners left report dirs
 # as (mirrors orchestrator._run_scan and scripts/windows/run-scan.ps1).

@@ -147,6 +147,51 @@ def _input_hashes(extraction_manifest: Any) -> dict[str, str]:
     return recorded
 
 
+# A scan never spans this long; anything older than the run's own scanner
+# output by more than this is a leftover from an earlier run.
+_RUN_WINDOW_SECONDS = 24 * 60 * 60
+
+
+def _read_stale_checked_extraction(base: Path) -> Any:
+    """Read this run's extraction manifest — or nothing, if it is a leftover.
+
+    ``artifacts/`` is shared state.  A run that does NOT extract (standalone
+    APK / Windows installer: the analyzer unpacks internally) leaves whatever
+    ``extracted/current/extraction_manifest.json`` the PREVIOUS run wrote, and
+    every hash in the report header was then taken from it.  CYBERSEC-13942
+    (2026-08-18) was published to the customer with
+    ``Input archive SHA-256: fcb1821d…`` — the input of CYBERSEC-12319, a
+    different ticket scanned four hours earlier.  Identity of the analysed
+    object is the one thing a vulnerability report must never get wrong, so an
+    unrelated manifest is worse than none: with none, the digest of the real
+    target still fills the field.
+    """
+    manifest_path = base / "extracted" / "current" / "extraction_manifest.json"
+    if not manifest_path.is_file():
+        manifest_path = base / "extraction_manifest.json"
+    if not manifest_path.is_file():
+        return None
+
+    newest_output = 0.0
+    for rel in (
+        "sbom/syft.json",
+        "reports/grype/report.json",
+        "reports/trivy/report.json",
+        "reports/cve-bin-tool/report.json",
+    ):
+        try:
+            newest_output = max(newest_output, (base / rel).stat().st_mtime)
+        except OSError:
+            continue
+    try:
+        manifest_mtime = manifest_path.stat().st_mtime
+    except OSError:
+        return None
+    if newest_output and manifest_mtime < newest_output - _RUN_WINDOW_SECONDS:
+        return None
+    return _read_json(manifest_path)
+
+
 def _target_hashes(base: Path, extraction_manifest: Any) -> dict[str, str]:
     """md5/sha1/sha256 of what the scanners actually ran on.
 
@@ -445,9 +490,7 @@ def derive(root: str | Path) -> dict[str, dict[str, Any]]:
     grype = _read_json(base / "reports" / "grype" / "report.json")
     trivy = _read_json(base / "reports" / "trivy" / "report.json")
     cve = _read_json(base / "reports" / "cve-bin-tool" / "report.json")
-    extraction = _read_json(base / "extracted" / "current" / "extraction_manifest.json")
-    if extraction is None:
-        extraction = _read_json(base / "extraction_manifest.json")
+    extraction = _read_stale_checked_extraction(base)
     prov_grype = _read_json(base / "provenance" / "grype.json")
     prov_cve = _read_json(base / "provenance" / "cve-bin-tool-db.json")
     prov_trivy = _read_json(base / "provenance" / "trivy.json")
