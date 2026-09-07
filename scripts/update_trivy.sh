@@ -9,19 +9,6 @@ CACHE_DIR="${TRIVY_CACHE_DIR:-/var/lib/resilient-db/trivy}"
 FLAGS="${TRIVY_RENDERED_FLAGS:-}"
 SCAN_KIND="${TRIVY_SCAN_KIND:-fs}"
 
-# Встроенные в чужие jar файлы META-INF/maven/**/pom.xml перечисляют ОБЪЯВЛЕННЫЕ
-# зависимости этой библиотеки, а не то, что реально попало в поставку.  Trivy
-# разбирает их анализатором type=pom и выдаёт находки на компоненты, которых в
-# артефакте физически нет.  CYBERSEC-14277: все 19 находок Trivy пришлись именно
-# на такие pom.xml, ни одного файла в дистрибутиве не было.  Пропускаем их;
-# реальные jar по-прежнему разбираются анализатором jar.
-# Отключается через TRIVY_SKIP_EMBEDDED_POM=0.
-if [ "${TRIVY_SKIP_EMBEDDED_POM:-1}" = "1" ]; then
-  POM_SKIP="--skip-files **/META-INF/maven/**/pom.xml"
-else
-  POM_SKIP=""
-fi
-
 mkdir -p "$REPORT_DIR" "artifacts/provenance" "$CACHE_DIR"
 
 if [ -z "$FLAGS" ]; then
@@ -76,10 +63,10 @@ EOF
     # scan silently dropped from 6 findings to 0.  The trade-off is accepted:
     # offline mode may miss a JAR that carries no embedded pom.properties, which
     # is strictly better than a hard failure that reports nothing at all.
-    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" $POM_SKIP --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
+    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
     ;;
   offline)
-    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" $POM_SKIP --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
+    trivy "$SCAN_KIND" --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" "$TARGET"
     ;;
   *)
     echo "Unsupported mode: $MODE" >&2
