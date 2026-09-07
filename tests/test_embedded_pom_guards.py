@@ -5,7 +5,12 @@ rather than live only in a server-side ``.env``:
 
 * compose deselects Syft's ``java-pom-cataloger`` (``SYFT_SELECT_CATALOGERS``);
 * ``scripts/update_trivy.sh`` appends ``--skip-files **/META-INF/maven/**/pom.xml``
-  to the scan/offline modes unless ``TRIVY_SKIP_EMBEDDED_POM=0``.
+  to the scan/offline modes unless ``TRIVY_SKIP_EMBEDDED_POM=0``;
+* the same script scans with ``trivy rootfs`` by default: Trivy analyses
+  JAR/WAR/EAR files only in the image/rootfs modes, ``fs`` reads manifests
+  and lockfiles, so for an unpacked delivery ``fs`` saw nothing but the
+  embedded poms above (``TRIVY_SCAN_KIND=fs`` remains available for source
+  trees).
 
 The behavioural tests run the real script under ``/bin/sh`` with a fake
 ``trivy`` on ``PATH`` and inspect the argv it received.  They also pin the
@@ -58,11 +63,25 @@ def test_update_trivy_script_splits_flags_with_globbing_off():
     assert '"${TRIVY_SKIP_EMBEDDED_POM:-1}" != "0"' in script
 
 
-def test_env_example_documents_both_knobs():
+def test_env_example_documents_the_knobs():
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
     assert "TRIVY_SKIP_EMBEDDED_POM=1" in env_example
     assert "SYFT_SELECT_CATALOGERS=+java-pom-cataloger" in env_example
+    assert "TRIVY_SCAN_KIND=rootfs" in env_example
+
+
+def test_trivy_scans_deliveries_as_rootfs_on_every_entry_point():
+    """A built delivery is a post-build artefact: only image/rootfs analyse jars."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    scan_archive = (ROOT / "scripts" / "scan_archive.sh").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert 'SCAN_KIND="${TRIVY_SCAN_KIND:-rootfs}"' in script
+    assert 'export TRIVY_SCAN_KIND="${TRIVY_SCAN_KIND:-rootfs}"' in scan_archive
+    # compose must declare the variable, otherwise neither .env nor an
+    # exported override ever reaches the container.
+    assert "TRIVY_SCAN_KIND: ${TRIVY_SCAN_KIND:-rootfs}" in compose
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +129,7 @@ def _run_script(tmp_path: Path, mode: str, script: Path = SCRIPT, **env: str) ->
 def test_scan_modes_skip_embedded_poms_by_default(tmp_path: Path, mode: str):
     argv = _run_script(tmp_path, mode)
 
-    assert argv[0] == "fs"
+    assert argv[0] == "rootfs"
     idx = argv.index("--skip-files")
     # The pattern reaches Trivy verbatim — no shell expansion against cwd.
     assert argv[idx + 1] == SKIP_GLOB
@@ -123,6 +142,14 @@ def test_knob_zero_restores_the_old_scan(tmp_path: Path):
     argv = _run_script(tmp_path, "scan", TRIVY_SKIP_EMBEDDED_POM="0")
 
     assert "--skip-files" not in argv
+
+
+@_needs_sh
+def test_source_trees_can_still_be_scanned_as_fs(tmp_path: Path):
+    argv = _run_script(tmp_path, "scan", TRIVY_SCAN_KIND="fs")
+
+    assert argv[0] == "fs"
+    assert argv[-1] == "/scan-target"
 
 
 @_needs_sh

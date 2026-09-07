@@ -70,7 +70,8 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Java-поставки: «бумажные» зависимости и коллизии имён вендоров**
   (CYBERSEC-14277, `agent-3.29.3.tar.gz`: 745 находок → 69, CRITICAL 77 → 0).
-  Два независимых дефекта, оба воспроизведены на исходниках инструментов.
+  Три независимых дефекта, все воспроизведены на исходниках инструментов и на
+  самой поставке.
   (1) Экстрактор раскрывает каждый jar/war, а в раскрытой копии лежит
   `META-INF/maven/<g>/<a>/pom.xml` — это копия *сборочного* дескриптора,
   которую кладёт maven-archiver: она перечисляет compile/test/provided/optional
@@ -105,8 +106,25 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   collisions» с groupId-уликами, в xlsx — строка в сводке. Исправление в самом
   cve-bin-tool ушло апстрим (ossf/cve-bin-tool#5905: vendor lookup по groupId и
   в pom-парсере, и в SBOM-импортёре — наш путь именно второй), в Syft и Trivy —
-  соответствующие PR; фильтр здесь остаётся страховкой до их релиза. Тесты:
-  `tests/test_collision_filter.py`,
+  соответствующие PR; фильтр здесь остаётся страховкой до их релиза.
+  (3) Trivy в этом пайплайне **никогда не смотрел в jar'ы**: jar/war/ear Trivy
+  анализирует только в режимах image/rootfs, а `fs`/`repo` — режимы *до
+  сборки*, читающие манифесты и lock-файлы; для распакованной Java-поставки это
+  ровно один тип файла — тот самый встроенный pom.xml. Поэтому «Trivy 19 → 0»
+  из разбора — не исправление, а слепота: 19 находок были бумагой, а после
+  `--skip-files` Trivy не видел ничего. Контрольный прогон на
+  `agent-3.29.3.tar.gz` (558 jar, `aquasec/trivy:0.73.0`, свежие БД): `fs` —
+  406 pom-пакетов / 19 находок; `fs --skip-files` — 0 / 0; `rootfs` — 677
+  jar-пакетов / 134 находки (53 HIGH, 68 MEDIUM, 13 LOW; netty-codec-http
+  4.1.135, spring-expression 6.2.18, jackson-databind …); `rootfs --skip-files`
+  — те же 134 (pom-анализатор в rootfs не работает, guard (1) там просто не
+  нужен). Теперь `TRIVY_SCAN_KIND` по умолчанию `rootfs` (`update_trivy.sh`,
+  `scan_archive.sh`, объявлен в compose — раньше `export` из `scan_archive.sh`
+  до контейнера не доходил), `fs` остаётся для поставок-исходников. Цифры
+  Trivy в отчётах по Java-поставкам вырастут — это находки, которых раньше не
+  было вовсе; rootfs считает каждую копию jar отдельно (одна и та же
+  netty-codec-http в нескольких приложениях = несколько строк), Grype через
+  Syft-SBOM их схлопывает. Тесты: `tests/test_collision_filter.py`,
   `tests/test_embedded_pom_guards.py` (реальный `update_trivy.sh` под `sh` с
   подменённым `trivy`, включая красный контроль на старом скрипте).
   Follow-up: старые Java-отчёты (например, CYBERSEC-14231 `jenkins.war`) надо

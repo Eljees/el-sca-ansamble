@@ -7,7 +7,17 @@ CONFIG_PATH="${CONFIG_PATH:-configs/feed_sources.yaml}"
 REPORT_DIR="${REPORT_DIR:-artifacts/reports/trivy}"
 CACHE_DIR="${TRIVY_CACHE_DIR:-/var/lib/resilient-db/trivy}"
 FLAGS="${TRIVY_RENDERED_FLAGS:-}"
-SCAN_KIND="${TRIVY_SCAN_KIND:-fs}"
+# rootfs, not fs (CYBERSEC-14277): Trivy analyses JAR/WAR/EAR files only in the
+# image and rootfs modes; `fs`/`repo` are the *pre-build* modes and read
+# manifests and lockfiles instead -- for an unpacked Java delivery that means
+# exactly one thing, pom.xml, i.e. the embedded build descriptors below.  On
+# agent-3.29.3.tar.gz (558 jars): fs = 406 pom packages / 19 findings, all of
+# them declared-but-not-shipped; fs + skip-files = 0 / 0; rootfs = 677 jar
+# packages / 134 findings in what is actually there.  Every target this
+# pipeline scans is a built delivery, so rootfs is the default; set
+# TRIVY_SCAN_KIND=fs for a source tree (requirements.txt, go.mod, pom.xml as
+# a real manifest).
+SCAN_KIND="${TRIVY_SCAN_KIND:-rootfs}"
 
 mkdir -p "$REPORT_DIR" "artifacts/provenance" "$CACHE_DIR"
 
