@@ -12,6 +12,7 @@ from ._io import (
     sha256_dir as _sha256_dir,
     sha256_file as _sha256_file,
 )
+from .collision_filter import filter_vendor_collisions, maven_groups_from_sbom, summarize_dropped
 
 DEFAULT_CASE_ID = "CYBERSEC-UNKNOWN"
 _CASE_ID_RE = re.compile(r"\b(CYBERSEC-\d+)\b", re.IGNORECASE)
@@ -495,7 +496,12 @@ def build_report(
         except Exception:
             pass
 
-    all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
+    # cve-bin-tool attributes a bare Maven artifactId to every NVD vendor that owns a
+    # product of that name; the SBOM's groupId says which of those are name collisions.
+    cve_findings, dropped_collisions = filter_vendor_collisions(
+        _cve_bin_tool_findings(cve), maven_groups_from_sbom(syft)
+    )
+    all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + cve_findings
     all_findings = _dedup_findings(all_findings_raw)
     # Phase 5.2 — annotate with EPSS exploit-likelihood scores and CISA KEV flag
     # when the on-disk feeds are available.  Best-effort; missing feeds leave
@@ -537,15 +543,17 @@ def build_report(
         if isinstance(summary, dict)
         else len(_grype_findings(grype))
     )
+    # The summary's estimate predates the collision filter; once findings were
+    # dropped it no longer describes what the report shows, so count the kept ones.
     cve_count = (
-        summary.get("estimated_cve_bin_tool_matches", len(_cve_bin_tool_findings(cve)))
-        if isinstance(summary, dict)
-        else len(_cve_bin_tool_findings(cve))
+        summary.get("estimated_cve_bin_tool_matches", len(cve_findings))
+        if isinstance(summary, dict) and not dropped_collisions
+        else len(cve_findings)
     )
     parsed_counts = {
         "grype": len(_grype_findings(grype)),
         "trivy": len(_trivy_findings(trivy)),
-        "cve-bin-tool": len(_cve_bin_tool_findings(cve)),
+        "cve-bin-tool": len(cve_findings),
     }
     summary_counts = {"grype": grype_count, "trivy": parsed_counts["trivy"], "cve-bin-tool": cve_count}
     warnings = [
@@ -750,6 +758,7 @@ def build_report(
             f"- Grype findings: `{grype_count}`",
             f"- Trivy findings: `{len(_trivy_findings(trivy))}`",
             f"- cve-bin-tool findings: `{cve_count}`",
+            f"- cve-bin-tool findings dropped as vendor name collisions: `{len(dropped_collisions)}`",
             f"- Total findings: `{int(grype_count or 0) + len(_trivy_findings(trivy)) + int(cve_count or 0)}`",
             f"- Severity counts: `{dict(severity_counts)}`",
             f"- Policy decision: `{summary.get('policy_decision', 'UNKNOWN')}`",
@@ -769,6 +778,31 @@ def build_report(
             "## High / Critical findings",
             "",
             _markdown_table(high_critical),
+        ]
+    )
+    if dropped_collisions:
+        # Auditable: what was suppressed, and on what evidence. Findings collapse per
+        # component, so even the CYBERSEC-14277 case (492 dropped) is a handful of rows.
+        report.extend(
+            [
+                "## Dropped as vendor name collisions",
+                "",
+                "cve-bin-tool matched these components by bare product name to an NVD vendor that",
+                "the component's Maven groupId (from the SBOM) does not corroborate. They are not",
+                "counted above. See resilient_updates/collision_filter.py and ossf/cve-bin-tool#5905.",
+                "",
+                "| vendor | product | version | CVEs dropped | groupId evidence |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for row in summarize_dropped(dropped_collisions):
+            evidence = row["reason"].split("groupId ", 1)[-1].split(" (", 1)[0]
+            report.append(
+                f"| {row['vendor']} | {row['product']} | {row['version']} | {row['cves']} | {evidence} |"
+            )
+        report.append("")
+    report.extend(
+        [
             "## Provenance",
             "",
         ]
