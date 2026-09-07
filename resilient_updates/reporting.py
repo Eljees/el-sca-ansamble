@@ -25,10 +25,29 @@ SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "UNKNOWN": 4}
 
 # Archive suffixes to strip when deriving the package stem for report names.
 _ARCHIVE_SUFFIXES = (
-    ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tgz", ".tar",
-    ".zip", ".gz", ".bz2", ".xz", ".zst", ".jar", ".war", ".ear",
-    ".apk", ".ipa", ".rpm", ".deb", ".exe", ".msi",
-    ".tar.7z", ".7z", ".rar",
+    ".tar.gz",
+    ".tar.bz2",
+    ".tar.xz",
+    ".tar.zst",
+    ".tgz",
+    ".tar",
+    ".zip",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".zst",
+    ".jar",
+    ".war",
+    ".ear",
+    ".apk",
+    ".ipa",
+    ".rpm",
+    ".deb",
+    ".exe",
+    ".msi",
+    ".tar.7z",
+    ".7z",
+    ".rar",
 )
 
 
@@ -643,7 +662,7 @@ def build_report(
                 from .manifest import hash_input_archive
 
                 input_hashes = hash_input_archive(candidate)
-            except Exception:  # noqa: BLE001 — identity is best-effort, never fatal
+            except Exception:  # identity is best-effort, never fatal
                 input_hashes = {}
 
     # Collect per-tool DB metadata from db_snapshot.json for the metadata section.

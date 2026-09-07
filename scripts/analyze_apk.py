@@ -76,9 +76,7 @@ def find_apk(path: Path) -> Path | None:
             except Exception as e:
                 log(f"  WARNING: failed to read zip contents at {path}: {e}")
                 return None
-            if "AndroidManifest.xml" in names or any(
-                n.lower().endswith("classes.dex") for n in names
-            ):
+            if "AndroidManifest.xml" in names or any(n.lower().endswith("classes.dex") for n in names):
                 return path
             apk_members = [n for n in names if n.lower().endswith(".apk")]
             if apk_members:

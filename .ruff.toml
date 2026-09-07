@@ -61,6 +61,12 @@ ignore = [
 "resilient_updates/artifact_catalog.py" = [
   "RUF001", # Cyrillic->Latin transliteration table; the Cyrillic keys ARE the data
 ]
+"resilient_updates/report_xlsx.py" = [
+  "RUF001", # operator-facing Russian sheet titles and captions in the Excel report
+]
+"tests/test_report_xlsx.py" = [
+  "RUF001", # asserts on those same Russian titles
+]
 "resilient_updates/dashboard.py" = [
   "RUF001", # HTML template intentionally uses Cyrillic uppercase (НЕ = NOT in Russian)
 ]

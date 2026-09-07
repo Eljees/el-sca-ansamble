@@ -653,9 +653,7 @@ class JobRegistry:
         # scanners read mid-scan, and two updates would race each other too.
         busy = self.active_job()
         if busy is not None:
-            raise ScanBusyError(
-                f"уже выполняется {busy.kind} (job {busy.id}) — дождитесь завершения"
-            )
+            raise ScanBusyError(f"уже выполняется {busy.kind} (job {busy.id}) — дождитесь завершения")
         job = Job("update", UPDATE_STAGES)
         self._register(job)
         env = dict(os.environ)

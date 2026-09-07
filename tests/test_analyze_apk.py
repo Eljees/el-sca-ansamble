@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import analyze_apk  # noqa: E402
+import analyze_apk
 
 
 def _write_apk_zip(path: Path) -> None:

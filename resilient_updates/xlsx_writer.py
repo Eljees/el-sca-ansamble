@@ -181,7 +181,7 @@ class Sheet:
                 cells.append(_cell_xml(f"{column_letter(col_index)}{row_index}", value, style))
             max_col = max(max_col, len(row))
             body.append(f'<row r="{row_index}">{"".join(cells)}</row>')
-        parts.append(f'<sheetData>{"".join(body)}</sheetData>')
+        parts.append(f"<sheetData>{''.join(body)}</sheetData>")
 
         if self.autofilter and self.rows and max_col:
             last = f"{column_letter(max_col)}{min(len(self.rows), _MAX_ROWS)}"
@@ -208,8 +208,7 @@ def write_workbook(path: str | Path, sheets: list[Sheet]) -> Path:
         for i in range(1, len(sheets) + 1)
     )
     workbook_sheets = "".join(
-        f'<sheet name="{escape(s.name)}" sheetId="{i}" r:id="rId{i}"/>'
-        for i, s in enumerate(sheets, start=1)
+        f'<sheet name="{escape(s.name)}" sheetId="{i}" r:id="rId{i}"/>' for i, s in enumerate(sheets, start=1)
     )
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -258,14 +257,14 @@ def utc_stamp() -> str:
 
 
 __all__ = [
-    "Sheet",
-    "write_workbook",
-    "column_letter",
-    "safe_sheet_name",
-    "utc_stamp",
     "SEVERITY_STYLE",
     "STYLE_DEFAULT",
     "STYLE_HEADER",
-    "STYLE_TITLE",
     "STYLE_MUTED",
+    "STYLE_TITLE",
+    "Sheet",
+    "column_letter",
+    "safe_sheet_name",
+    "utc_stamp",
+    "write_workbook",
 ]

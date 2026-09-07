@@ -1774,9 +1774,7 @@ def create_app(artifacts_dir: Path | str, repo_root: Path | str | None = None):
         selected = {t.strip() for t in tools.split(",") if t.strip()} or None
         target_path = str(Path(str(artifact["stored_path"])).resolve())
         try:
-            job = registry.start_scan(
-                target_path, tools=selected, case_id=str(artifact.get("case_id") or "")
-            )
+            job = registry.start_scan(target_path, tools=selected, case_id=str(artifact.get("case_id") or ""))
         except ScanBusyError as exc:
             # The upload itself SUCCEEDED and the card is in the catalog —
             # tell the operator so they scan it from the card once the running

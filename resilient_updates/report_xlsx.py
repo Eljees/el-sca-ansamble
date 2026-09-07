@@ -19,6 +19,7 @@ Sheets:
 
 from __future__ import annotations
 
+import contextlib
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -81,10 +82,8 @@ def _finding_rows(findings: list[dict[str, Any]]) -> list[list[Any]]:
             if key == "kev":
                 value = "да" if value else ""
             elif key == "score":
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     value = float(value) if value not in ("", None) else ""
-                except (TypeError, ValueError):
-                    pass
             row.append((value, style) if key == "severity" else value)
         rows.append(row)
     return rows
@@ -269,9 +268,7 @@ def build_xlsx_report(
     sheets.append(hc_sheet)
 
     sbom_sheet = Sheet("SBOM", widths=[44, 26, 18, 60], freeze_header=True, autofilter=True)
-    sbom_sheet.add(
-        *[(h, STYLE_HEADER) for h in ("Компонент", "Версия", "Тип", "purl")]
-    )
+    sbom_sheet.add(*[(h, STYLE_HEADER) for h in ("Компонент", "Версия", "Тип", "purl")])
     for artifact in (syft or {}).get("artifacts", []) if isinstance(syft, dict) else []:
         if not isinstance(artifact, dict):
             continue
