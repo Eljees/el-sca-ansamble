@@ -19,10 +19,12 @@ Sheets:
 
 from __future__ import annotations
 
+import contextlib
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .collision_filter import filter_vendor_collisions, maven_groups_from_sbom
 from .reporting import (
     _collect_json_from_paths,
     _cve_bin_tool_findings,
@@ -81,10 +83,8 @@ def _finding_rows(findings: list[dict[str, Any]]) -> list[list[Any]]:
             if key == "kev":
                 value = "да" if value else ""
             elif key == "score":
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     value = float(value) if value not in ("", None) else ""
-                except (TypeError, ValueError):
-                    pass
             row.append((value, style) if key == "severity" else value)
         rows.append(row)
     return rows
@@ -104,6 +104,7 @@ def _summary_sheet(
     status: Any,
     summary: Any,
     extraction: Any,
+    dropped_collisions: int = 0,
 ) -> Sheet:
     sheet = Sheet("Сводка", widths=[34, 78])
     sheet.add((f"{case_id}: SCA-отчёт", STYLE_TITLE))
@@ -129,6 +130,10 @@ def _summary_sheet(
     sheet.add("Компонентов в SBOM", syft_components)
     for tool in ("grype", "trivy", "cve-bin-tool"):
         sheet.add(f"Находок: {tool}", per_tool.get(tool, 0))
+    if dropped_collisions:
+        sheet.add(
+            ("Отсеяно как коллизии имён (cve-bin-tool)", STYLE_MUTED), (dropped_collisions, STYLE_MUTED)
+        )
     sheet.add("Всего находок", sum(per_tool.values()))
     sheet.add()
 
@@ -209,7 +214,9 @@ def build_xlsx_report(
 
     grype_findings = _grype_findings(grype)
     trivy_findings = _trivy_findings(trivy)
-    cve_findings = _cve_bin_tool_findings(cve)
+    cve_findings, dropped_collisions = filter_vendor_collisions(
+        _cve_bin_tool_findings(cve), maven_groups_from_sbom(syft)
+    )
     raw = grype_findings + trivy_findings + cve_findings
     findings = _dedup_findings(raw)
     try:  # EPSS / KEV columns when the offline feeds are present
@@ -255,6 +262,7 @@ def build_xlsx_report(
             status=status,
             summary=summary,
             extraction=extraction,
+            dropped_collisions=len(dropped_collisions),
         )
     ]
 
@@ -269,9 +277,7 @@ def build_xlsx_report(
     sheets.append(hc_sheet)
 
     sbom_sheet = Sheet("SBOM", widths=[44, 26, 18, 60], freeze_header=True, autofilter=True)
-    sbom_sheet.add(
-        *[(h, STYLE_HEADER) for h in ("Компонент", "Версия", "Тип", "purl")]
-    )
+    sbom_sheet.add(*[(h, STYLE_HEADER) for h in ("Компонент", "Версия", "Тип", "purl")])
     for artifact in (syft or {}).get("artifacts", []) if isinstance(syft, dict) else []:
         if not isinstance(artifact, dict):
             continue

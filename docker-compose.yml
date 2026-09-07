@@ -70,6 +70,14 @@ services:
       <<: *proxy-env
       TRIVY_CACHE_DIR: /var/lib/resilient-db/trivy
       TRIVY_RENDERED_FLAGS: ${TRIVY_RENDERED_FLAGS:-}
+      # CYBERSEC-14277: skip META-INF/maven/**/pom.xml inside exploded jars
+      # (build descriptors, not manifests — see scripts/update_trivy.sh and the
+      # syft-sbom note below).  =0 scans them again.
+      TRIVY_SKIP_EMBEDDED_POM: ${TRIVY_SKIP_EMBEDDED_POM:-1}
+      # rootfs analyses jars/wars (post-build); fs reads manifests/lockfiles
+      # only (pre-build) and never looked at a single jar in this pipeline —
+      # see scripts/update_trivy.sh.  fs for a source-tree delivery.
+      TRIVY_SCAN_KIND: ${TRIVY_SCAN_KIND:-rootfs}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -199,6 +207,16 @@ services:
     environment:
       <<: *proxy-env
       SYFT_CHECK_FOR_APP_UPDATE: "false"
+      # CYBERSEC-14277: the extractor explodes every jar/war in place, and the
+      # exploded copy carries META-INF/maven/<g>/<a>/pom.xml — maven-archiver's
+      # build descriptor, not a manifest of what is inside.  java-pom-cataloger
+      # globs **/pom.xml and reports each declared dependency as a component
+      # (627 of 1542 were such "paper" packages on agent-3.29.3.tar.gz; every
+      # one of the 62 CRITICALs).  The original .jar stays next to its exploded
+      # dir, so java-archive-cataloger still records the real artefact from
+      # pom.properties.  Set SYFT_SELECT_CATALOGERS=+java-pom-cataloger in .env
+      # to get Syft's defaults back (e.g. for a Maven *source* tree).
+      SYFT_SELECT_CATALOGERS: ${SYFT_SELECT_CATALOGERS:--java-pom-cataloger}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:

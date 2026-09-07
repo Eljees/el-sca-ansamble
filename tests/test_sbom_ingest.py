@@ -19,8 +19,7 @@ def _cyclonedx(*comps: tuple[str, str]) -> dict:
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
         "components": [
-            {"type": "library", "name": n, "version": v, "purl": f"pkg:maven/test/{n}@{v}"}
-            for n, v in comps
+            {"type": "library", "name": n, "version": v, "purl": f"pkg:maven/test/{n}@{v}"} for n, v in comps
         ],
     }
 
@@ -32,9 +31,7 @@ def _spdx(*comps: tuple[str, str]) -> dict:
             {
                 "name": n,
                 "versionInfo": v,
-                "externalRefs": [
-                    {"referenceType": "purl", "referenceLocator": f"pkg:pypi/{n}@{v}"}
-                ],
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": f"pkg:pypi/{n}@{v}"}],
             }
             for n, v in comps
         ],

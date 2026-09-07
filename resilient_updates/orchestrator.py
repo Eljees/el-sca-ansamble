@@ -653,9 +653,7 @@ class JobRegistry:
         # scanners read mid-scan, and two updates would race each other too.
         busy = self.active_job()
         if busy is not None:
-            raise ScanBusyError(
-                f"уже выполняется {busy.kind} (job {busy.id}) — дождитесь завершения"
-            )
+            raise ScanBusyError(f"уже выполняется {busy.kind} (job {busy.id}) — дождитесь завершения")
         job = Job("update", UPDATE_STAGES)
         self._register(job)
         env = dict(os.environ)
@@ -1054,10 +1052,8 @@ class JobRegistry:
                 "reports/trivy/report.json",
                 "reports/cve-bin-tool/report.json",
             ):
-                try:
+                with contextlib.suppress(OSError):
                     (self.repo_root / "artifacts" / _rel).unlink()
-                except OSError:
-                    pass
         # Clear stale extraction output before each run.  A leftover
         # extracted/current (e.g. created by an earlier host process, or owned by
         # a different container uid) makes the in-container extractor fail with
@@ -1152,10 +1148,8 @@ class JobRegistry:
                     "подключаю apk-analyzer"
                 )
                 for p in apk_hits[:3]:
-                    try:
+                    with contextlib.suppress(ValueError):
                         job.feed_line(f"  · {p.relative_to(_cur)}")
-                    except ValueError:
-                        pass
 
         # Stage 1.6 — apk-analyzer (Android packages only). Parses the manifest
         # and DEX via androguard, extracts native .so libs to

@@ -91,7 +91,9 @@ export SYFT_TARGET="/scan-target"
 export SYFT_FROM="dir"
 export CVE_BIN_TOOL_TARGET="/scan-target"
 export TRIVY_TARGET="/scan-target"
-export TRIVY_SCAN_KIND="${TRIVY_SCAN_KIND:-fs}"
+# rootfs: an unpacked delivery is a post-build artefact; only image/rootfs
+# modes analyse jars (see scripts/update_trivy.sh).  fs = source trees.
+export TRIVY_SCAN_KIND="${TRIVY_SCAN_KIND:-rootfs}"
 export TRIVY_RENDERED_FLAGS="$TRIVY_FLAGS"
 
 mkdir -p artifacts/reports/grype artifacts/reports/trivy \

@@ -24,7 +24,6 @@ from resilient_updates.xlsx_writer import (
     write_workbook,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # xlsx_writer primitives
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,7 +187,9 @@ def test_build_xlsx_report_lays_out_four_sheets(tmp_path: Path):
     root = tmp_path / "artifacts"
     _populate(root)
 
-    out = build_xlsx_report(root, tmp_path / "report.xlsx", display_target="agent.tar.gz", case_id="CYBERSEC-1")
+    out = build_xlsx_report(
+        root, tmp_path / "report.xlsx", display_target="agent.tar.gz", case_id="CYBERSEC-1"
+    )
 
     openpyxl = pytest.importorskip("openpyxl")
     wb = openpyxl.load_workbook(out)
@@ -220,15 +221,13 @@ def test_build_xlsx_report_summary_carries_hashes_and_counts(tmp_path: Path):
     root = tmp_path / "artifacts"
     _populate(root)
 
-    out = build_xlsx_report(root, tmp_path / "report.xlsx", display_target="agent.tar.gz", case_id="CYBERSEC-1")
+    out = build_xlsx_report(
+        root, tmp_path / "report.xlsx", display_target="agent.tar.gz", case_id="CYBERSEC-1"
+    )
 
     openpyxl = pytest.importorskip("openpyxl")
     summary = openpyxl.load_workbook(out)["Сводка"]
-    flat = {
-        row[0]: row[1]
-        for row in summary.iter_rows(values_only=True)
-        if row and row[0] is not None
-    }
+    flat = {row[0]: row[1] for row in summary.iter_rows(values_only=True) if row and row[0] is not None}
     assert flat["Файл"] == "agent.tar.gz"
     assert flat["SHA-256 (входной архив)"] == "deadbeef"
     assert flat["Компонентов в SBOM"] == 1
