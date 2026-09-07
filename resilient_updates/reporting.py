@@ -138,7 +138,59 @@ def _trivy_findings(data: Any) -> list[dict[str, Any]]:
     return findings
 
 
-def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
+# Родовые имена продуктов, по которым cve-bin-tool даёт массовые ложные
+# совпадения.  Модуль поставки с именем вида "<продукт>-core-1.2.3.jar" даёт
+# product="core", а в NVD под этим именем зарегистрированы Drupal core,
+# MobileIron Core, ONLYOFFICE core и т.п.  На CYBERSEC-14277 такие коллизии
+# дали 492 находки из 534, включая ВСЕ 62 CRITICAL (например CVE-2016-9450 —
+# уязвимость Drupal 8.x — была приписана модулю core 3.29.3-SNAPSHOT).
+#
+# Отсекаем только сочетание "родовое имя + нет достоверного вендора": если
+# cve-bin-tool указал конкретного вендора, совпадающего с реальным поставщиком
+# компонента, находка сохраняется.
+_GENERIC_PRODUCT_NAMES = frozenset(
+    {
+        "core",
+        "common",
+        "commons",
+        "metrics",
+        "api",
+        "client",
+        "server",
+        "engine",
+        "util",
+        "utils",
+        "base",
+        "runtime",
+    }
+)
+
+_UNRELIABLE_VENDORS = frozenset({"", "unknown", "n/a", "none", "generic"})
+
+
+def _is_name_collision(item: dict[str, Any]) -> bool:
+    """Находка cve-bin-tool похожа на совпадение по родовому имени продукта.
+
+    Правило намеренно простое: родовое имя продукта считается недостоверным
+    признаком независимо от того, какого вендора подставил cve-bin-tool.
+    Проверено на CYBERSEC-14277: под именем ``core`` находки приходили и с
+    ``vendor=unknown`` (Drupal), и с ``vendor=mobileiron``/``onlyoffice`` —
+    все относились к посторонним продуктам.  Риск потерять настоящую находку
+    невелик: те же компоненты независимо проверяются Grype и Trivy по purl/CPE,
+    а всё отсеянное перечисляется в отдельном разделе отчёта.
+    """
+    product = str(item.get("product") or item.get("package") or "").strip().lower()
+    return product in _GENERIC_PRODUCT_NAMES
+
+
+def _cve_bin_tool_collisions(data: Any) -> list[dict[str, Any]]:
+    """Отсеянные находки — для отдельного раздела отчёта (ничего не прячем)."""
+    return _cve_bin_tool_findings(data, _keep_collisions=True)
+
+
+def _cve_bin_tool_findings(
+    data: Any, _keep_collisions: bool = False
+) -> list[dict[str, Any]]:
     findings = []
     if isinstance(data, dict):
         candidates = (
@@ -154,6 +206,8 @@ def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
         candidates = []
     for item in candidates:
         if not isinstance(item, dict):
+            continue
+        if _is_name_collision(item) is not _keep_collisions:
             continue
         findings.append(
             {
@@ -476,6 +530,7 @@ def build_report(
         except Exception:
             pass
 
+    cve_collisions = _cve_bin_tool_collisions(cve)
     all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + _cve_bin_tool_findings(cve)
     all_findings = _dedup_findings(all_findings_raw)
     # Phase 5.2 — annotate with EPSS exploit-likelihood scores and CISA KEV flag
@@ -518,11 +573,17 @@ def build_report(
         if isinstance(summary, dict)
         else len(_grype_findings(grype))
     )
+    # Оценка из summary.json считается до фильтрации, поэтому вычитаем
+    # отсеянные коллизии — иначе заголовочные цифры разойдутся с таблицей.
     cve_count = (
         summary.get("estimated_cve_bin_tool_matches", len(_cve_bin_tool_findings(cve)))
         if isinstance(summary, dict)
         else len(_cve_bin_tool_findings(cve))
     )
+    try:
+        cve_count = max(int(cve_count) - len(cve_collisions), 0)
+    except (TypeError, ValueError):
+        cve_count = len(_cve_bin_tool_findings(cve))
     parsed_counts = {
         "grype": len(_grype_findings(grype)),
         "trivy": len(_trivy_findings(trivy)),
@@ -750,6 +811,42 @@ def build_report(
             "## High / Critical findings",
             "",
             _markdown_table(high_critical),
+        ]
+    )
+    # Прозрачность: отсеянные совпадения по родовому имени продукта
+    # перечисляем отдельно, а не выбрасываем молча.
+    report.extend(["## Отсеяно как совпадение по имени продукта", ""])
+    if cve_collisions:
+        collision_groups: Counter[tuple[str, str, str]] = Counter(
+            (
+                str(item.get("vendor") or "unknown"),
+                str(item.get("product") or ""),
+                str(item.get("version") or ""),
+            )
+            for item in cve_collisions
+        )
+        collision_sev = Counter(item["severity"] for item in cve_collisions)
+        report.extend(
+            [
+                f"Исключено находок cve-bin-tool: `{len(cve_collisions)}`"
+                f" (по критичности: `{dict(collision_sev)}`).",
+                "",
+                "Причина: имя компонента после разбора совпало с родовым словом"
+                " (`core`, `common`, `metrics` и т.п.), под которым в NVD"
+                " зарегистрированы посторонние продукты. Такие совпадения не"
+                " учитываются в сводке и вердикте.",
+                "",
+                "| Вендор в NVD | Продукт | Версия компонента | Находок |",
+                "|---|---|---|---:|",
+            ]
+        )
+        for (vendor, product, version), count in collision_groups.most_common(30):
+            report.append(f"| {vendor} | {product} | {version} | {count} |")
+        report.append("")
+    else:
+        report.extend(["- Совпадений по родовому имени не обнаружено.", ""])
+    report.extend(
+        [
             "## Provenance",
             "",
         ]
