@@ -6,6 +6,14 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Подняты закреплённые версии сканеров: Trivy `0.73.0` → `0.74.0`,
+  Grype `v0.116.1` → `v0.118.0`, Syft `v1.50.0` → `v1.51.1`.
+  cve-bin-tool остаётся на `3.4` — это текущий релиз.
+  Версия проекта `0.1.5` → `0.2.0` (versions.env, pyproject.toml и
+  fallback'и в docker-compose.yml согласованы, как требует `lint-versions`).
+
 ### Added
 
 - **APK-поставки работают через морду** (`abe9a8a`, CYBERSEC-13942): дропзона
