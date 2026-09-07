@@ -68,6 +68,50 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Java-поставки: «бумажные» зависимости и коллизии имён вендоров**
+  (CYBERSEC-14277, `agent-3.29.3.tar.gz`: 745 находок → 69, CRITICAL 77 → 0).
+  Два независимых дефекта, оба воспроизведены на исходниках инструментов.
+  (1) Экстрактор раскрывает каждый jar/war, а в раскрытой копии лежит
+  `META-INF/maven/<g>/<a>/pom.xml` — это копия *сборочного* дескриптора,
+  которую кладёт maven-archiver: она перечисляет compile/test/provided/optional
+  зависимости, разрешённые на машине сборки, а не содержимое архива.
+  `java-pom-cataloger` Syft (`**/pom.xml`) и `pom`-анализатор Trivy
+  (`basename == pom.xml`) читают её как манифест проекта и объявляют каждую
+  задекларированную зависимость компонентом поставки: 627 из 1542 компонентов
+  SBOM и все 62 CRITICAL были такой бумагой (`bcprov-jdk18on`, `woodstox-core`
+  «нашлись» через pom `xmlsec-2.3.4.jar`). Сам jar остаётся рядом с раскрытой
+  копией, так что `java-archive-cataloger` / jar-анализатор по-прежнему
+  фиксируют реальный артефакт из `pom.properties` — ничего настоящего не
+  теряется. Серверный хотфикс жил только в `.env`; теперь он в репозитории:
+  compose передаёт Syft `SYFT_SELECT_CATALOGERS=-java-pom-cataloger`
+  (`+java-pom-cataloger` в `.env` возвращает дефолт — для *исходного* дерева
+  Maven, где pom.xml и есть манифест), а `scripts/update_trivy.sh` в режимах
+  scan/offline добавляет `--skip-files '**/META-INF/maven/**/pom.xml'`
+  (`TRIVY_SKIP_EMBEDDED_POM=0` отключает). Попутно закрыта мина в этом же
+  скрипте: `set -- $FLAGS` без `set -f` раскрывал любой glob из
+  `TRIVY_RENDERED_FLAGS` по `/workspace` — серверный вариант с glob'ом внутри
+  флагов работал только потому, что под `/workspace` ничего не совпало
+  (воспроизведено: `--skip-files y/…/pom.xml z/…/pom.xml` вместо шаблона).
+  (2) cve-bin-tool резолвит вендора по голому имени продукта: собственные
+  модули агента `*-core` (после разбора координат продуктом становится слово
+  `core`, версия `3.29.3-SNAPSHOT`) размножились в drupal/mobileiron/onlyoffice
+  «core» — 492 из 534 находок cve-bin-tool, все 62 CRITICAL.
+  Новый `resilient_updates/collision_filter.py` берёт groupId из Syft-SBOM и
+  на этапе отчёта отсеивает вендоров, которых ничто в groupId не подтверждает —
+  но только там, где виден почерк размножения (у одной пары product/version
+  ≥ 2 разных вендоров) и только для reverse-DNS groupId (`log4j:log4j` →
+  apache не трогается: голый groupId никого не называет). Отсеянное не
+  исчезает молча: в md-отчёте счётчик и раздел «Dropped as vendor name
+  collisions» с groupId-уликами, в xlsx — строка в сводке. Исправление в самом
+  cve-bin-tool ушло апстрим (ossf/cve-bin-tool#5905: vendor lookup по groupId и
+  в pom-парсере, и в SBOM-импортёре — наш путь именно второй), в Syft и Trivy —
+  соответствующие PR; фильтр здесь остаётся страховкой до их релиза. Тесты:
+  `tests/test_collision_filter.py`,
+  `tests/test_embedded_pom_guards.py` (реальный `update_trivy.sh` под `sh` с
+  подменённым `trivy`, включая красный контроль на старом скрипте).
+  Follow-up: старые Java-отчёты (например, CYBERSEC-14231 `jenkins.war`) надо
+  перегнать с новой конфигурацией — их цифры завышены тем же способом.
+
 - **Апдейтер cve-bin-tool был мёртв с 1 августа, и это никто не видел.**
   Пересобранный `0.1.1` образ приехал без каталога `/opt/app/scripts`, а
   запечённый ENTRYPOINT на него ссылался → `cannot open

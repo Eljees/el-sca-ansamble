@@ -26,8 +26,33 @@ fi
 # Convert the rendered flag string into POSIX positional parameters so that
 # every subsequent invocation can use the correctly-quoted "$@" instead of
 # the unquoted FLAGS variable.  Reference: docs/audit/10-defects.md section 8.
+# `set -f` guards the split: an unquoted expansion is also a glob expansion,
+# so any rendered value containing `*` or `?` (a --skip-files pattern, a VEX
+# path with a wildcard) would be matched against /workspace before Trivy ever
+# saw it.  The server-side hotfix for CYBERSEC-14277 passed exactly such a glob
+# through here and only survived because nothing under /workspace matched.
+set -f
 # shellcheck disable=SC2086
 set -- $FLAGS
+set +f
+
+# CYBERSEC-14277: an exploded jar carries META-INF/maven/<g>/<a>/pom.xml —
+# maven-archiver's copy of the *build* descriptor.  It declares compile/test/
+# provided/optional dependencies that were resolved on the build machine and
+# are NOT inside the jar, yet Trivy's pom analyzer reads it like a project
+# manifest and reports each of them as a shipped package (on
+# agent-3.29.3.tar.gz: bcprov-jdk18on, woodstox-core, ... "found" via the pom
+# of xmlsec-2.3.4.jar; every CRITICAL in the report was such paper).  The jar
+# itself is still recorded by the jar analyzer from pom.properties, so nothing
+# real is lost.  TRIVY_SKIP_EMBEDDED_POM=0 restores the old behaviour.
+# The pattern is single-quoted on purpose: it must reach Trivy unexpanded.
+case "$MODE" in
+  scan|offline)
+    if [ "${TRIVY_SKIP_EMBEDDED_POM:-1}" != "0" ]; then
+      set -- "$@" --skip-files '**/META-INF/maven/**/pom.xml'
+    fi
+    ;;
+esac
 
 case "$MODE" in
   update)
