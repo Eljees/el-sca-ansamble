@@ -19,9 +19,9 @@ Single source of truth: `versions.env` (CI enforces agreement with
 | Component | Version |
 |-----------|---------|
 | Project (`el-sca`, SemVer) | **0.1.5** (Python ≥ 3.10) |
-| Trivy | 0.73.0 |
-| Grype | v0.116.1 |
-| Syft | v1.50.0 |
+| Trivy | 0.74.0 |
+| Grype | v0.118.0 |
+| Syft | v1.51.1 |
 | cve-bin-tool | 3.4 |
 | OSV scanner | latest (optional) |
 | Base image | python:3.12-slim |

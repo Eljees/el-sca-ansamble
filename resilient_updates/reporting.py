@@ -796,7 +796,11 @@ def build_report(
             ]
         )
         for row in summarize_dropped(dropped_collisions):
-            evidence = row["reason"].split("groupId ", 1)[-1].split(" (", 1)[0]
+            # collision_filter records the evidence separately; older reasons are
+            # still parsed so a mixed-version run renders the same.
+            evidence = row.get("evidence") or (
+                row["reason"].split("groupId ", 1)[-1].split(" (", 1)[0]
+            )
             report.append(
                 f"| {row['vendor']} | {row['product']} | {row['version']} | {row['cves']} | {evidence} |"
             )

@@ -91,6 +91,30 @@ def _is_real_vendor(finding: dict[str, Any]) -> bool:
     return finding.get("tool") == "cve-bin-tool" and bool(vendor) and vendor.upper() != "UNKNOWN"
 
 
+def _is_cve_bin_tool(finding: dict[str, Any]) -> bool:
+    return finding.get("tool") == "cve-bin-tool"
+
+
+def has_synthesised_coordinates(product: str, group_ids: set[str]) -> bool:
+    """Did Syft invent the groupId from the file name rather than read a pom?
+
+    A jar built in-house carries no ``META-INF/maven/**/pom.properties``, so Syft
+    falls back to the artifact name for both coordinates and the purl comes back
+    as ``pkg:maven/core/core@3.29.3-SNAPSHOT``.  A published artifact never looks
+    like this: ``com.google.zxing/core``, ``io.netty/netty-codec-http``.  The
+    legacy bare groupIds this must not catch -- ``log4j:log4j``, ``junit:junit``
+    -- are published releases and are excluded by the version test below.
+    """
+    if not group_ids:
+        return False
+    return all(g.lower() == product.lower() for g in group_ids)
+
+
+def is_inhouse_version(version: str) -> bool:
+    """A ``-SNAPSHOT`` version is a build that was never published to a registry."""
+    return "SNAPSHOT" in version.upper()
+
+
 def filter_vendor_collisions(
     findings: list[dict[str, Any]],
     groups: dict[tuple[str, str], set[str]],
@@ -107,6 +131,21 @@ def filter_vendor_collisions(
     does not know, and components whose groupId names no owner (``log4j:log4j``).
     Absence of evidence is not evidence of a collision.  Dropped findings get a
     ``dropped_reason`` so the report can list them.
+
+    Two further signatures are handled, because the groupId rule alone left the
+    bulk of CYBERSEC-14277 standing (462 of 534 findings, every CRITICAL):
+
+    * *The component was never published.*  An in-house ``-SNAPSHOT`` jar has no
+      Maven coordinates, so Syft synthesises the groupId from the file name
+      (``pkg:maven/core/core@3.29.3-SNAPSHOT``).  Nothing with that name exists
+      in any registry, so no NVD vendor can own it and every attribution by bare
+      name is a collision -- including ``vendor=unknown``.
+    * *``unknown`` riding along with a disproved fan-out.*  ``vendor=unknown`` is
+      cve-bin-tool's normal output for a component it matched correctly, so it is
+      never dropped on its own.  But when named vendors on the *same*
+      (product, version) were just disproved by the groupId, the unknown ones
+      come from that same bare-name fan-out and go with them.  A component with
+      no disproved siblings -- ``unknown/netty-codec-http`` -- is untouched.
     """
     vendors_by_component: dict[tuple[str, str], set[str]] = defaultdict(set)
     for finding in findings:
@@ -116,21 +155,48 @@ def filter_vendor_collisions(
 
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []  # vendor=unknown, decided in the second pass
+    disproved_components: set[tuple[str, str]] = set()
+
     for finding in findings:
-        if not _is_real_vendor(finding):
+        if not _is_cve_bin_tool(finding):
             kept.append(finding)
             continue
-        key = (str(finding.get("product") or "").lower(), str(finding.get("version") or ""))
+
+        product = str(finding.get("product") or "")
+        version = str(finding.get("version") or "")
+        key = (product.lower(), version)
+        component_groups = _groups_for(finding, groups)
+
+        # Signature 1: the component was never published, whatever the vendor.
+        if is_inhouse_version(version) and has_synthesised_coordinates(product, component_groups):
+            dropped.append(
+                dict(
+                    finding,
+                    dropped_reason=(
+                        f"'{product} {version}' is an in-house build with no Maven "
+                        "coordinates (groupId synthesised from the file name), so it "
+                        "is not the registry artifact this vendor owns (name collision)"
+                    ),
+                    dropped_evidence="no Maven coordinates (-SNAPSHOT build)",
+                )
+            )
+            disproved_components.add(key)
+            continue
+
+        if not _is_real_vendor(finding):
+            deferred.append(finding)
+            continue
+
         if len(vendors_by_component[key]) < 2:
             kept.append(finding)  # no fan-out signature: leave a single attribution alone
             continue
-        known = {g for g in _groups_for(finding, groups) if names_an_owner(g)}
+        known = {g for g in component_groups if names_an_owner(g)}
         if not known:
             kept.append(finding)
             continue
         vendor = str(finding["vendor"])
-        artifact = str(finding.get("product") or "")
-        if any(vendor_matches_group(vendor, g, artifact) for g in known):
+        if any(vendor_matches_group(vendor, g, product) for g in known):
             kept.append(finding)
             continue
         dropped.append(
@@ -140,8 +206,29 @@ def filter_vendor_collisions(
                     f"vendor '{vendor}' is not corroborated by groupId "
                     f"{', '.join(sorted(known))} (name collision)"
                 ),
+                dropped_evidence=", ".join(sorted(known)),
             )
         )
+        disproved_components.add(key)
+
+    # Signature 2: unknown-vendor findings on a component whose named vendors
+    # were just disproved belong to the same bare-name fan-out.
+    for finding in deferred:
+        key = (str(finding.get("product") or "").lower(), str(finding.get("version") or ""))
+        if key in disproved_components:
+            dropped.append(
+                dict(
+                    finding,
+                    dropped_reason=(
+                        "no vendor attribution, and every named vendor on "
+                        f"'{finding.get('product')} {finding.get('version')}' was "
+                        "disproved by the groupId (same bare-name collision)"
+                    ),
+                    dropped_evidence="named vendors on this component disproved",
+                )
+            )
+        else:
+            kept.append(finding)
     return kept, dropped
 
 
@@ -162,6 +249,7 @@ def summarize_dropped(dropped: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "version": key[2],
                 "cves": 0,
                 "reason": f.get("dropped_reason", ""),
+                "evidence": f.get("dropped_evidence", ""),
             },
         )
         row["cves"] += 1
@@ -170,6 +258,8 @@ def summarize_dropped(dropped: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 __all__ = [
     "filter_vendor_collisions",
+    "has_synthesised_coordinates",
+    "is_inhouse_version",
     "maven_groups_from_sbom",
     "names_an_owner",
     "summarize_dropped",
