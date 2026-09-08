@@ -8,15 +8,23 @@ REPORT_DIR="${REPORT_DIR:-artifacts/reports/trivy}"
 CACHE_DIR="${TRIVY_CACHE_DIR:-/var/lib/resilient-db/trivy}"
 FLAGS="${TRIVY_RENDERED_FLAGS:-}"
 # rootfs, not fs (CYBERSEC-14277): Trivy analyses JAR/WAR/EAR files only in the
-# image and rootfs modes; `fs`/`repo` are the *pre-build* modes and read
-# manifests and lockfiles instead -- for an unpacked Java delivery that means
-# exactly one thing, pom.xml, i.e. the embedded build descriptors below.  On
-# agent-3.29.3.tar.gz (558 jars): fs = 406 pom packages / 19 findings, all of
-# them declared-but-not-shipped; fs + skip-files = 0 / 0; rootfs = 677 jar
-# packages / 134 findings in what is actually there.  Every target this
-# pipeline scans is a built delivery, so rootfs is the default; set
-# TRIVY_SCAN_KIND=fs for a source tree (requirements.txt, go.mod, pom.xml as
-# a real manifest).
+# image, rootfs and vm modes (the `jar` analyzer is TypeIndividualPkgs, disabled
+# in fs/repo); `fs`/`repo` read manifests and lockfiles, and for an unpacked
+# Java delivery that means exactly one kind of file -- the pom.xml that
+# maven-archiver embedded into each jar under META-INF/maven/<g>/<a>/.
+#
+# That pom records the versions the jar was *built* against, which dependency
+# mediation then overrides in the delivery.  Measured on agent-3.29.3.tar.gz
+# (558 jars): fs = 406 pom packages / 19 findings, and five of the six
+# (product, version) pairs behind them do not exist anywhere in the delivery --
+# the pom declares jackson-databind 2.17.2, kafka-clients 3.7.1, commons-lang3
+# 3.14.0/3.16.0/3.17.0, while the jars actually shipped are 2.21.5, 3.9.2 and
+# 3.20.0 (only lz4-java 1.10.2 matched).  rootfs = 677 jar packages / 134
+# findings against the versions that are really there.
+#
+# Every target this pipeline scans is a built delivery, so rootfs is the
+# default; set TRIVY_SCAN_KIND=fs for a source tree (requirements.txt, go.mod,
+# pom.xml as a real manifest).
 SCAN_KIND="${TRIVY_SCAN_KIND:-rootfs}"
 
 mkdir -p "$REPORT_DIR" "artifacts/provenance" "$CACHE_DIR"
@@ -40,29 +48,27 @@ fi
 # so any rendered value containing `*` or `?` (a --skip-files pattern, a VEX
 # path with a wildcard) would be matched against /workspace before Trivy ever
 # saw it.  The server-side hotfix for CYBERSEC-14277 passed exactly such a glob
-# through here and only survived because nothing under /workspace matched.
+# through here and survived only because nothing under /workspace matched it.
 set -f
 # shellcheck disable=SC2086
 set -- $FLAGS
 set +f
 
-# CYBERSEC-14277: an exploded jar carries META-INF/maven/<g>/<a>/pom.xml —
-# maven-archiver's copy of the *build* descriptor.  It declares compile/test/
-# provided/optional dependencies that were resolved on the build machine and
-# are NOT inside the jar, yet Trivy's pom analyzer reads it like a project
-# manifest and reports each of them as a shipped package (on
-# agent-3.29.3.tar.gz: bcprov-jdk18on, woodstox-core, ... "found" via the pom
-# of xmlsec-2.3.4.jar; every CRITICAL in the report was such paper).  The jar
-# itself is still recorded by the jar analyzer from pom.properties, so nothing
-# real is lost.  TRIVY_SKIP_EMBEDDED_POM=0 restores the old behaviour.
-# The pattern is single-quoted on purpose: it must reach Trivy unexpanded.
-case "$MODE" in
-  scan|offline)
-    if [ "${TRIVY_SKIP_EMBEDDED_POM:-1}" != "0" ]; then
-      set -- "$@" --skip-files '**/META-INF/maven/**/pom.xml'
-    fi
-    ;;
-esac
+# No --skip-files guard for embedded poms here, deliberately.  An earlier
+# version of this script skipped `**/META-INF/maven/**/pom.xml` in the scan
+# modes; aquasecurity/trivy#11203 established that the guard is both
+# unnecessary and harmful:
+#   * unnecessary, because the pom analyzer never runs in rootfs (it is
+#     TypeLockfiles) and because it already drops every dependency outside
+#     compile/runtime scope and every optional one -- parse.go filters them,
+#     so test/provided declarations were never reported in the first place;
+#   * harmful, because the path alone cannot separate the delivery's own
+#     descriptor from an unpacked third-party jar's.  On an exploded WAR whose
+#     META-INF/maven pom declares log4j-core 2.14.1, with the jar in
+#     WEB-INF/lib, skipping the file removed log4j-core and its 7 findings
+#     (CVE-2021-44228 among them) from the default report -- in fs mode that
+#     pom is the only source of information about WEB-INF/lib.
+# The mode above is the actual fix.  See CHANGELOG for the full correction.
 
 case "$MODE" in
   update)

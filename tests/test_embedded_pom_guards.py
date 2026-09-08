@@ -1,22 +1,24 @@
-"""CYBERSEC-14277 — embedded ``META-INF/maven/**/pom.xml`` is a build descriptor,
-not a manifest.  Two guards keep the "paper" dependencies it declares out of
-the SBOM and out of Trivy's findings, and both must be wired into the repo
-rather than live only in a server-side ``.env``:
+"""CYBERSEC-14277 — an embedded ``META-INF/maven/**/pom.xml`` is a build
+descriptor, not a manifest, and the two settings that follow from that must be
+wired into the repo rather than live only in a server-side ``.env``:
 
-* compose deselects Syft's ``java-pom-cataloger`` (``SYFT_SELECT_CATALOGERS``);
-* ``scripts/update_trivy.sh`` appends ``--skip-files **/META-INF/maven/**/pom.xml``
-  to the scan/offline modes unless ``TRIVY_SKIP_EMBEDDED_POM=0``;
-* the same script scans with ``trivy rootfs`` by default: Trivy analyses
-  JAR/WAR/EAR files only in the image/rootfs modes, ``fs`` reads manifests
-  and lockfiles, so for an unpacked delivery ``fs`` saw nothing but the
-  embedded poms above (``TRIVY_SCAN_KIND=fs`` remains available for source
+* compose deselects Syft's ``java-pom-cataloger`` (``SYFT_SELECT_CATALOGERS``),
+  which catalogs every declared dependency with no scope filtering;
+* ``scripts/update_trivy.sh`` scans with ``trivy rootfs`` by default: Trivy
+  analyses JAR/WAR/EAR only in the image/rootfs/vm modes, while ``fs`` reads
+  manifests and lockfiles, so on an unpacked delivery ``fs`` saw nothing but
+  the embedded poms (``TRIVY_SCAN_KIND=fs`` remains available for source
   trees).
+
+There is deliberately no ``--skip-files`` guard for embedded poms; the last
+test pins its absence, because it hid real components (see the CHANGELOG entry
+and aquasecurity/trivy#11203).
 
 The behavioural tests run the real script under ``/bin/sh`` with a fake
 ``trivy`` on ``PATH`` and inspect the argv it received.  They also pin the
-``set -f`` hardening: before it, a glob-shaped value inside
-``TRIVY_RENDERED_FLAGS`` (exactly what the server hotfix passed) was expanded
-by the shell against ``/workspace`` before Trivy ever saw it.
+``set -f`` hardening: without it, a glob-shaped value inside
+``TRIVY_RENDERED_FLAGS`` (exactly what the server hotfix passed) is expanded
+by the shell against ``/workspace`` before Trivy ever sees it.
 """
 
 from __future__ import annotations
@@ -49,24 +51,31 @@ def test_compose_deselects_syft_pom_cataloger_by_default():
     assert "SYFT_SELECT_CATALOGERS: ${SYFT_SELECT_CATALOGERS:--java-pom-cataloger}" in compose
 
 
-def test_compose_passes_trivy_embedded_pom_knob_to_the_scanner():
-    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+def test_no_embedded_pom_skip_guard_anywhere():
+    """The guard is gone on purpose: it removed real components.
 
-    assert "TRIVY_SKIP_EMBEDDED_POM: ${TRIVY_SKIP_EMBEDDED_POM:-1}" in compose
+    On an exploded WAR whose ``META-INF/maven`` pom declares log4j-core 2.14.1
+    with the jar in ``WEB-INF/lib``, skipping the pom dropped log4j-core and
+    its 7 findings (CVE-2021-44228 among them) from the default report.
+    """
+    script = SCRIPT.read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert f"--skip-files '{SKIP_GLOB}'" not in script
+    assert "TRIVY_SKIP_EMBEDDED_POM:" not in compose
+    assert "\nTRIVY_SKIP_EMBEDDED_POM=" not in env_example
 
 
 def test_update_trivy_script_splits_flags_with_globbing_off():
     script = SCRIPT.read_text(encoding="utf-8")
 
     assert "set -f\n# shellcheck disable=SC2086\nset -- $FLAGS\nset +f" in script
-    assert f"--skip-files '{SKIP_GLOB}'" in script
-    assert '"${TRIVY_SKIP_EMBEDDED_POM:-1}" != "0"' in script
 
 
 def test_env_example_documents_the_knobs():
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
-    assert "TRIVY_SKIP_EMBEDDED_POM=1" in env_example
     assert "SYFT_SELECT_CATALOGERS=+java-pom-cataloger" in env_example
     assert "TRIVY_SCAN_KIND=rootfs" in env_example
 
@@ -126,22 +135,13 @@ def _run_script(tmp_path: Path, mode: str, script: Path = SCRIPT, **env: str) ->
 
 @_needs_sh
 @pytest.mark.parametrize("mode", ["scan", "offline"])
-def test_scan_modes_skip_embedded_poms_by_default(tmp_path: Path, mode: str):
+def test_deliveries_are_scanned_as_rootfs(tmp_path: Path, mode: str):
     argv = _run_script(tmp_path, mode)
 
     assert argv[0] == "rootfs"
-    idx = argv.index("--skip-files")
-    # The pattern reaches Trivy verbatim — no shell expansion against cwd.
-    assert argv[idx + 1] == SKIP_GLOB
+    assert "--skip-files" not in argv
     assert argv[-1] == "/scan-target"
     assert "--db-repository" in argv, "rendered flags still pass through"
-
-
-@_needs_sh
-def test_knob_zero_restores_the_old_scan(tmp_path: Path):
-    argv = _run_script(tmp_path, "scan", TRIVY_SKIP_EMBEDDED_POM="0")
-
-    assert "--skip-files" not in argv
 
 
 @_needs_sh
@@ -168,7 +168,6 @@ def test_rendered_flags_are_split_without_glob_expansion(tmp_path: Path):
     argv = _run_script(
         tmp_path,
         "scan",
-        TRIVY_SKIP_EMBEDDED_POM="0",
         TRIVY_RENDERED_FLAGS=f"--skip-files {SKIP_GLOB}",
     )
 
