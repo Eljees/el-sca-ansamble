@@ -80,6 +80,10 @@ ignore = [
 "resilient_updates/pipeline_state.py" = [
   "RUF002", # docstring mixes Russian terms (resume «с чекпоинта»)
 ]
+"tests/test_collision_filter_unpublished.py" = [
+  "RUF002", # docstring explains the rule in Russian, quoting the ticket
+  "RUF003", # same, in the inline comments next to each signature
+]
 "scripts/**.py" = [
   "T201",   # print() is the point of a script
 ]
