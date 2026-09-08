@@ -75,9 +75,7 @@ def test_snapshot_is_inhouse():
 
 
 def test_unpublished_snapshot_dropped_for_named_vendor():
-    kept, dropped = filter_vendor_collisions(
-        [_cbt("mobileiron", "core", "3.29.3-SNAPSHOT")], _groups()
-    )
+    kept, dropped = filter_vendor_collisions([_cbt("mobileiron", "core", "3.29.3-SNAPSHOT")], _groups())
     assert kept == []
     assert len(dropped) == 1
     assert "in-house build" in dropped[0]["dropped_reason"]
@@ -85,9 +83,7 @@ def test_unpublished_snapshot_dropped_for_named_vendor():
 
 def test_unpublished_snapshot_dropped_for_unknown_vendor():
     """Главная дыра прежнего правила: 462 находки приходили без вендора."""
-    kept, dropped = filter_vendor_collisions(
-        [_cbt("unknown", "core", "3.29.3-SNAPSHOT")], _groups()
-    )
+    kept, dropped = filter_vendor_collisions([_cbt("unknown", "core", "3.29.3-SNAPSHOT")], _groups())
     assert kept == []
     assert len(dropped) == 1
 
@@ -135,7 +131,13 @@ def test_corroborated_vendor_survives_the_fan_out():
 
 
 def test_other_tools_untouched():
-    grype = {"tool": "grype", "id": "GHSA-x", "severity": "HIGH", "product": "core", "version": "3.29.3-SNAPSHOT"}
+    grype = {
+        "tool": "grype",
+        "id": "GHSA-x",
+        "severity": "HIGH",
+        "product": "core",
+        "version": "3.29.3-SNAPSHOT",
+    }
     kept, dropped = filter_vendor_collisions([grype], _groups())
     assert dropped == []
     assert kept == [grype]

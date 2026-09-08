@@ -8,6 +8,49 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Снят guard `--skip-files` для встроенных pom: он прятал настоящие
+  компоненты** (CYBERSEC-14277, разбор апстрима — aquasecurity/trivy#11203).
+  Обоснование, с которым guard был добавлен, оказалось неверным, и мейнтейнер
+  Trivy разобрал его по пунктам. Проверено здесь на настоящих артефактах:
+
+  1. **Trivy фильтрует scope.** `pkg/dependency/parser/java/pom/parse.go`
+     отбрасывает всё вне `compile`/`runtime` и всё `optional`, в таблице
+     покрытия Java у `pom.xml` в колонке Dev dependencies стоит `Exclude`.
+     Утверждение «test/provided/optional попадают в отчёт наравне с
+     остальными» верно для Syft и неверно для Trivy; оно было перенесено с
+     одного инструмента на другой без проверки.
+  2. **Пример был на выдуманной фикстуре.** Вывод про `bcprov-jdk18on`
+     «из pom `xmlsec-2.3.4.jar`» получен на pom, написанном руками для теста, —
+     в настоящем xmlsec эта зависимость объявлена `<scope>test</scope>` и
+     Trivy её не показывает. На настоящем jar с Maven Central `trivy fs` даёт
+     `xmlsec` (root), `woodstox-core` (runtime), `commons-codec`, `slf4j-api`
+     и ноль уязвимостей. Для Syft тот же jar даёт 20 пакетов, включая все
+     test-зависимости, — там дефект настоящий, и guard для Syft остаётся.
+  3. **Guard ломал реальные находки.** Путь не отличает дескриптор самой
+     поставки от дескриптора распакованной чужой библиотеки. На распакованном
+     WAR, где `META-INF/maven/com.example/myapp/pom.xml` объявляет
+     `log4j-core 2.14.1`, а сам jar лежит в `WEB-INF/lib/`: без guard'а Trivy
+     находит `log4j-core` и 7 уязвимостей, включая CVE-2021-44228; с guard'ом —
+     0. В режиме `fs` этот pom и есть единственный источник сведений о
+     `WEB-INF/lib`.
+
+  Убраны `--skip-files` из `scripts/update_trivy.sh` и переменная
+  `TRIVY_SKIP_EMBEDDED_POM` из compose и `.env.example`. Остаются: `set -f`
+  вокруг `set -- $FLAGS` (независимая находка, glob действительно раскрывался
+  по `/workspace`), `TRIVY_SCAN_KIND=rootfs` по умолчанию (именно это и был
+  настоящий фикс — тот же вывод у мейнтейнера) и
+  `SYFT_SELECT_CATALOGERS=-java-pom-cataloger` (для Syft подтверждено на
+  боевой поставке: 627 из 1542 компонентов пришли из встроенных pom, 412
+  различных `имя@версия` не встречаются в ней ни одним архивом, 227 несут
+  версию `UNKNOWN` из-за неразрешённого `${property}`).
+
+  Тесты `tests/test_embedded_pom_guards.py` переписаны: теперь они закрепляют
+  ОТСУТСТВИЕ guard'а вместе с его наличием у Syft и режимом rootfs.
+
+  Урок на будущее: фикстура, названная именем настоящего артефакта, обязана
+  быть этим артефактом. Прогон был настоящий, pom — выдуманный, и разница
+  стоила чужого рабочего дня.
+
 - **Фильтр коллизий добит: две подписи вместо одной** (CYBERSEC-14277).
   Правило по groupId отсеяло на боевом артефакте лишь 8 находок из 534 —
   оставшиеся 496, включая **все 62 CRITICAL**, оно не могло тронуть по двум
@@ -114,20 +157,20 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `META-INF/maven/<g>/<a>/pom.xml` — это копия *сборочного* дескриптора,
   которую кладёт maven-archiver: она перечисляет compile/test/provided/optional
   зависимости, разрешённые на машине сборки, а не содержимое архива.
-  `java-pom-cataloger` Syft (`**/pom.xml`) и `pom`-анализатор Trivy
-  (`basename == pom.xml`) читают её как манифест проекта и объявляют каждую
-  задекларированную зависимость компонентом поставки: 627 из 1542 компонентов
-  SBOM и все 62 CRITICAL были такой бумагой (`bcprov-jdk18on`, `woodstox-core`
+  `java-pom-cataloger` Syft (`**/pom.xml`) читает её как манифест проекта и
+  каталогизирует каждую задекларированную зависимость, не фильтруя scope: 627
+  из 1542 компонентов SBOM пришли из этих pom, и 412 различных пар
+  `имя@версия` среди них не встречаются в поставке ни одним архивом
+  (`bcprov-jdk18on`, `woodstox-core`
   «нашлись» через pom `xmlsec-2.3.4.jar`). Сам jar остаётся рядом с раскрытой
   копией, так что `java-archive-cataloger` / jar-анализатор по-прежнему
   фиксируют реальный артефакт из `pom.properties` — ничего настоящего не
   теряется. Серверный хотфикс жил только в `.env`; теперь он в репозитории:
   compose передаёт Syft `SYFT_SELECT_CATALOGERS=-java-pom-cataloger`
   (`+java-pom-cataloger` в `.env` возвращает дефолт — для *исходного* дерева
-  Maven, где pom.xml и есть манифест), а `scripts/update_trivy.sh` в режимах
-  scan/offline добавляет `--skip-files '**/META-INF/maven/**/pom.xml'`
-  (`TRIVY_SKIP_EMBEDDED_POM=0` отключает). Попутно закрыта мина в этом же
-  скрипте: `set -- $FLAGS` без `set -f` раскрывал любой glob из
+  Maven, где pom.xml и есть манифест). Guard для Trivy, стоявший здесь же,
+  снят следующим коммитом — см. запись про #11203 выше. Попутно закрыта мина в
+  `scripts/update_trivy.sh`: `set -- $FLAGS` без `set -f` раскрывал любой glob из
   `TRIVY_RENDERED_FLAGS` по `/workspace` — серверный вариант с glob'ом внутри
   флагов работал только потому, что под `/workspace` ничего не совпало
   (воспроизведено: `--skip-files y/…/pom.xml z/…/pom.xml` вместо шаблона).
@@ -149,14 +192,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   анализирует только в режимах image/rootfs, а `fs`/`repo` — режимы *до
   сборки*, читающие манифесты и lock-файлы; для распакованной Java-поставки это
   ровно один тип файла — тот самый встроенный pom.xml. Поэтому «Trivy 19 → 0»
-  из разбора — не исправление, а слепота: 19 находок были бумагой, а после
-  `--skip-files` Trivy не видел ничего. Контрольный прогон на
-  `agent-3.29.3.tar.gz` (558 jar, `aquasec/trivy:0.73.0`, свежие БД): `fs` —
-  406 pom-пакетов / 19 находок; `fs --skip-files` — 0 / 0; `rootfs` — 677
-  jar-пакетов / 134 находки (53 HIGH, 68 MEDIUM, 13 LOW; netty-codec-http
-  4.1.135, spring-expression 6.2.18, jackson-databind …); `rootfs --skip-files`
-  — те же 134 (pom-анализатор в rootfs не работает, guard (1) там просто не
-  нужен). Теперь `TRIVY_SCAN_KIND` по умолчанию `rootfs` (`update_trivy.sh`,
+  из разбора — не исправление, а слепота: pom-анализатор видит только
+  сборочные дескрипторы, а после `--skip-files` Trivy не видел ничего.
+  Контрольный прогон на `agent-3.29.3.tar.gz` (558 jar, `aquasec/trivy:0.73.0`,
+  свежие БД): `fs` — 406 pom-пакетов / 19 находок, причём пять из шести пар
+  (продукт, версия) под ними в поставке отсутствуют — pom объявляет
+  jackson-databind 2.17.2, kafka-clients 3.7.1, commons-lang3
+  3.14.0/3.16.0/3.17.0, а приехали 2.21.5, 3.9.2 и 3.20.0 (совпал только
+  lz4-java 1.10.2); `fs --skip-files` — 0 / 0; `rootfs` — 677 jar-пакетов /
+  134 находки (53 HIGH, 68 MEDIUM, 13 LOW; netty-codec-http 4.1.135,
+  spring-expression 6.2.18, jackson-databind …); `rootfs --skip-files` — те же
+  134 (pom-анализатор в rootfs не работает). Теперь `TRIVY_SCAN_KIND` по умолчанию `rootfs` (`update_trivy.sh`,
   `scan_archive.sh`, объявлен в compose — раньше `export` из `scan_archive.sh`
   до контейнера не доходил), `fs` остаётся для поставок-исходников. Цифры
   Trivy в отчётах по Java-поставкам вырастут — это находки, которых раньше не
