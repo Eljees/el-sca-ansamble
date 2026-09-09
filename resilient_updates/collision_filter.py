@@ -31,16 +31,16 @@ from typing import Any
 _MAVEN_PURL = re.compile(r"^pkg:maven/(?P<group>[^/@?#]+)/(?P<name>[^/@?#]+)(?:@(?P<version>[^?#]+))?")
 _PURL_TYPE = re.compile(r"^pkg:(?P<type>[a-z0-9.+-]+)/")
 
-# ── Экосистема компонента против target_sw в CPE ─────────────────────────
+# ── Component ecosystem vs the CPE's target_sw ───────────────────────────
 #
-# Имя проекта часто живёт сразу в нескольких экосистемах: OpenTelemetry есть
-# для Go, .NET, Node.js и C++, pgvector — это и расширение PostgreSQL, и
-# .NET-клиент.  cve-bin-tool сопоставляет по голому имени продукта и переносит
-# на компонент чужие CVE.  NVD при этом хранит платформу в 11-м поле CPE
-# (``target_sw``): ``cpe:2.3:a:opentelemetry:opentelemetry:*:*:*:*:*:go:*:*``.
-# Если платформа названа и не совпадает с экосистемой компонента из purl —
-# привязка опровергнута тем же авторитетным источником, из которого взята
-# сама находка.
+# A project name often lives in several ecosystems at once: OpenTelemetry ships
+# for Go, .NET, Node.js and C++; pgvector is both a PostgreSQL extension and a
+# .NET client.  cve-bin-tool matches on the bare product name and hands the
+# component another implementation's CVEs.  NVD, however, records the platform
+# in the 11th CPE field (``target_sw``):
+# ``cpe:2.3:a:opentelemetry:opentelemetry:*:*:*:*:*:go:*:*``.  When that field
+# names a platform and it does not match the component's ecosystem from its
+# purl, the attribution is disproved by the very source the finding came from.
 _ECOSYSTEM_TARGET_SW: dict[str, frozenset[str]] = {
     "nuget": frozenset({".net", "dotnet", ".net_framework", "asp.net", "asp.net_core", "c#"}),
     "maven": frozenset({"java", "jre", "jdk", "kotlin", "scala"}),
@@ -54,9 +54,9 @@ _ECOSYSTEM_TARGET_SW: dict[str, frozenset[str]] = {
     "cocoapods": frozenset({"swift", "objective-c", "ios"}),
 }
 
-# Значения target_sw, которые действительно называют платформу.  Всё, чего тут
-# нет (включая ``*`` и пустую строку), считаем неинформативным: такое CPE
-# ничего не опровергает.
+# target_sw values that actually name a platform.  Anything not listed here
+# (``*`` and the empty string included) counts as uninformative: such a CPE
+# disproves nothing.
 _MEANINGFUL_TARGET_SW: frozenset[str] = frozenset(
     set().union(*_ECOSYSTEM_TARGET_SW.values())
     | {
@@ -433,9 +433,9 @@ def summarize_dropped(dropped: list[dict[str, Any]]) -> list[dict[str, Any]]:
             },
         )
         row["cves"] += 1
-        # Одна пара (продукт, версия) может быть опровергнута по-разному —
-        # у OpenTelemetry 1.15.3 часть CVE помечена go, часть c++ и node.js.
-        # Схлопывать их в одно основание нечестно, поэтому копим все.
+        # One (product, version) can be disproved on several grounds: some of
+        # OpenTelemetry 1.15.3's CVEs are tagged go, others c++ and node.js.
+        # Collapsing that into a single reason would misrepresent it, so keep all.
         ev = str(f.get("dropped_evidence") or "")
         if ev and ev not in seen[key]:
             seen[key].append(ev)

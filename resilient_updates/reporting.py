@@ -166,11 +166,11 @@ def _trivy_findings(data: Any) -> list[dict[str, Any]]:
 
 
 def _nvd_feeds_dir(root: Path) -> Path:
-    """Где лежат локальные годовые фиды NVD для этого прогона.
+    """Where this run's local NVD year feeds live.
 
-    В конвейере ``root`` — это каталог artifacts, фиды лежат рядом.  При
-    перегенерации отчёта из сохранённого run-каталога их там нет, поэтому
-    откатываемся на artifacts самого чекаута.
+    In the pipeline ``root`` is the artifacts directory and the feeds sit right
+    next to it.  A report regenerated from a saved run directory has no copy of
+    them, so fall back to the checkout's own artifacts tree.
     """
     candidate = root / "nvd-feeds"
     if candidate.is_dir():
@@ -524,12 +524,11 @@ def build_report(
     # Second pass for names that are the whole identity (NuGet, npm, PyPI): the
     # groupId rule cannot help there, but NVD records the platform in the CPE.
     # A .NET OpenTelemetry does not inherit the CVEs of the Go implementation.
+    _cve_ids = {str(f.get("id") or "") for f in cve_findings}
     cve_findings, dropped_platform = filter_platform_mismatches(
         cve_findings,
         ecosystems_from_sbom(syft),
-        cve_platforms_from_feeds(
-            {str(f.get("id") or "") for f in cve_findings}, _nvd_feeds_dir(root)
-        ),
+        cve_platforms_from_feeds(_cve_ids, _nvd_feeds_dir(root)),
     )
     dropped_collisions = dropped_collisions + dropped_platform
     all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + cve_findings
