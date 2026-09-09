@@ -70,10 +70,6 @@ services:
       <<: *proxy-env
       TRIVY_CACHE_DIR: /var/lib/resilient-db/trivy
       TRIVY_RENDERED_FLAGS: ${TRIVY_RENDERED_FLAGS:-}
-      # CYBERSEC-14277: skip META-INF/maven/**/pom.xml inside exploded jars
-      # (build descriptors, not manifests — see scripts/update_trivy.sh and the
-      # syft-sbom note below).  =0 scans them again.
-      TRIVY_SKIP_EMBEDDED_POM: ${TRIVY_SKIP_EMBEDDED_POM:-1}
       # rootfs analyses jars/wars (post-build); fs reads manifests/lockfiles
       # only (pre-build) and never looked at a single jar in this pipeline —
       # see scripts/update_trivy.sh.  fs for a source-tree delivery.
