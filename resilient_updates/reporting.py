@@ -12,7 +12,14 @@ from ._io import (
     sha256_dir as _sha256_dir,
     sha256_file as _sha256_file,
 )
-from .collision_filter import filter_vendor_collisions, maven_groups_from_sbom, summarize_dropped
+from .collision_filter import (
+    cve_platforms_from_feeds,
+    ecosystems_from_sbom,
+    filter_platform_mismatches,
+    filter_vendor_collisions,
+    maven_groups_from_sbom,
+    summarize_dropped,
+)
 
 DEFAULT_CASE_ID = "CYBERSEC-UNKNOWN"
 _CASE_ID_RE = re.compile(r"\b(CYBERSEC-\d+)\b", re.IGNORECASE)
@@ -156,6 +163,19 @@ def _trivy_findings(data: Any) -> list[dict[str, Any]]:
                 }
             )
     return findings
+
+
+def _nvd_feeds_dir(root: Path) -> Path:
+    """Где лежат локальные годовые фиды NVD для этого прогона.
+
+    В конвейере ``root`` — это каталог artifacts, фиды лежат рядом.  При
+    перегенерации отчёта из сохранённого run-каталога их там нет, поэтому
+    откатываемся на artifacts самого чекаута.
+    """
+    candidate = root / "nvd-feeds"
+    if candidate.is_dir():
+        return candidate
+    return Path(__file__).resolve().parent.parent / "artifacts" / "nvd-feeds"
 
 
 def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
@@ -501,6 +521,17 @@ def build_report(
     cve_findings, dropped_collisions = filter_vendor_collisions(
         _cve_bin_tool_findings(cve), maven_groups_from_sbom(syft)
     )
+    # Second pass for names that are the whole identity (NuGet, npm, PyPI): the
+    # groupId rule cannot help there, but NVD records the platform in the CPE.
+    # A .NET OpenTelemetry does not inherit the CVEs of the Go implementation.
+    cve_findings, dropped_platform = filter_platform_mismatches(
+        cve_findings,
+        ecosystems_from_sbom(syft),
+        cve_platforms_from_feeds(
+            {str(f.get("id") or "") for f in cve_findings}, _nvd_feeds_dir(root)
+        ),
+    )
+    dropped_collisions = dropped_collisions + dropped_platform
     all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + cve_findings
     all_findings = _dedup_findings(all_findings_raw)
     # Phase 5.2 — annotate with EPSS exploit-likelihood scores and CISA KEV flag
