@@ -455,11 +455,36 @@ if [[ "$FORMAT" == "auto" ]]; then
 fi
 
 # ── Auto-enable extract for archives ──────────────────────────────────────────
+# The extension list is the fast path; the content sniff below is the actual
+# rule.  A Java delivery arrives as .war/.jar/.ear/.hpi, a Python one as .whl —
+# none of them were in the list, so the pipeline handed Syft a FILE bind-mounted
+# at /scan-target while SYFT_FROM=dir, and the sbom stage died with
+# "not a directory source: /scan-target" without a word about extraction
+# (CYBERSEC-14231, jenkins.war, 10.09).  resilient_updates.extractor decides by
+# CONTENT (zipfile/tarfile sniffing in _archive_kind), so ask the same question
+# here instead of guessing from the name.
 if [[ "$FORMAT" != "apk" && $EXTRACT -eq 0 && -f "$TARGET_RESOLVED" ]]; then
   case "$TARGET_LOWER" in
-    *.tar|*.tar.gz|*.tgz|*.tar.bz2|*.tar.xz|*.tar.zst|*.zip|*.rpm|*.deb)
+    *.tar|*.tar.gz|*.tgz|*.tar.bz2|*.tar.xz|*.tar.zst|*.zip|*.rpm|*.deb|\
+    *.war|*.jar|*.ear|*.hpi|*.jpi|*.aar|*.whl|*.egg|*.nupkg)
       EXTRACT=1
       echo " Extract : enabled automatically for archive target"
+      ;;
+    *)
+      if "$PYTHON_BIN" - "$TARGET_RESOLVED" <<'PYSNIFF' >/dev/null 2>&1
+import sys, tarfile, zipfile
+
+path = sys.argv[1]
+try:
+    ok = zipfile.is_zipfile(path) or tarfile.is_tarfile(path)
+except OSError:
+    ok = False
+sys.exit(0 if ok else 1)
+PYSNIFF
+      then
+        EXTRACT=1
+        echo " Extract : enabled automatically (archive detected by content)"
+      fi
       ;;
   esac
 fi

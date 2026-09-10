@@ -57,15 +57,21 @@ ignore = [
   "B017",   # broad pytest.raises is fine in tests
   "PT011",
   "UP036",  # version guards may target py3.10 sandbox even though target-version = py312
+  # Test docstrings and comments in this project are written in Russian and
+  # quote the ticket verbatim, so the Cyrillic-lookalike rules fire on every
+  # new file.  Twice already a fresh test turned master red on nothing but
+  # this (0d445ca -> 3e79c43, fbd41b0 -> this commit), and the per-file
+  # exceptions were piling up one name at a time.  Production code keeps the
+  # rules.
+  "RUF001", # ambiguous unicode in a string
+  "RUF002", # ... in a docstring
+  "RUF003", # ... in a comment
 ]
 "resilient_updates/artifact_catalog.py" = [
   "RUF001", # Cyrillic->Latin transliteration table; the Cyrillic keys ARE the data
 ]
 "resilient_updates/report_xlsx.py" = [
   "RUF001", # operator-facing Russian sheet titles and captions in the Excel report
-]
-"tests/test_report_xlsx.py" = [
-  "RUF001", # asserts on those same Russian titles
 ]
 "resilient_updates/dashboard.py" = [
   "RUF001", # HTML template intentionally uses Cyrillic uppercase (НЕ = NOT in Russian)
@@ -79,10 +85,6 @@ ignore = [
 ]
 "resilient_updates/pipeline_state.py" = [
   "RUF002", # docstring mixes Russian terms (resume «с чекпоинта»)
-]
-"tests/test_collision_filter_unpublished.py" = [
-  "RUF002", # docstring explains the rule in Russian, quoting the ticket
-  "RUF003", # same, in the inline comments next to each signature
 ]
 "scripts/**.py" = [
   "T201",   # print() is the point of a script

@@ -242,7 +242,7 @@ def test_render_text_resumed_and_skipped():
         "log_tail": [],
     }
     text = monitor.render_text(status)
-    assert "продолжен с чекпоинта" in text  # noqa: RUF001
+    assert "продолжен с чекпоинта" in text
     assert "skip:checkpoint" in text
     assert "120s" in text
     assert "extract" in text
