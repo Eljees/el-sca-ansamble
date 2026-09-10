@@ -261,7 +261,7 @@ def test_diff_section_renders_against_archived_previous_run(tmp_path: Path):
     build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
 
     text = output.read_text(encoding="utf-8")
-    assert "## Diff с предыдущим прогоном" in text  # noqa: RUF001
+    assert "## Diff с предыдущим прогоном" in text
     assert "CYBERSEC-77-20260101-000000" in text
     assert "`+1` новых" in text
     assert "CVE-2026-0003" in text
@@ -273,7 +273,7 @@ def test_diff_section_absent_without_history(tmp_path: Path):
     output = tmp_path / "report.md"
     build_report(artifacts, output, target_path=target, case_id="CYBERSEC-77")
 
-    assert "Diff с предыдущим прогоном" not in output.read_text(encoding="utf-8")  # noqa: RUF001
+    assert "Diff с предыдущим прогоном" not in output.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

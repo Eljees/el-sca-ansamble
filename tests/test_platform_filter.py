@@ -28,8 +28,11 @@ SBOM = {
         {"name": "OpenTelemetry", "version": "1.15.3", "purl": "pkg:nuget/OpenTelemetry@1.15.3"},
         {"name": "Pgvector", "version": "0.3.2", "purl": "pkg:nuget/Pgvector@0.3.2"},
         {"name": "NLog", "version": "5.5.1", "purl": "pkg:nuget/NLog@5.5.1"},
-        {"name": "netty-codec", "version": "4.1.135.Final",
-         "purl": "pkg:maven/io.netty/netty-codec@4.1.135.Final"},
+        {
+            "name": "netty-codec",
+            "version": "4.1.135.Final",
+            "purl": "pkg:maven/io.netty/netty-codec@4.1.135.Final",
+        },
         {"name": "libfoo", "version": "1.0", "purl": ""},  # без purl — экосистема неизвестна
     ]
 }
@@ -141,11 +144,14 @@ def test_no_platform_evidence_drops_nothing():
 
 
 def test_other_tools_untouched():
-    grype = {"tool": "grype", "id": "GHSA-x", "severity": "HIGH",
-             "product": "opentelemetry", "version": "1.15.3"}
-    kept, dropped = filter_platform_mismatches(
-        [grype], ecosystems_from_sbom(SBOM), {"GHSA-x": {"go"}}
-    )
+    grype = {
+        "tool": "grype",
+        "id": "GHSA-x",
+        "severity": "HIGH",
+        "product": "opentelemetry",
+        "version": "1.15.3",
+    }
+    kept, dropped = filter_platform_mismatches([grype], ecosystems_from_sbom(SBOM), {"GHSA-x": {"go"}})
     assert dropped == []
     assert kept == [grype]
 
@@ -162,21 +168,28 @@ def test_component_without_purl_is_kept():
 
 
 def _write_feed(path, entries):
-    payload = {"vulnerabilities": [
-        {"cve": {"id": cid, "configurations": [
-            {"nodes": [{"cpeMatch": [{"criteria": c} for c in crits]}]}
-        ]}} for cid, crits in entries.items()
-    ]}
+    payload = {
+        "vulnerabilities": [
+            {
+                "cve": {
+                    "id": cid,
+                    "configurations": [{"nodes": [{"cpeMatch": [{"criteria": c} for c in crits]}]}],
+                }
+            }
+            for cid, crits in entries.items()
+        ]
+    }
     with gzip.open(path, "wt", encoding="utf-8") as fh:
         json.dump(payload, fh)
 
 
 def test_feeds_are_read_per_year(tmp_path):
-    _write_feed(tmp_path / "nvdcve-2.0-2026.json.gz",
-                {"CVE-2026-39883": ["cpe:2.3:a:opentelemetry:opentelemetry:*:*:*:*:*:go:*:*"]})
+    _write_feed(
+        tmp_path / "nvdcve-2.0-2026.json.gz",
+        {"CVE-2026-39883": ["cpe:2.3:a:opentelemetry:opentelemetry:*:*:*:*:*:go:*:*"]},
+    )
     # год, который не запрашивали — не должен попасть в результат
-    _write_feed(tmp_path / "nvdcve-2.0-2020.json.gz",
-                {"CVE-2020-1": ["cpe:2.3:a:x:y:*:*:*:*:*:php:*:*"]})
+    _write_feed(tmp_path / "nvdcve-2.0-2020.json.gz", {"CVE-2020-1": ["cpe:2.3:a:x:y:*:*:*:*:*:php:*:*"]})
     got = cve_platforms_from_feeds({"CVE-2026-39883"}, tmp_path)
     assert got == {"CVE-2026-39883": {"go"}}
 
