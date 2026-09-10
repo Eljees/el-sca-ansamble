@@ -213,10 +213,30 @@ def test_run_scan_rejects_unknown_tool(server):
 
 def test_run_returns_error_when_project_dir_missing(tmp_path):
     mod = _load_server()
-    mod.PROJECT_DIR = tmp_path / "does-not-exist"
+    missing = tmp_path / "does-not-exist"
+    mod.PROJECT_DIR = missing
     result = mod._run(["docker", "compose", "config", "-q"], timeout=5)
     assert result["ok"] is False
-    assert "not found" in result.get("error", "").lower()
+    error = result.get("error", "")
+    # Assert what a reader needs, not a particular phrase: which directory was
+    # used and which setting chose it.  The old message said only
+    # "EL_SCA_DIR not found: <path>" for every failure mode, including a
+    # directory that existed but held no compose file.
+    assert str(missing) in error
+    assert "EL_SCA_DIR" in error
+
+
+def test_run_returns_error_when_project_dir_has_no_compose_file(tmp_path):
+    """The failure mode that the old single message could not distinguish."""
+    mod = _load_server()
+    bare = tmp_path / "exists-but-empty"
+    bare.mkdir()
+    mod.PROJECT_DIR = bare
+    result = mod._run(["docker", "compose", "config", "-q"], timeout=5)
+    assert result["ok"] is False
+    error = result.get("error", "")
+    assert "no compose file" in error
+    assert str(bare) in error
 
 
 # ---------------------------------------------------------------------------

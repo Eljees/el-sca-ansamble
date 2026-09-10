@@ -58,7 +58,52 @@ from mcp.server.fastmcp import FastMCP
 # empty) returns "" from ``os.environ.get(name, default)``, which used to
 # become ``Path(".")`` and pin cwd to wherever the process happened to start.
 REPO_DIR = Path(__file__).resolve().parents[2]
-PROJECT_DIR = Path(os.environ.get("EL_SCA_DIR") or REPO_DIR)
+
+COMPOSE_FILENAMES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
+
+
+def _is_compose_project(path: Path) -> bool:
+    """True when *path* is a directory holding a compose file.
+
+    Every command this server runs is a ``docker compose`` invocation with
+    ``cwd`` set to the project directory, so a directory without a compose file
+    cannot serve as one -- ``docker compose`` there fails with
+    ``no configuration file provided: not found``, which names neither the
+    directory nor the setting that chose it.
+    """
+    return any((path / name).is_file() for name in COMPOSE_FILENAMES)
+
+
+def _resolve_project_dir() -> tuple[Path, str | None]:
+    """Pick the project directory, preferring a usable one over a stated one.
+
+    ``EL_SCA_DIR`` wins when it names a real compose project.  When it is set but
+    cannot possibly work -- missing, or present without a compose file -- and the
+    repo this file lives in *is* a compose project, fall back to the repo and say
+    so.  A stale override is a live hazard rather than a hypothetical: after the
+    D: -> W: move, ``/mnt/d/dev/el-sca-ansamble`` still existed holding only
+    ``artifacts`` and ``configs``, so the old ``is_dir()`` guard passed and every
+    call died on the message above.  Anything that caches the launch environment
+    keeps handing over that value long after the configuration itself is fixed.
+    """
+    override = os.environ.get("EL_SCA_DIR") or ""
+    if not override:
+        return REPO_DIR, None
+    chosen = Path(override)
+    if _is_compose_project(chosen):
+        return chosen, None
+    if _is_compose_project(REPO_DIR):
+        return REPO_DIR, (
+            f"EL_SCA_DIR={chosen} holds no compose file; using the repository this "
+            f"server lives in instead: {REPO_DIR}"
+        )
+    # Neither works -- keep the stated one so the error names what was asked for.
+    return chosen, None
+
+
+PROJECT_DIR, PROJECT_DIR_NOTE = _resolve_project_dir()
+if PROJECT_DIR_NOTE:
+    print(PROJECT_DIR_NOTE, file=sys.stderr)
 
 SCANNER_TOOLS = {"trivy", "grype", "cve-bin-tool"}
 # Stable execution order for update_db(tool="all").
@@ -231,7 +276,18 @@ def _run(
     args: list[str], *, timeout: int, proxy: str | None = None, allow_exit1: bool = False
 ) -> dict[str, Any]:
     if not PROJECT_DIR.is_dir():
-        return {"ok": False, "error": f"EL_SCA_DIR not found: {PROJECT_DIR}"}
+        return {
+            "ok": False,
+            "error": f"project directory does not exist: {PROJECT_DIR} (set EL_SCA_DIR to override)",
+        }
+    if not _is_compose_project(PROJECT_DIR):
+        return {
+            "ok": False,
+            "error": (
+                f"project directory has no compose file: {PROJECT_DIR} "
+                f"(looked for {', '.join(COMPOSE_FILENAMES)}; set EL_SCA_DIR to override)"
+            ),
+        }
     try:
         proc = subprocess.run(
             args,
@@ -284,7 +340,18 @@ def monitor() -> dict:
     durations from artifacts/pipeline_state.json.
     """
     if not PROJECT_DIR.is_dir():
-        return {"ok": False, "error": f"EL_SCA_DIR not found: {PROJECT_DIR}"}
+        return {
+            "ok": False,
+            "error": f"project directory does not exist: {PROJECT_DIR} (set EL_SCA_DIR to override)",
+        }
+    if not _is_compose_project(PROJECT_DIR):
+        return {
+            "ok": False,
+            "error": (
+                f"project directory has no compose file: {PROJECT_DIR} "
+                f"(looked for {', '.join(COMPOSE_FILENAMES)}; set EL_SCA_DIR to override)"
+            ),
+        }
     try:
         proc = subprocess.run(  # nosec B603 - fixed argv, no shell
             [sys.executable, "-m", "resilient_updates.cli", "monitor", "--json"],
@@ -529,7 +596,18 @@ def run_scan_async(
     if not target or target.strip() in {"", ".", "/"}:
         return {"ok": False, "error": "refusing to scan an empty/root target; pass a concrete path"}
     if not PROJECT_DIR.is_dir():
-        return {"ok": False, "error": f"EL_SCA_DIR not found: {PROJECT_DIR}"}
+        return {
+            "ok": False,
+            "error": f"project directory does not exist: {PROJECT_DIR} (set EL_SCA_DIR to override)",
+        }
+    if not _is_compose_project(PROJECT_DIR):
+        return {
+            "ok": False,
+            "error": (
+                f"project directory has no compose file: {PROJECT_DIR} "
+                f"(looked for {', '.join(COMPOSE_FILENAMES)}; set EL_SCA_DIR to override)"
+            ),
+        }
     # On Windows the MCP server's Python process runs natively; WSL bash cannot
     # resolve Windows paths like d:\..., so we delegate to run-scan.ps1 instead.
     # run-scan.ps1 writes [stage] markers and updates pipeline_state.json via the
