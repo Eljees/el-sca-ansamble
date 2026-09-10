@@ -448,3 +448,87 @@ def test_input_hashes_fall_back_to_the_target_file(tmp_path: Path):
     sha = hashlib.sha256(target.read_bytes()).hexdigest()
     assert f"Input archive SHA-256: `{sha}`" in text
     assert "Input archive SHA-256: `UNKNOWN`" not in text
+
+
+def test_db_metadata_comes_from_the_canonical_snapshot_not_a_leftover(tmp_path: Path):
+    """CYBERSEC-14231: the report attested a three-month-old DB.
+
+    ``_find_json_by_name`` searches with ``rglob`` and takes ``sorted(...)[-1]``,
+    so any copy of ``db_snapshot.json`` deeper in the tree wins over the
+    canonical one at the artifacts root whenever its path sorts later --
+    ``artifacts/runs/…`` sorts after ``artifacts/db_snapshot.json`` because
+    ``r`` > ``d``.
+
+    On the 10.09.2026 jenkins.war run that leftover was
+    ``artifacts/runs/PRE-CLEAN-20260706-20260706-180448/db_snapshot.json`` from
+    14 June.  The report printed grype ``built=2026-06-13T07:33:12Z`` and
+    ``trivy: state=unknown`` while the DBs actually used were grype
+    ``built 2026-09-09`` and a Trivy DB from 10.09 -- and it printed the *fresh*
+    snapshot id next to them, because that value is read from ``summary.json``.
+    A report that mixes a current id with stale per-tool metadata is worse than
+    one that admits it knows nothing: it looks attested.
+    """
+    artifacts = tmp_path / "artifacts"
+    (artifacts / "sbom").mkdir(parents=True)
+    for tool in ("grype", "trivy", "cve-bin-tool"):
+        (artifacts / "reports" / tool).mkdir(parents=True)
+    (artifacts / "sbom" / "syft.json").write_text(json.dumps({"artifacts": []}), encoding="utf-8")
+    (artifacts / "reports" / "grype" / "report.json").write_text(
+        json.dumps({"matches": []}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "trivy" / "report.json").write_text(
+        json.dumps({"Results": []}), encoding="utf-8"
+    )
+    (artifacts / "reports" / "cve-bin-tool" / "report.json").write_text(json.dumps([]), encoding="utf-8")
+    (artifacts / "summary.json").write_text(json.dumps({"db_snapshot_id": "fresh-id"}), encoding="utf-8")
+    (artifacts / "status.json").write_text(json.dumps({"tool_failures": "none"}), encoding="utf-8")
+    (artifacts / "run_manifest.json").write_text(json.dumps({}), encoding="utf-8")
+
+    # The canonical snapshot, written by run_summary at the artifacts root.
+    (artifacts / "db_snapshot.json").write_text(
+        json.dumps(
+            {
+                "snapshot_id": "fresh-id",
+                "tools": {
+                    "grype": {
+                        "db_version": "sha256:fresh",
+                        "built_at": "2026-09-09T06:31:00Z",
+                        "update_state": "refreshed-this-run",
+                    },
+                    "trivy": {"db_version": "trivy-db", "update_state": "active"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    # A leftover from an earlier run, on a path that sorts after the canonical one.
+    stale = artifacts / "runs" / "PRE-CLEAN-20260706-20260706-180448"
+    stale.mkdir(parents=True)
+    (stale / "db_snapshot.json").write_text(
+        json.dumps(
+            {
+                "snapshot_id": "stale-id",
+                "tools": {
+                    "grype": {
+                        "db_version": "sha256:stale",
+                        "built_at": "2026-06-13T07:33:12Z",
+                        "update_state": "refreshed-this-run",
+                    },
+                    "trivy": {"db_version": "", "update_state": "unknown"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    target = tmp_path / "sample.bin"
+    target.write_bytes(b"x")
+    output = tmp_path / "report.md"
+    build_report(artifacts, output, target_path=target, display_target=str(target))
+    text = output.read_text(encoding="utf-8")
+
+    assert "built=`2026-09-09T06:31:00Z`" in text
+    assert "2026-06-13T07:33:12Z" not in text
+    assert "sha256:fresh" in text
+    assert "sha256:stale" not in text
+    assert "trivy: state=`active`" in text

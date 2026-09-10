@@ -216,13 +216,34 @@ def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
 
 
 def _find_json_by_name(root: Path, names: list[str]) -> Any:
-    """Search *root* recursively for the first file matching any of *names*.
+    """Find the first file matching any of *names*, canonical location first.
 
     Unlike ``_io.collect_json`` (which reads a list of explicit paths), this
     helper finds files by filename pattern via ``rglob`` — hence the distinct name.
+
+    ``root/<name>`` is tried before the recursive search, because the canonical
+    artefacts (``status.json``, ``summary.json``, ``run_manifest.json``,
+    ``db_snapshot.json``) are written by ``run_summary`` at the root of the
+    artifacts directory, and ``manifest.py`` reads them from exactly there; the
+    ``rglob`` is only a fallback for a report assembled from a copied or nested
+    artefact tree.  Without that preference ``sorted(...)[-1]`` picks whichever
+    copy sorts LAST, and ``artifacts/runs/...`` sorts after
+    ``artifacts/db_snapshot.json`` — ``r`` > ``d``.  On the CYBERSEC-14231 run of
+    2026-09-10 that handed the report a ``db_snapshot.json`` left in
+    ``artifacts/runs/PRE-CLEAN-20260706-.../`` on 14 June, so the report attested
+    a grype DB built 2026-06-13 and ``trivy: state=unknown`` while the run had
+    actually used grype built 2026-09-09 and a Trivy DB from 2026-09-10.  It
+    printed the *fresh* snapshot id beside them (that one comes from
+    ``summary.json``), which is what made the stale attestation look credible.
+
+    The per-name order is still a preference order: each name is resolved
+    canonical-then-recursive before the next name is considered.
     """
     for name in names:
-        found = sorted(root.rglob(name))
+        data = _read_json(root / name)
+        if data is not None:
+            return data
+        found = sorted(path for path in root.rglob(name) if path != root / name)
         if found:
             return _read_json(found[-1])
     return None
