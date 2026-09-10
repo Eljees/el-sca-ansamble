@@ -39,6 +39,10 @@ class _StubFastMCP:
 @pytest.fixture(scope="module")
 def server(tmp_path_factory: pytest.TempPathFactory):
     project_dir = tmp_path_factory.mktemp("el-sca-dir")
+    # A compose file makes this a real project directory.  Without it the server
+    # treats the override as unusable and falls back to the repo, which would
+    # quietly point every test in this module at the actual checkout.
+    (project_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     stub_pkg = types.ModuleType("mcp")
     stub_server = types.ModuleType("mcp.server")
     stub_fastmcp = types.ModuleType("mcp.server.fastmcp")
@@ -373,8 +377,16 @@ def test_project_dir_defaults_to_the_repo_root_without_env():
 
 
 def test_project_dir_still_honours_the_env_override(tmp_path: Path):
-    """The override has to keep working: it is how a second checkout is driven."""
+    """The override has to keep working: it is how a second checkout is driven.
+
+    The temp directory is given a compose file, because that is what "another
+    checkout" actually looks like.  It was a bare empty directory when this test
+    was first written -- a stand-in no ``docker compose`` call could have used,
+    which passed only because nothing validated the override yet.
+    """
     import os
+
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
 
     stub_pkg = types.ModuleType("mcp")
     stub_server = types.ModuleType("mcp.server")
@@ -440,3 +452,99 @@ def test_an_empty_env_value_does_not_win_over_the_repo_root():
             os.environ.pop("EL_SCA_DIR", None)
         else:
             os.environ["EL_SCA_DIR"] = old_env
+
+
+def _load_server_with_env(el_sca_dir, module_name):
+    """Load the server module with EL_SCA_DIR set (or removed when None)."""
+    import os
+
+    stub_pkg = types.ModuleType("mcp")
+    stub_server = types.ModuleType("mcp.server")
+    stub_fastmcp = types.ModuleType("mcp.server.fastmcp")
+    stub_fastmcp.FastMCP = _StubFastMCP
+    saved = {k: sys.modules.get(k) for k in ("mcp", "mcp.server", "mcp.server.fastmcp")}
+    sys.modules["mcp"] = stub_pkg
+    sys.modules["mcp.server"] = stub_server
+    sys.modules["mcp.server.fastmcp"] = stub_fastmcp
+    old_env = os.environ.get("EL_SCA_DIR")
+    if el_sca_dir is None:
+        os.environ.pop("EL_SCA_DIR", None)
+    else:
+        os.environ["EL_SCA_DIR"] = str(el_sca_dir)
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, SERVER_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.modules.pop(module_name, None)
+        for key, value in saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+        if old_env is None:
+            os.environ.pop("EL_SCA_DIR", None)
+        else:
+            os.environ["EL_SCA_DIR"] = old_env
+
+
+def test_a_stale_override_without_a_compose_file_loses_to_the_repo(tmp_path: Path):
+    """An override that cannot work must not win.
+
+    This is the situation that actually happened: ``EL_SCA_DIR`` pointed at
+    ``/mnt/d/dev/el-sca-ansamble``, which survived the D: -> W: move holding only
+    ``artifacts`` and ``configs``.  ``is_dir()`` was true, so the old guard passed
+    and every compose call died on ``no configuration file provided: not found``.
+    Anything that caches the launch environment -- a client that captured the
+    server's spawn spec before the configuration was corrected -- keeps handing
+    over the stale value, so the server has to defend itself.
+    """
+    stale = tmp_path / "stranded"
+    (stale / "artifacts").mkdir(parents=True)
+    (stale / "configs").mkdir()
+
+    module = _load_server_with_env(stale, "docker_mcp_server_stale_override")
+
+    assert REPO_ROOT == module.PROJECT_DIR
+    assert module.PROJECT_DIR_NOTE is not None
+    assert str(stale) in module.PROJECT_DIR_NOTE
+
+
+def test_an_override_that_is_a_real_compose_project_still_wins(tmp_path: Path):
+    """The override keeps working when it names a usable project."""
+    other = tmp_path / "other-checkout"
+    other.mkdir()
+    (other / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+
+    module = _load_server_with_env(other, "docker_mcp_server_good_override")
+
+    assert other == module.PROJECT_DIR
+    assert module.PROJECT_DIR_NOTE is None
+
+
+def test_compose_project_detection_accepts_every_standard_filename(tmp_path: Path):
+    module = _load_server_with_env(None, "docker_mcp_server_detect")
+    for name in ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"):
+        d = tmp_path / name.replace(".", "_")
+        d.mkdir()
+        assert not module._is_compose_project(d)
+        (d / name).write_text("services: {}\n", encoding="utf-8")
+        assert module._is_compose_project(d)
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    assert not module._is_compose_project(empty)
+
+
+def test_guard_names_the_directory_and_the_variable(tmp_path: Path, monkeypatch):
+    """The old message said only 'EL_SCA_DIR not found' -- it named no cause."""
+    module = _load_server_with_env(None, "docker_mcp_server_guard_msg")
+    bare = tmp_path / "no-compose-here"
+    bare.mkdir()
+    monkeypatch.setattr(module, "PROJECT_DIR", bare)
+    result = module._run(["docker", "compose", "ps"], timeout=5)
+    assert result["ok"] is False
+    assert "no compose file" in result["error"]
+    assert str(bare) in result["error"]
+    assert "EL_SCA_DIR" in result["error"]
