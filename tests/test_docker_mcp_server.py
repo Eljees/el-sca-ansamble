@@ -324,3 +324,119 @@ def test_run_scan_async_linux_bash_args(server, monkeypatch):
     assert "--resume" in args
     assert "powershell.exe" not in args
     assert "-Target" not in args
+
+
+def test_project_dir_defaults_to_the_repo_root_without_env():
+    """Without ``EL_SCA_DIR`` the server must find the repo it lives in.
+
+    The default used to be the literal ``/mnt/d/dev/el-sca-ansamble``. After the
+    D: -> W: move that path still existed but held only ``artifacts`` and
+    ``configs``, so every compose call ran in a directory with no
+    ``docker-compose.yml`` and died with ``no configuration file provided: not
+    found`` -- an error that names neither the directory nor the variable.  The
+    existence guard did not catch it either, because the stale directory was
+    still there.
+
+    ``server.py`` lives at ``<repo>/tools/docker-mcp/server.py``, so the repo
+    root is derivable from ``__file__`` and needs no configuration at all.
+    ``EL_SCA_DIR`` stays supported as an override for running the server against
+    a checkout other than its own.
+    """
+    import os
+
+    stub_pkg = types.ModuleType("mcp")
+    stub_server = types.ModuleType("mcp.server")
+    stub_fastmcp = types.ModuleType("mcp.server.fastmcp")
+    stub_fastmcp.FastMCP = _StubFastMCP
+    saved = {k: sys.modules.get(k) for k in ("mcp", "mcp.server", "mcp.server.fastmcp")}
+    sys.modules["mcp"] = stub_pkg
+    sys.modules["mcp.server"] = stub_server
+    sys.modules["mcp.server.fastmcp"] = stub_fastmcp
+    old_env = os.environ.pop("EL_SCA_DIR", None)
+    try:
+        spec = importlib.util.spec_from_file_location("docker_mcp_server_no_env", SERVER_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        assert module.PROJECT_DIR == REPO_ROOT
+        assert (module.PROJECT_DIR / "docker-compose.yml").is_file()
+        assert "/mnt/d/" not in str(module.PROJECT_DIR)
+    finally:
+        sys.modules.pop("docker_mcp_server_no_env", None)
+        for key, value in saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+        if old_env is not None:
+            os.environ["EL_SCA_DIR"] = old_env
+
+
+def test_project_dir_still_honours_the_env_override(tmp_path: Path):
+    """The override has to keep working: it is how a second checkout is driven."""
+    import os
+
+    stub_pkg = types.ModuleType("mcp")
+    stub_server = types.ModuleType("mcp.server")
+    stub_fastmcp = types.ModuleType("mcp.server.fastmcp")
+    stub_fastmcp.FastMCP = _StubFastMCP
+    saved = {k: sys.modules.get(k) for k in ("mcp", "mcp.server", "mcp.server.fastmcp")}
+    sys.modules["mcp"] = stub_pkg
+    sys.modules["mcp.server"] = stub_server
+    sys.modules["mcp.server.fastmcp"] = stub_fastmcp
+    old_env = os.environ.get("EL_SCA_DIR")
+    os.environ["EL_SCA_DIR"] = str(tmp_path)
+    try:
+        spec = importlib.util.spec_from_file_location("docker_mcp_server_env_override", SERVER_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        assert tmp_path == module.PROJECT_DIR
+    finally:
+        sys.modules.pop("docker_mcp_server_env_override", None)
+        for key, value in saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+        if old_env is None:
+            os.environ.pop("EL_SCA_DIR", None)
+        else:
+            os.environ["EL_SCA_DIR"] = old_env
+
+
+def test_an_empty_env_value_does_not_win_over_the_repo_root():
+    """``EL_SCA_DIR=`` (set but empty) used to become ``Path('.')``.
+
+    ``os.environ.get(name, default)`` returns the empty string, not the default,
+    so an empty value silently pinned cwd to the process's working directory.
+    """
+    import os
+
+    stub_pkg = types.ModuleType("mcp")
+    stub_server = types.ModuleType("mcp.server")
+    stub_fastmcp = types.ModuleType("mcp.server.fastmcp")
+    stub_fastmcp.FastMCP = _StubFastMCP
+    saved = {k: sys.modules.get(k) for k in ("mcp", "mcp.server", "mcp.server.fastmcp")}
+    sys.modules["mcp"] = stub_pkg
+    sys.modules["mcp.server"] = stub_server
+    sys.modules["mcp.server.fastmcp"] = stub_fastmcp
+    old_env = os.environ.get("EL_SCA_DIR")
+    os.environ["EL_SCA_DIR"] = ""
+    try:
+        spec = importlib.util.spec_from_file_location("docker_mcp_server_empty_env", SERVER_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        assert module.PROJECT_DIR == REPO_ROOT
+    finally:
+        sys.modules.pop("docker_mcp_server_empty_env", None)
+        for key, value in saved.items():
+            if value is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = value
+        if old_env is None:
+            os.environ.pop("EL_SCA_DIR", None)
+        else:
+            os.environ["EL_SCA_DIR"] = old_env

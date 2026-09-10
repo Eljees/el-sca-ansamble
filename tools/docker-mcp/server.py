@@ -8,13 +8,17 @@ shell access.
 Run (in the environment where Docker is reachable — e.g. WSL with Docker Desktop):
 
     pip install "mcp>=1.2"
-    EL_SCA_DIR=/mnt/d/dev/el-sca-ansamble python tools/docker-mcp/server.py
+    python tools/docker-mcp/server.py
+
+The project directory defaults to the repo this file sits in; set
+``EL_SCA_DIR`` only to drive a different checkout.
 
 Security model:
 - Only the compose subcommands wired below are reachable; there is **no**
   generic "run any command" tool and ``shell=True`` is never used.
 - ``service`` / ``tool`` / ``profile`` arguments are validated against allow-lists.
-- cwd is pinned to ``EL_SCA_DIR``; the scan target is passed via env vars (argv
+- cwd is pinned to the repo directory (``EL_SCA_DIR`` overrides it); the scan
+  target is passed via env vars (argv
   list form only — no shell interpolation).
 - A ``proxy`` argument is translated ``127.0.0.1``/``localhost`` →
   ``host.docker.internal`` so the host's local proxy (e.g. xray on 10808) is
@@ -42,7 +46,19 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-PROJECT_DIR = Path(os.environ.get("EL_SCA_DIR", "/mnt/d/dev/el-sca-ansamble"))
+# ``server.py`` lives at ``<repo>/tools/docker-mcp/server.py``, so the repo it
+# belongs to is derivable from its own path and needs no configuration.  The
+# previous default was the literal ``/mnt/d/dev/el-sca-ansamble``; after the
+# D: -> W: move that directory still existed but held only ``artifacts`` and
+# ``configs``, so the existence guard passed and every compose call died with
+# ``no configuration file provided: not found`` -- an error naming neither the
+# directory nor the variable.
+#
+# ``or`` rather than a ``get`` default on purpose: ``EL_SCA_DIR=`` (set but
+# empty) returns "" from ``os.environ.get(name, default)``, which used to
+# become ``Path(".")`` and pin cwd to wherever the process happened to start.
+REPO_DIR = Path(__file__).resolve().parents[2]
+PROJECT_DIR = Path(os.environ.get("EL_SCA_DIR") or REPO_DIR)
 
 SCANNER_TOOLS = {"trivy", "grype", "cve-bin-tool"}
 # Stable execution order for update_db(tool="all").
