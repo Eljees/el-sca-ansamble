@@ -532,3 +532,68 @@ def test_db_metadata_comes_from_the_canonical_snapshot_not_a_leftover(tmp_path: 
     assert "sha256:fresh" in text
     assert "sha256:stale" not in text
     assert "trivy: state=`active`" in text
+
+
+# ---------------------------------------------------------------------------
+# Style gate on customer-facing prose
+# ---------------------------------------------------------------------------
+
+import re as _re  # noqa: E402
+
+_BANNED_CONSTRUCTION = _re.compile(r"(?<![^\W\d_])а\s+не\s", _re.UNICODE)
+
+# tests/ -> repo root.  Defined locally: this module has no REPO_ROOT of its own.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Modules whose Russian strings reach the customer: the Markdown report and the
+# XLSX workbook.  dashboard.py is deliberately out of scope -- its hits are CSS
+# and JS comments, which nobody outside the team reads.
+_CUSTOMER_FACING = (
+    "resilient_updates/reporting.py",
+    "resilient_updates/report_xlsx.py",
+)
+
+
+def _string_literals(source: str) -> list[str]:
+    """Every single/double-quoted literal in *source*, comments excluded."""
+    import ast
+    import io
+    import tokenize
+
+    out = []
+    for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+        if tok.type == tokenize.STRING:
+            try:
+                value = ast.literal_eval(tok.string)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(value, str):
+                out.append(value)
+    return out
+
+
+def test_customer_facing_prose_avoids_the_banned_construction():
+    """The "не…, а…" construction is forbidden in anything we hand over.
+
+    The report's own boilerplate carried it -- "Находки являются сигналом
+    сканеров, а не подтвержденной применимостью уязвимостей" -- so every report
+    the pipeline produced shipped it to the customer.  A grep is not enough here:
+    the phrase has to be looked for in STRING LITERALS only, otherwise the same
+    wording in a code comment would fail the gate for no reason.
+    """
+    offenders = []
+    for rel in _CUSTOMER_FACING:
+        path = _REPO_ROOT / rel
+        source = path.read_text(encoding="utf-8")
+        for literal in _string_literals(source):
+            if _BANNED_CONSTRUCTION.search(literal):
+                offenders.append(f"{rel}: {literal[:90]}")
+    assert not offenders, "banned construction in customer-facing strings:\n" + "\n".join(offenders)
+
+
+def test_the_gate_would_actually_catch_it():
+    """Neutralise the check and it must fire -- otherwise the gate proves nothing."""
+    assert _BANNED_CONSTRUCTION.search("Находки — сигнал сканеров, а не применимость.")
+    # And it must not fire on an innocent sentence that merely contains both words.
+    assert not _BANNED_CONSTRUCTION.search("Эта строка не содержит запрещённой конструкции.")
+    assert not _BANNED_CONSTRUCTION.search("Второго бага не заявлял.")
