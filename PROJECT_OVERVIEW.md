@@ -18,7 +18,7 @@ Single source of truth: `versions.env` (CI enforces agreement with
 
 | Component | Version |
 |-----------|---------|
-| Project (`el-sca`, SemVer) | **0.1.5** (Python ≥ 3.10) |
+| Project (`el-sca`, SemVer) | **0.2.1** (Python ≥ 3.10) |
 | Trivy | 0.74.0 |
 | Grype | v0.119.0 |
 | Syft | v1.52.0 |
@@ -26,6 +26,19 @@ Single source of truth: `versions.env` (CI enforces agreement with
 | OSV scanner | latest (optional) |
 | Base image | python:3.12-slim |
 | Sidecars | Xray / tinyproxy / WireGuard (latest) |
+
+### Vulnerability databases
+
+Last refreshed **2026-09-21** — all three under two hours old at the time of
+the check, control run showed no regression. Details and the manual procedure:
+`docs/db-update-manual-ru.md` §0.
+
+| | |
+|---|---|
+| CVE records | 461 204 (72 845 from 2026) |
+| Version ranges | 3 026 701 |
+| EPSS | 377 238 entries, 2026-09-20 snapshot |
+| NVD feeds | all 26 yearly files verified against `totalResults`, none truncated |
 
 ## Features
 
