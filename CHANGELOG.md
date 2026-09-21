@@ -6,6 +6,17 @@ loosely adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Подняты закреплённые версии сканеров: Grype `v0.118.0` → `v0.119.0`,
+  Syft `v1.51.1` → `v1.52.0`. Trivy остаётся на `0.74.0`, cve-bin-tool — на
+  `3.4`: свежее на момент проверки нет. Версия проекта `0.2.0` → `0.2.1`
+  (versions.env, pyproject.toml, fallback'и docker-compose.yml,
+  `COMPOSE_VERSION_DEFAULTS` в dashboard.py и упоминания в README,
+  PROJECT_OVERVIEW и docs/distribution.md приведены в соответствие —
+  этого требует CI-джоба `lint-versions` и тест
+  `test_compose_defaults_match_versions_env`).
+
 ### Added
 
 - **Отсев по платформе из CPE** (CYBERSEC-13702). Правило по Maven `groupId`

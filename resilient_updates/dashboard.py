@@ -352,8 +352,8 @@ def render_run(artifacts_dir: Path, run_id: str) -> str | None:
 # actually scanning — because nothing forced them to move with versions.env.
 COMPOSE_VERSION_DEFAULTS = {
     "TRIVY_VERSION": "0.74.0",
-    "GRYPE_VERSION": "v0.118.0",
-    "SYFT_VERSION": "v1.51.1",
+    "GRYPE_VERSION": "v0.119.0",
+    "SYFT_VERSION": "v1.52.0",
 }
 
 
