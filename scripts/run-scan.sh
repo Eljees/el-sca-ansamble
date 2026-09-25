@@ -665,9 +665,7 @@ elif [[ "$FORMAT" == "win" ]]; then
   echo "[win] Running Windows installer analyzer..."
   run_stage win-analyzer 0 docker compose --profile win run --rm win-analyzer
 
-  echo "[win] Running grype on generated SBOM..."
-  export SYFT_TARGET="/workspace/artifacts/sbom/syft.json"
-  export SYFT_FROM="sbom"
+  WIN_EXTRACT_DIR="$ARTIFACTS_DIR/extracted/win-installer"
   if [[ $UPDATE_DB -eq 1 ]]; then
     run_step "update:grype" 0        docker compose --profile update run --rm grype-updater || die "grype-updater failed (exit $LAST_STEP_RC)"
     run_step "update:grype-import" 0 docker compose --profile update run --rm grype-db-importer || die "grype-db-importer failed (exit $LAST_STEP_RC)"
@@ -675,9 +673,24 @@ elif [[ "$FORMAT" == "win" ]]; then
   fi
   db_status grype /var/lib/resilient-db/grype/active
   db_status cve-bin-tool /home/appuser/.cache/cve-bin-tool
+  if [[ -d "$WIN_EXTRACT_DIR" ]] && [[ -n "$(find "$WIN_EXTRACT_DIR" -type f -print -quit 2>/dev/null)" ]]; then
+    # The analyzer's PE-only SBOM knows DLL versions but not the bundled JRE,
+    # jars or Python/Go runtimes; Grype on it found nothing on CYBERSEC-14915
+    # (ActiveGate .exe: 0 vs 45 with a Syft SBOM of the unpacked tree, incl.
+    # 10 High in the bundled OpenJDK).  Catalog the unpacked tree with Syft.
+    echo "[win] Running syft on extracted installer contents..."
+    export SCAN_TARGET_HOST="$(realpath "$WIN_EXTRACT_DIR")"
+    export SYFT_TARGET="/scan-target"
+    export SYFT_FROM="dir"
+    run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom
+    echo "[win] Running grype on the installer SBOM..."
+  else
+    echo "[win] Running grype on generated SBOM..."
+    export SYFT_TARGET="/workspace/artifacts/sbom/syft.json"
+    export SYFT_FROM="sbom"
+  fi
   run_stage grype 0 docker compose --profile "$PROFILE" run --rm grype-scanner
 
-  WIN_EXTRACT_DIR="$ARTIFACTS_DIR/extracted/win-installer"
   if [[ -d "$WIN_EXTRACT_DIR" ]]; then
     cve_scan_host="$(realpath "$WIN_EXTRACT_DIR")"
     cve_scan_container="/workspace/artifacts/extracted/win-installer"
