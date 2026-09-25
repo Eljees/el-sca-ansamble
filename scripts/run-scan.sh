@@ -502,6 +502,97 @@ if [[ "$FORMAT" == "apk" ]]; then
   fi
 fi
 
+# ── Docker image archives (docker save) ───────────────────────────────────────
+# An image tarball is extracted into plain files like any other archive, which
+# loses the distro: Grype then reports "distro: none" and skips every OS package,
+# and cve-bin-tool matches bare version strings of RHEL libraries that Red Hat
+# has patched without changing the number (backports).  CYBERSEC-14915: the
+# oneagent image (RHEL 9.6) showed 28 "Critical" from cve-bin-tool and not one
+# OS-package finding from Grype; scanned as an image — 0 Critical, 48 real High
+# with Red Hat fix versions.  Detect the archive here, keep the file-level legs
+# (they still see vendor-bundled libraries under /opt), and add image-mode
+# Trivy/Grype legs after them.
+IMAGE_ARCHIVE=0
+if [[ "$FORMAT" == "auto" && -f "$TARGET_RESOLVED" ]]; then
+  case "$TARGET_LOWER" in
+    *.tar|*.tar.gz|*.tgz)
+      if "$PYTHON_BIN" - "$TARGET_RESOLVED" <<'PYIMG' >/dev/null 2>&1
+import sys, tarfile
+
+try:
+    with tarfile.open(sys.argv[1]) as tf:
+        for member in tf:
+            if member.name.lstrip("./") == "manifest.json":
+                sys.exit(0)
+except (tarfile.TarError, OSError, EOFError):
+    pass
+sys.exit(1)
+PYIMG
+      then
+        IMAGE_ARCHIVE=1
+        echo " Image   : docker-archive — OS packages will be matched in image mode"
+      fi
+      ;;
+  esac
+fi
+
+# image_mode_scans — Trivy `image --input` and Grype `docker-archive:` over the
+# delivered tarball.  Each replaces the file-level report of the same scanner
+# only when it succeeds; on failure the file-level report is put back.
+image_mode_scans() {
+  local img_dir="$ARTIFACTS_DIR/image-input" rep="$ARTIFACTS_DIR/reports"
+  local img_host="$img_dir/image.tar" img_ctr="/workspace/artifacts/image-input/image.tar"
+  mkdir -p "$img_dir"
+  case "$TARGET_LOWER" in
+    *.gz|*.tgz) gzip -dc "$TARGET_RESOLVED" > "$img_host" ;;
+    *)          cp -f "$TARGET_RESOLVED" "$img_host" ;;
+  esac
+  chmod 0644 "$img_host" 2>/dev/null || true
+
+  cp -f "$rep/trivy/report.json" "$rep/trivy/report.files.json" 2>/dev/null || true
+  echo "[image] Running trivy in image mode..."
+  TRIVY_SCAN_KIND=image TRIVY_TARGET="$img_ctr" \
+    run_stage_soft trivy-image "0" docker compose --profile "$PROFILE" run --rm \
+      -e TRIVY_SCAN_KIND=image -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
+  if [[ "${LAST_STEP_RC:-1}" != "0" || ! -s "$rep/trivy/report.json" ]]; then
+    cp -f "$rep/trivy/report.files.json" "$rep/trivy/report.json" 2>/dev/null || true
+    echo "[image] trivy image mode failed — keeping the file-level trivy report" >&2
+  fi
+
+  cp -f "$rep/grype/report.json" "$rep/grype/report.files.json" 2>/dev/null || true
+  echo "[image] Running grype on docker-archive..."
+  run_stage_soft grype-image "0" docker compose --profile "$PROFILE" run --rm grype-scanner \
+    "docker-archive:$img_ctr" -o json --file /workspace/artifacts/reports/grype/report.json
+  if [[ "${LAST_STEP_RC:-1}" != "0" || ! -s "$rep/grype/report.json" ]]; then
+    cp -f "$rep/grype/report.files.json" "$rep/grype/report.json" 2>/dev/null || true
+    echo "[image] grype image mode failed — keeping the file-level grype report" >&2
+  fi
+  rm -rf "$img_dir" 2>/dev/null || true
+}
+
+# ── Purge the previous run's outputs ──────────────────────────────────────────
+# artifacts/ is shared between runs.  Branches that do not run the extractor —
+# Windows installers (exe/msi), standalone APKs, directory targets — used to
+# leave extracted/current/ and the scanner reports of the PREVIOUS target in
+# place.  The report then showed the previous target's Trivy findings, its
+# "Extracted archives" count and its hashes: CYBERSEC-14915 (24.09) — the
+# ActiveGate .exe and the Remote Plugin Module .msi reported Jetty and the
+# input/final SHA-256 of the docker image scanned minutes before them.  Wipe
+# what this run is going to regenerate; a --resume run keeps its checkpoint.
+if [[ $RESUME -eq 0 ]]; then
+  rm -f "$ARTIFACTS_DIR"/reports/grype/report.json "$ARTIFACTS_DIR"/reports/trivy/report.json \
+        "$ARTIFACTS_DIR"/reports/cve-bin-tool/report.json "$ARTIFACTS_DIR"/sbom/scan-input.cdx.json \
+        2>/dev/null || true
+  if [[ $EXTRACT -eq 0 ]]; then
+    # The extractor purges current/ itself when it runs; nobody else does.
+    rm -rf "$ARTIFACTS_DIR/extracted/current" 2>/dev/null || true
+  fi
+  case "$FORMAT" in
+    win) rm -rf "$ARTIFACTS_DIR/extracted/win-installer" "$ARTIFACTS_DIR/reports/win" 2>/dev/null || true ;;
+    apk) rm -rf "$ARTIFACTS_DIR/extracted/apk-native" "$ARTIFACTS_DIR/reports/apk" 2>/dev/null || true ;;
+  esac
+fi
+
 # ── Extract ───────────────────────────────────────────────────────────────────
 if [[ $EXTRACT -eq 1 ]]; then
   EXTRACT_REL="artifacts/extracted/current"
@@ -626,6 +717,17 @@ elif [[ "$FORMAT" == "win" ]]; then
     export CVE_BIN_TOOL_TARGET="$cve_scan_container"
     export SCAN_TARGET_HOST="$cve_scan_host"
     run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
+
+    # Bundled Java / Python / Go / .NET packages: the PE analyzer reads only
+    # VS_VERSIONINFO, so jars inside an installer (Jetty, BouncyCastle,
+    # jackson…) never reached a matcher — CYBERSEC-14915, ActiveGate .exe:
+    # 4 components from the win branch vs 432 once unpacked and scanned as a
+    # tree.  Trivy rootfs over the unpacked installer catalogs them.
+    echo "[win] Running trivy on extracted installer contents..."
+    export SCAN_TARGET_HOST="$(realpath "$WIN_EXTRACT_DIR")"
+    export TRIVY_TARGET="/scan-target"
+    db_status trivy /var/lib/resilient-db/trivy
+    run_stage_soft trivy "0" docker compose --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
   fi
 
 else
@@ -645,6 +747,9 @@ else
       run_stage trivy 0          docker compose --profile "$PROFILE" run --rm -e "TRIVY_RENDERED_FLAGS=$TRIVY_FLAGS" trivy-scanner
       run_stage grype 0          docker compose --profile "$PROFILE" run --rm grype-scanner
       run_stage_soft cve-bin-tool "0 1" docker compose --profile "$PROFILE" run --rm cve-bin-tool-scanner
+      if [[ $IMAGE_ARCHIVE -eq 1 ]]; then
+        image_mode_scans
+      fi
       ;;
     syft)
       run_stage sbom 0 docker compose --profile "$PROFILE" run --rm syft-sbom

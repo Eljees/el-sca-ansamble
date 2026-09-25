@@ -411,6 +411,96 @@ def filter_platform_mismatches(
     return kept, dropped
 
 
+# ── Build markers and distro-patched OS files ────────────────────────────
+#
+# Two more cve-bin-tool patterns that no scanner flag switches off
+# (CYBERSEC-14915, 301 + 272 findings across 13 Dynatrace artifacts):
+#
+# * ``gnu gcc x.y`` -- the ``GCC: (GNU) 4.4.7 ...`` ident string every toolchain
+#   writes into the ``.comment`` section.  It names the compiler that built the
+#   binary, not a gcc/libgcc component shipped in it; the CVEs are about the
+#   compiler itself (POWER9 intrinsics, c++filt, ...).
+# * OS-package files inside a docker image with a known distro.  cve-bin-tool
+#   reads ``curl 7.76.1`` out of ``/usr/bin/curl`` and matches the upstream
+#   version, but RHEL ships fixes as backports without changing it: the
+#   oneagent image (RHEL 9.6) produced 28 "Critical" that Red Hat had closed.
+#   When the image was matched as an image, Grype/Trivy evaluated those very
+#   packages against the distro feed, which is authoritative for them.
+
+_OS_TREE = re.compile(r"(^|/)(usr|lib|lib32|lib64|bin|sbin|etc)/")
+
+
+def filter_compiler_markers(
+    findings: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drop cve-bin-tool ``gcc`` hits (a compiler ident string, not a component)."""
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for finding in findings:
+        if _is_cve_bin_tool(finding) and str(finding.get("product") or "").lower() == "gcc":
+            dropped.append(
+                dict(
+                    finding,
+                    dropped_reason=(
+                        "'GCC: (GNU) x.y' is the toolchain ident in the .comment section of the "
+                        "binary: it names the compiler that built it, not a shipped gcc/libgcc"
+                    ),
+                    dropped_evidence="compiler build marker",
+                )
+            )
+        else:
+            kept.append(finding)
+    return kept, dropped
+
+
+def distro_from_grype(grype_report: Any) -> str:
+    """``"redhat 9.6"`` when Grype matched a recognised distro (image mode), else ``""``."""
+    if not isinstance(grype_report, dict):
+        return ""
+    distro = grype_report.get("distro")
+    if not isinstance(distro, dict):
+        return ""
+    name = str(distro.get("name") or "").strip()
+    return f"{name} {str(distro.get('version') or '').strip()}".strip() if name else ""
+
+
+def filter_distro_owned_binaries(
+    findings: list[dict[str, Any]], distro: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drop cve-bin-tool hits on OS files when the distro feed has judged them.
+
+    Only acts when ``distro`` is non-empty, i.e. Grype recognised the image's
+    OS and matched its packages against the distro's security data.  Files
+    under ``/opt`` (vendor-bundled libraries) are always kept: the distro feed
+    knows nothing about them.
+    """
+    if not distro:
+        return findings, []
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for finding in findings:
+        paths = str(finding.get("paths") or "")
+        if (
+            _is_cve_bin_tool(finding)
+            and paths
+            and "/opt/" not in paths
+            and _OS_TREE.search(paths.replace("\\", "/"))
+        ):
+            dropped.append(
+                dict(
+                    finding,
+                    dropped_reason=(
+                        f"file of a {distro} OS package; Grype/Trivy matched that package against "
+                        f"the {distro} security feed, which accounts for backported fixes"
+                    ),
+                    dropped_evidence=f"OS package file, distro {distro}",
+                )
+            )
+        else:
+            kept.append(finding)
+    return kept, dropped
+
+
 def summarize_dropped(dropped: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse dropped findings per (vendor, product, version) with a CVE count.
 
@@ -446,7 +536,10 @@ def summarize_dropped(dropped: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 __all__ = [
     "cve_platforms_from_feeds",
+    "distro_from_grype",
     "ecosystems_from_sbom",
+    "filter_compiler_markers",
+    "filter_distro_owned_binaries",
     "filter_platform_mismatches",
     "filter_vendor_collisions",
     "has_synthesised_coordinates",

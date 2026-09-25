@@ -9,7 +9,8 @@ Supports:
 
 Steps:
   1. Detect format
-  2. Extract contents to artifacts/extracted/win-installer/
+  2. Extract contents to artifacts/extracted/win-installer/ (nested MSI/CAB/ZIP
+     are opened too, up to 3 levels)
   3. Scan .exe/.dll PE headers with pefile to collect version metadata
   4. Generate a synthetic syft-compatible SBOM from PE version info
   5. Write text summary to artifacts/reports/win/win_analysis.txt
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import uuid
@@ -158,6 +160,60 @@ def extract_msitools(src: Path, dest: Path) -> bool:
     except FileNotFoundError:
         log("  msiextract not found — falling back to 7zip")
         return False
+
+
+NESTED_SUFFIXES = (".msi", ".cab", ".zip")
+NESTED_MAX_PASSES = 3
+NESTED_MIN_BYTES = 64 * 1024
+
+
+def unpack_nested(root: Path) -> int:
+    """Open installers and archives that the first extraction left packed.
+
+    A bootstrapper .exe usually carries the real MSI, the MSI carries CAB
+    files, and a Java product ships its libraries in a zip.  Only the outer
+    layer used to be opened, so the scanners saw one opaque 800 MB file:
+    CYBERSEC-14915 — OneAgent-Windows.exe -> Dynatrace-OneAgent-Installer.msi
+    (68 streams) was reported with 3 components and 0 findings, while the same
+    tree unpacked by hand gave 241 components.  Each nested container is
+    replaced by a ``<name>_x/`` directory next to it; the container itself is
+    removed only when something was actually extracted from it.
+    """
+    opened = 0
+    for _ in range(NESTED_MAX_PASSES):
+        found = [
+            p
+            for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in NESTED_SUFFIXES and p.stat().st_size >= NESTED_MIN_BYTES
+        ]
+        if not found:
+            break
+        for p in found:
+            dest = p.with_name(p.name + "_x")
+            ok = False
+            if p.suffix.lower() == ".zip":
+                try:
+                    with zipfile.ZipFile(p) as zf:
+                        for member in zf.infolist():
+                            target = (dest / member.filename).resolve()
+                            if not str(target).startswith(str(dest.resolve())):
+                                continue  # zip-slip guard
+                            zf.extract(member, dest)
+                    ok = _count_files(dest) > 0
+                except Exception as e:  # corrupt / not really a zip
+                    log(f"  nested zip {p.name}: {e}")
+            elif p.suffix.lower() == ".msi":
+                ok = extract_msitools(p, dest) or extract_7zip(p, dest)
+            else:
+                ok = extract_7zip(p, dest)
+            if ok:
+                p.unlink(missing_ok=True)
+                opened += 1
+            else:
+                shutil.rmtree(dest, ignore_errors=True)
+    if opened:
+        log(f"  nested containers opened: {opened} (now {_count_files(root)} files)")
+    return opened
 
 
 def extract_zip_for_installer(src: Path, dest: Path) -> Path | None:
@@ -375,6 +431,8 @@ def main() -> int:
     extracted_count = _count_files(extract_dir)
     if extracted_count == 0:
         log("WARNING: extraction produced no files — SBOM will be minimal")
+    else:
+        unpack_nested(extract_dir)
 
     # ── PE scanning ─────────────────────────────────────────────────────────
     binaries = collect_binaries(extract_dir)

@@ -95,6 +95,17 @@ case "$MODE" in
 }
 EOF
     ;;
+  scan|offline)
+    # Image mode (docker-save tarball, set by run-scan.sh image_mode_scans):
+    # the archive goes in with --input, not as a positional target.
+    if [ "$SCAN_KIND" = "image" ]; then
+      exec trivy image --cache-dir "$CACHE_DIR" "$@" --skip-db-update --skip-java-db-update --skip-check-update --offline-scan --format json --output "$REPORT_DIR/report.json" --input "$TARGET"
+    fi
+    ;;
+esac
+
+case "$MODE" in
+  update) ;;
   scan)
     # --offline-scan is NOT optional in this contour.  Without it Trivy tries to
     # resolve Java POM parents from repo.maven.apache.org; egress here goes

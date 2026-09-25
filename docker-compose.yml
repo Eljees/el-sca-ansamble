@@ -604,6 +604,10 @@ services:
       dockerfile: Dockerfile.win-analyzer
     profiles: ["win"]
     working_dir: /workspace
+    # Run the analyzer from the mounted workspace (same pattern as
+    # cve-bin-tool-scanner): analyzer fixes then deploy via git pull, no image
+    # rebuild.  The copy baked into the image stays as the fallback entrypoint.
+    entrypoint: ["python", "/workspace/scripts/analyze_win_installer.py"]
     command:
       [
         "--input", "/scan-target",

@@ -24,7 +24,16 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from .collision_filter import filter_vendor_collisions, maven_groups_from_sbom
+from .collision_filter import (
+    cve_platforms_from_feeds,
+    distro_from_grype,
+    ecosystems_from_sbom,
+    filter_compiler_markers,
+    filter_distro_owned_binaries,
+    filter_platform_mismatches,
+    filter_vendor_collisions,
+    maven_groups_from_sbom,
+)
 from .reporting import (
     _collect_json_from_paths,
     _cve_bin_tool_findings,
@@ -32,6 +41,7 @@ from .reporting import (
     _find_json_by_name,
     _get_nested,
     _grype_findings,
+    _nvd_feeds_dir,
     _syft_count,
     _trivy_findings,
     target_digest,
@@ -132,7 +142,8 @@ def _summary_sheet(
         sheet.add(f"Находок: {tool}", per_tool.get(tool, 0))
     if dropped_collisions:
         sheet.add(
-            ("Отсеяно как коллизии имён (cve-bin-tool)", STYLE_MUTED), (dropped_collisions, STYLE_MUTED)
+            ("Отсеяно у cve-bin-tool (коллизии имён, метки компилятора, файлы ОС образа)", STYLE_MUTED),
+            (dropped_collisions, STYLE_MUTED),
         )
     sheet.add("Всего находок", sum(per_tool.values()))
     sheet.add()
@@ -214,9 +225,19 @@ def build_xlsx_report(
 
     grype_findings = _grype_findings(grype)
     trivy_findings = _trivy_findings(trivy)
+    # Same filter chain as the Markdown report (reporting.collect_report), so
+    # the workbook and the .md never disagree on what was counted.
     cve_findings, dropped_collisions = filter_vendor_collisions(
         _cve_bin_tool_findings(cve), maven_groups_from_sbom(syft)
     )
+    cve_findings, dropped_platform = filter_platform_mismatches(
+        cve_findings,
+        ecosystems_from_sbom(syft),
+        cve_platforms_from_feeds({str(f.get("id") or "") for f in cve_findings}, _nvd_feeds_dir(root)),
+    )
+    cve_findings, dropped_markers = filter_compiler_markers(cve_findings)
+    cve_findings, dropped_distro = filter_distro_owned_binaries(cve_findings, distro_from_grype(grype))
+    dropped_collisions = dropped_collisions + dropped_platform + dropped_markers + dropped_distro
     raw = grype_findings + trivy_findings + cve_findings
     findings = _dedup_findings(raw)
     try:  # EPSS / KEV columns when the offline feeds are present

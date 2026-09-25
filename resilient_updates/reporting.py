@@ -14,7 +14,10 @@ from ._io import (
 )
 from .collision_filter import (
     cve_platforms_from_feeds,
+    distro_from_grype,
     ecosystems_from_sbom,
+    filter_compiler_markers,
+    filter_distro_owned_binaries,
     filter_platform_mismatches,
     filter_vendor_collisions,
     maven_groups_from_sbom,
@@ -210,6 +213,9 @@ def _cve_bin_tool_findings(data: Any) -> list[dict[str, Any]]:
                 "version": item.get("version") or "",
                 "fixed": item.get("fixed_version") or item.get("fixed") or "",
                 "source": item.get("source") or "cve-bin-tool",
+                # Where the version string was read; filter_distro_owned_binaries
+                # needs it to tell an OS-package file from a vendor-bundled one.
+                "paths": str(item.get("paths") or ""),
             }
         )
     return findings
@@ -552,6 +558,11 @@ def build_report(
         cve_platforms_from_feeds(_cve_ids, _nvd_feeds_dir(root)),
     )
     dropped_collisions = dropped_collisions + dropped_platform
+    # Not name collisions, reported separately: compiler ident strings, and OS
+    # files of an image whose distro feed already judged the owning package.
+    cve_findings, dropped_markers = filter_compiler_markers(cve_findings)
+    cve_findings, dropped_distro = filter_distro_owned_binaries(cve_findings, distro_from_grype(grype))
+    dropped_other = dropped_markers + dropped_distro
     all_findings_raw = _grype_findings(grype) + _trivy_findings(trivy) + cve_findings
     all_findings = _dedup_findings(all_findings_raw)
     # Phase 5.2 — annotate with EPSS exploit-likelihood scores and CISA KEV flag
@@ -598,7 +609,7 @@ def build_report(
     # dropped it no longer describes what the report shows, so count the kept ones.
     cve_count = (
         summary.get("estimated_cve_bin_tool_matches", len(cve_findings))
-        if isinstance(summary, dict) and not dropped_collisions
+        if isinstance(summary, dict) and not (dropped_collisions or dropped_other)
         else len(cve_findings)
     )
     parsed_counts = {
@@ -810,6 +821,8 @@ def build_report(
             f"- Trivy findings: `{len(_trivy_findings(trivy))}`",
             f"- cve-bin-tool findings: `{cve_count}`",
             f"- cve-bin-tool findings dropped as vendor name collisions: `{len(dropped_collisions)}`",
+            f"- cve-bin-tool findings dropped as compiler markers / distro-patched OS files: "
+            f"`{len(dropped_markers)}` / `{len(dropped_distro)}`",
             f"- Total findings: `{int(grype_count or 0) + len(_trivy_findings(trivy)) + int(cve_count or 0)}`",
             f"- Severity counts: `{dict(severity_counts)}`",
             f"- Policy decision: `{summary.get('policy_decision', 'UNKNOWN')}`",
@@ -852,6 +865,25 @@ def build_report(
             evidence = row.get("evidence") or (row["reason"].split("groupId ", 1)[-1].split(" (", 1)[0])
             report.append(
                 f"| {row['vendor']} | {row['product']} | {row['version']} | {row['cves']} | {evidence} |"
+            )
+        report.append("")
+    if dropped_other:
+        report.extend(
+            [
+                "## Dropped as build markers and distro-patched OS files",
+                "",
+                "Not counted above. `gcc x.y` is the compiler ident string written into every",
+                "binary; OS-package files of an image are judged by the distro security feed",
+                "(Grype/Trivy image mode), which knows backported fixes that a bare version",
+                "string does not show. See resilient_updates/collision_filter.py.",
+                "",
+                "| vendor | product | version | CVEs dropped | reason |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for row in summarize_dropped(dropped_other):
+            report.append(
+                f"| {row['vendor']} | {row['product']} | {row['version']} | {row['cves']} | {row['evidence']} |"
             )
         report.append("")
     report.extend(
